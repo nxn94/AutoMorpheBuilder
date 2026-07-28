@@ -5,7 +5,8 @@
 # Sync patches.json with upstream patch repos, preserving user toggles.
 # Extracted from the duplicated jq merge logic that previously lived
 # inline in both .github/workflows/update-patches.yml and the
-# morphe-build.yml update-state job.
+# morphe-build.yml workflow. Now only invoked by the manual
+# update-patches.yml workflow.
 #
 # Usage:
 #   REPO_VERSIONS='{"MorpheApp/morphe-patches":"v1.24.0-dev.8"}' \

@@ -10,8 +10,8 @@
 #      tag using resolve-tag.sh.
 #   3. Resolve the CLI tag.
 #   4. Emit a matrix-include JSON array of build entries.
-#   5. Compare to state.json; if any version changed (or the run is a
-#      manual dispatch) mark should-build=true, otherwise false.
+#   5. Emit should-build=true. The build always runs (the daily schedule
+#      rebuilds every day regardless of upstream).
 #
 # Outputs (written to $GITHUB_OUTPUT):
 #   should-build    "true" | "false"
@@ -102,53 +102,15 @@ if [ "$(jq 'length' <<<"$MATRIX_WITH_TAGS")" = "0" ]; then
   exit 0
 fi
 
-# Build the {owner/repo: tag} map for state comparison + downstream use.
+# Build the {owner/repo: tag} map for downstream use.
 REPO_VERSIONS="$TAGS_JSON"
-
-# --- compare to state.json -----------------------------------------------
-
-PREV_REPO_VERSIONS='{}'
-PREV_CLI_VERSION='none'
-PREV_CLI_BRANCH_STATE='main'
-if [ -s "$STATE_FILE" ] && jq -e 'type=="object"' "$STATE_FILE" >/dev/null 2>&1; then
-  PREV_CLI_VERSION="$(jq_get '.cli_version // "none"' "$STATE_FILE")"
-  PREV_CLI_BRANCH_STATE="$(jq_get '.cli_branch // "main"' "$STATE_FILE")"
-  if jq -e '.patches | type == "object"' "$STATE_FILE" >/dev/null 2>&1; then
-    PREV_REPO_VERSIONS="$(jq -c '.patches | map_values(.version)' "$STATE_FILE")"
-  else
-    log_warn "state.json uses old flat structure; treating patch versions as unknown (will trigger build)."
-    PREV_REPO_VERSIONS='{}'
-  fi
-elif [ -f "$STATE_FILE" ]; then
-  log_warn "$STATE_FILE is missing or invalid JSON; using defaults."
-fi
-
-VERSION_CHANGED=false
-for repo in "${!REPO_TAGS[@]}"; do
-  current="${REPO_TAGS[$repo]}"
-  prev="$(jq -r --arg r "$repo" '.[$r] // "none"' <<<"$PREV_REPO_VERSIONS")"
-  if [ "$current" != "$prev" ]; then
-    log "::notice::Patch version changed: ${repo}: ${prev} -> ${current}"
-    VERSION_CHANGED=true
-  fi
-done
-
-if [ "$CLI_TAG" != "$PREV_CLI_VERSION" ] || [ "$CLI_BRANCH" != "$PREV_CLI_BRANCH_STATE" ]; then
-  log "::notice::CLI version changed: ${PREV_CLI_BRANCH_STATE}/${PREV_CLI_VERSION} -> ${CLI_BRANCH}/${CLI_TAG}"
-  VERSION_CHANGED=true
-fi
 
 # --- decide + emit -------------------------------------------------------
 
-if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
-  log "::notice::Manual run detected; forcing build."
-  SHOULD_BUILD=true
-elif [ "$VERSION_CHANGED" = "true" ]; then
-  SHOULD_BUILD=true
-else
-  log "::notice::No version/channel changes detected. Skipping build."
-  SHOULD_BUILD=false
-fi
+# The build always runs. The daily schedule + the manual `update-patches`
+# workflow drive meaningful version transitions.
+SHOULD_BUILD=true
+log "::notice::Build always runs."
 
 json_set_output matrix-include "$MATRIX_WITH_TAGS"
 json_set_output repo-versions "$REPO_VERSIONS"

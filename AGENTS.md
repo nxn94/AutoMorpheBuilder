@@ -12,8 +12,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 |------|---------|
 | `config.json` | Build config: `patch_repos` (per-app, with `name`, `repo`, `branch`, `apkmirror_path`, optional `pin_version`), `cli` repo/branch, `download_urls` cache. |
 | `patches.json` | Patch toggles — **repo-keyed**: `{ "owner/repo": { "pkg": { "Patch": true } } }` |
-| `state.json` | Live Morphe versions + per-run build history. Updated by the `update-state` job. |
-| `.github/workflows/morphe-build.yml` | Main workflow (2224 lines, contains all build logic). Runs daily at 05:15 UTC + manual `workflow_dispatch`. |
+| `.github/workflows/morphe-build.yml` | Main workflow (contains all build logic). Runs daily at 05:15 UTC + manual `workflow_dispatch`. |
 | `.github/workflows/update-patches.yml` | Manual-only workflow to refresh `patches.json` from upstream patch repos. |
 | `.github/scripts/unified-downloader.js` | APK downloader with multi-source fallback (config cache → URL cache → parallel apkeep/APKMirror-API/Playwright resolution → sequential fallback). |
 | `.github/scripts/update-download-urls.js` | Writes resolved URLs back to `config.json` `download_urls`. CLI: `node update-download-urls.js <pkg> <version> <url>`. |
@@ -27,13 +26,11 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 
 ```
 check-versions → build (matrix per app) → create-release
-                                       ↘ update-state
 ```
 
-- `check-versions` — queries GitHub for latest Morphe patch/CLI tags, decides whether to build, pre-downloads APKs (now in parallel across apps). Sets `should-build` output. Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
+- `check-versions` — queries GitHub for latest Morphe patch/CLI tags, emits the build matrix, pre-downloads APKs (in parallel across apps). Sets `should-build=true` (always builds). Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
 - `build` — per-app parallel matrix. Downloads APK, patches with morphe-cli, signs (signing is **enforced** — no unsigned output). Uses `pin_version` from `config.json` if set, otherwise picks the latest Morphe-supported version.
 - `create-release` — one GitHub Release per app, tag `vYYYY.MM.DD`, contains only that app's APK.
-- `update-state` — rebase-pushes a fresh `state.json` + `patches.json` + `config.json` to `main` (handles concurrent-run conflicts). Also prunes stale GitHub Actions caches.
 
 ## Developer commands
 
@@ -43,7 +40,7 @@ npm test
 npx jest .github/scripts/__tests__/apkmirror-scraper.test.js   # single file
 
 # Validate JSON
-jq '.' patches.json && jq '.' config.json && jq '.' state.json
+jq '.' patches.json && jq '.' config.json
 
 # Lint JS
 npx eslint .github/scripts/*.js
@@ -104,12 +101,11 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 
 ## Repo quirks (not obvious from filenames)
 
-- `state.json` and `patches.json` get pushed back to `main` by the workflow itself (`update-state` and `update-patches` jobs). Local edits to either will conflict on the next run. Make `patches.json` changes before the run, or trigger `update-patches.yml` first.
+- `patches.json` gets pushed back to `main` by the `update-patches.yml` workflow. Local edits will conflict on the next run. Make `patches.json` changes before the run, or trigger `update-patches.yml` first.
 - `download_urls` cached at `~/.cache/auto-morphe-builder/urls/` is consulted **before** `config.json` `download_urls` — clear it if you want to force re-resolution.
 - BouncyCastle is cached via `actions/cache@v5` (bcprov-jdk18on 1.77) and only downloaded when the cache misses.
 - APKMirror scraper uses Playwright when curl is blocked by Cloudflare; all 3 pages (release → variant → download) navigate in the same browser session to preserve cookies. The custom `install-playwright-browsers.js` is required — `npx playwright install` is broken on Playwright 1.58 (yauzl extraction hang).
 - `npm ci` + `npx playwright install chromium` runs on every CI build (not cached at the npm level).
-- The `update-state` job rebases before regenerating `state.json` to handle concurrent-run conflicts; if `state.json` ever drifts, check whether the runner's `git push` failed silently (the workflow only emits a `::warning::`, not a failure).
 
 ## Common failures
 
@@ -117,7 +113,6 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 - **`Wrong version of key store`** — keystore password wrong, or key password differs from keystore password (set `KEY_PASSWORD`).
 - **`Could not resolve a Morphe-supported version`** — `patches-list.json` format changed. Old key-indexed syntax: `.compatiblePackages[$pkg]`. New array-of-objects syntax requires `select(.packageName == $pkg)`. `targetver` step and both workflows now handle both forms.
 - **APK download fails / `No APK could be downloaded`** — Cloudflare rate-limit on APKMirror. Re-run; transient. Verify `apkmirror_path` slugs in `config.json` `patch_repos` are still valid.
-- **Build skipped despite new version** — `state.json` not updated. Inspect the `update-state` job log; silent `git push` failures are the usual cause.
 - **Obtainium not finding updates** — confirm both filters are set (Release Tag Filter + APK Filter) and the APK filter includes the `-v` infix.
 - **Untracked `.xapk`/`.apkm` from a failed source pre-empts the good one** — the downloader's cleanup-on-failure contract (delete partial APK on validation throw) ensures that when the apkeep / direct-URL curl / Playwright fallback fails ABI or version validation, the file goes away. Without this, the `APKS_DIR` ends up with a stale file that gets picked by `findPackageCandidate` (first-encountered tiebreak on equal scores, via filesystem-dependent readdir order — not guaranteed alphabetical on ext4) over the working bundle from a later source. Symptom: the merged APK is missing the preferred arch even though the downloader reported success via a later source. The new tests in `__tests__/unified-downloader-cleanup.test.js` pin this contract.
 

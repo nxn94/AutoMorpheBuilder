@@ -10,10 +10,10 @@
  * superseded versions linger for up to a week after being replaced.
  *
  * This script identifies the *currently in use* version for each cache
- * pattern (from state.json / config.json) and deletes all other matching
- * caches. It always keeps:
- *   - the entry matching the current version (to avoid breaking in-flight runs)
- *   - one previous version as a safety backup
+ * pattern (from config.json) and deletes all other matching caches.
+ * It always keeps:
+ *   - the newest entry per pattern (to avoid breaking in-flight runs)
+ *   - APK caches for currently-pinned apps (from config.json)
  *
  * Run modes:
  *   node cleanup-caches.js            # dry-run, prints what would be deleted
@@ -69,12 +69,6 @@ const CACHE_PATTERNS_ORDERED = Object.keys(CACHE_PATTERNS).sort(
   (a, b) => b.length - a.length
 );
 
-function loadState() {
-  const p = path.join(process.cwd(), 'state.json');
-  if (!fs.existsSync(p)) return null;
-  return JSON.parse(fs.readFileSync(p, 'utf8'));
-}
-
 function loadConfig() {
   const p = path.join(process.cwd(), 'config.json');
   if (!fs.existsSync(p)) return null;
@@ -86,31 +80,15 @@ function loadConfig() {
  * regardless of age. Each pattern may have multiple active keys (e.g. one
  * per app for the apk pattern).
  *
+ * Currently only retains apk caches that are known to be pinned or have a
+ * resolved latest_supported URL. The newest cache per pattern is always
+ * kept by main() as a safety backup regardless of this list.
+ *
  * @returns {string[]} Set of full cache keys to keep.
  */
 function computeActiveKeys() {
-  const state = loadState();
   const config = loadConfig();
   const active = new Set();
-
-  // --- morphe-cli-* and morphe-tools-cli-* (keyed on cli_version) ---
-  const cliVersion = state?.cli_version;
-  if (cliVersion) {
-    const bare = cliVersion.replace(/^v/, '');
-    active.add(`morphe-cli-${cliVersion}`);
-    active.add(`morphe-cli-v${bare}`); // tolerate missing 'v' prefix
-    active.add(`morphe-tools-cli-${cliVersion}-repos-`);
-  }
-
-  // --- morphe-patches-<slug>-<tag> (keyed on per-repo patches version) ---
-  const patches = state?.patches;
-  if (patches && typeof patches === 'object') {
-    for (const [repo, info] of Object.entries(patches)) {
-      if (!info?.version) continue;
-      const slug = repo.replace(/\//g, '-');
-      active.add(`morphe-patches-${slug}-${info.version}`);
-    }
-  }
 
   // --- apk-<appId>-<version> (keyed per app) ---
   if (config) {

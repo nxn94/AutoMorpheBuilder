@@ -3,10 +3,10 @@
 
 // Mock the fs + child_process modules BEFORE requiring cleanup-caches,
 // since the module top-level evaluates `process.cwd()` and pulls in
-// state.json / config.json via loadState()/loadConfig(). For pure-helper
-// tests (classifyCache / isActive) we don't care about that — but we
-// must keep the require from running main(), which it won't as long as
-// `require.main === module` is false inside cleanup-caches.js.
+// config.json via loadConfig(). For pure-helper tests (classifyCache /
+// isActive) we don't care about that — but we must keep the require
+// from running main(), which it won't as long as `require.main ===
+// module` is false inside cleanup-caches.js.
 const {
   CACHE_PATTERNS_ORDERED,
   classifyCache,

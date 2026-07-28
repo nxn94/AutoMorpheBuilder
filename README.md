@@ -21,14 +21,12 @@
 ## 🔧 What It Does
 
 1. ✅ Checks latest Morphe patch/CLI releases
-2. ✅ Skips build if versions unchanged
-3. ✅ **Auto-resolves latest supported app versions** from morphe-cli
-4. ✅ Downloads APKs from APKMirror (with fallbacks)
-5. ✅ Extracts/selects patchable APK (prefers configured arch, rejects dex-less splits)
-6. ✅ Enforces signing (signed or fail)
-7. ✅ Runs `morphe-cli` with your `patches.json` config
-8. ✅ Publishes artifacts & creates GitHub Releases
-9. ✅ Updates `state.json` & syncs `patches.json` with upstream
+2. ✅ **Auto-resolves latest supported app versions** from morphe-cli
+3. ✅ Downloads APKs from APKMirror (with fallbacks)
+4. ✅ Extracts/selects patchable APK (prefers configured arch, rejects dex-less splits)
+5. ✅ Enforces signing (signed or fail)
+6. ✅ Runs `morphe-cli` with your `patches.json` config
+7. ✅ Publishes artifacts & creates GitHub Releases
 
 ---
 
@@ -185,18 +183,6 @@ flowchart TD
 |---------|----------|
 | Manual | `workflow_dispatch` |
 | Scheduled | Daily at `05:15 UTC` |
-
-> ⚠️ **Note**: Actual build only runs when Morphe patch or CLI version changed.
-
----
-
-## 📊 State Tracking (`state.json`)
-
-Auto-updated by workflow:
-- `patches` - per-repo branch and version
-- `cli_branch`, `cli_version`
-- `last_build`, `status`
-- `build_history` - recent runs (id, number, commit, timestamp)
 
 ---
 

@@ -13,11 +13,11 @@ scripts/
 ├── README.md                 this file
 ├── lib/                      shared helpers (sourced)
 │   ├── common.sh             logging, retry, validation, tempdirs
-│   ├── config.sh             config.json / patches.json / state.json helpers
+│   ├── config.sh             config.json / patches.json helpers
 │   ├── github.sh             gh CLI wrappers + token checks
 │   ├── json.sh               jq-backed JSON access
 │   └── apk.sh                aapt / apksigner helpers
-├── check_versions.sh         resolve latest Morphe + CLI tags; decide should-build
+├── check_versions.sh         resolve latest Morphe + CLI tags; emit matrix + should-build
 ├── install_apkeep.sh         download apkeep binary
 ├── install_aapt.sh           install aapt + capture build-tools version
 ├── install_bouncycastle.sh   download BouncyCastle provider jar
@@ -28,9 +28,7 @@ scripts/
 ├── prepare_target_version.sh gather inputs for download-supported-apk.js
 ├── prepare_keystore.sh       decode KEYSTORE_BASE64; produce BKS + PKCS12 keystores
 ├── patch_apk.sh              run morphe-cli patch; rename output for Obtainium
-├── create_release.sh         publish per-app GitHub Releases
-├── update_state.sh           rebuild state.json + sync patches.json
-└── commit_state.sh           commit + push state.json / patches.json / config.json
+└── create_release.sh         publish per-app GitHub Releases
 ```
 
 The previously-existing helpers under `.github/scripts/` are unchanged:
@@ -62,14 +60,14 @@ bash scripts/install_apkeep.sh
 bash scripts/check_versions.sh
 ```
 
-For the JSON/state scripts, you can dry-run them against the local
-`config.json` / `patches.json` / `state.json`:
+For the JSON state scripts, you can dry-run them against the local
+`config.json` / `patches.json`:
 
 ```bash
-bash scripts/update_state.sh \
-  REPO_VERSIONS='{"MorpheApp/morphe-patches":"v1.32.0"}' \
-  CLI_VERSION=v1.9.1 \
-  CLI_BRANCH=main
+# sync-patches.sh lives under .github/scripts/ and is invoked from the
+# manual update-patches.yml workflow, not from scripts/.
+REPO_VERSIONS='{"MorpheApp/morphe-patches":"v1.32.0"}' \
+  bash .github/scripts/sync-patches.sh
 ```
 
 ## Validation

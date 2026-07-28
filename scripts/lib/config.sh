@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/lib/config.sh — config.json / patches.json / state.json helpers.
+# scripts/lib/config.sh — config.json / patches.json helpers.
 #
 # Sourced, not executed. Centralises the per-app lookup, pin-version
 # detection, and repo↔slug conversion that the workflow repeats across
@@ -17,7 +17,6 @@
 
 CONFIG_FILE="${CONFIG_FILE:-./config.json}"
 PATCHES_FILE="${PATCHES_FILE:-./patches.json}"
-STATE_FILE="${STATE_FILE:-./state.json}"
 
 # repo_slug <owner/repo> -> owner-repo
 repo_slug() { printf '%s' "${1//\//-}"; }

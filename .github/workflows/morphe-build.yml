@@ -10,8 +10,8 @@ permissions:
   actions: read
 
 # Allow only one in-flight build for this workflow. Concurrent runs would
-# race on state.json + download_urls; this lets the runner cancel the
-# older one instead of producing a corrupt commit.
+# race on patches.json / config.json updates; this lets the runner cancel
+# the older one instead of producing a corrupt commit.
 concurrency:
   group: morphe-build
   cancel-in-progress: false
@@ -421,46 +421,3 @@ jobs:
           CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
           REPO_VERSIONS: ${{ needs.check-versions.outputs.repo-versions }}
         run: bash scripts/create_release.sh
-
-  update-state:
-    needs: [check-versions, build, create-release]
-    if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
-    runs-on: ubuntu-latest
-    # `actions: write` is required for `gh cache delete` in the
-    # "Prune stale GitHub Actions caches" step below; `actions: read`
-    # (the workflow default) is insufficient and causes every delete
-    # to fail with HTTP 403. Scoped to this job only — other jobs keep
-    # `actions: read` per least-privilege.
-    permissions:
-      contents: write
-      actions: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Update state.json + sync patches.json
-        env:
-          REPO_VERSIONS: ${{ needs.check-versions.outputs.repo-versions }}
-          CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
-          CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
-        run: bash scripts/update_state.sh
-
-      - name: Commit and push state.json / patches.json / config.json
-        env:
-          BRANCH_NAME: ${{ github.ref_name }}
-          CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
-          CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
-        run: bash scripts/commit_state.sh
-
-      - name: Prune stale GitHub Actions caches
-        if: github.event_name != 'pull_request'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-        run: |
-          # Best-effort: cache pruning failures must not fail the whole
-          # update-state step (the important work — committing the new
-          # state — already happened).
-          node .github/scripts/cleanup-caches.js --apply \
-            || echo "::warning::Cache pruning had failures (see above); ignoring."

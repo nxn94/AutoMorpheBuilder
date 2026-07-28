@@ -71,7 +71,7 @@ json_update() {
 # json_merge_at <file> <path> <jq-obj>
 #   Merge a jq-supplied object as the value at <path>. Equivalent to
 #   jq -s '.[0] * .[1]' but easier to call from bash:
-#   json_merge_at state.json '.patches' "$patches_map"
+#   json_merge_at config.json '.patch_repos' "$patches_map"
 json_merge_at() {
   local file="$1"
   local path="$2"
