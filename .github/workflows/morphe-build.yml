@@ -36,6 +36,17 @@ jobs:
         id: check
         run: bash scripts/check_versions.sh
 
+      - name: Set up Java (for morphe-desktop)
+        # check-versions runs `java -jar morphe-desktop.jar list-versions`
+        # in pre_download_apks.sh. morphe-desktop 1.12.0 requires Java 21
+        # (default Java on the runner image is older and fails to invoke
+        # the jar). The build job sets up Java 21 separately.
+        if: steps.check.outputs.should-build == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Setup Node.js
         if: steps.check.outputs.should-build == 'true'
         uses: actions/setup-node@v6
@@ -276,12 +287,20 @@ jobs:
             morphe-patches-${{ matrix.patchSlug }}-
 
       - name: Cache morphe-desktop
+        # Uses the SAME composite key as check-versions' "Cache morphe-desktop
+        # and patches" step so check-versions populates the cache and this
+        # step restores it. Path is just the jar — actions/cache extracts only
+        # the matching files when restoring, even though the cache archive
+        # also contains the .mpp files written by check-versions.
+        # Save-always defaults to false → on hit, no save → no race among
+        # the 3 parallel matrix entries.
         uses: actions/cache@v5
         with:
           path: ${{ env.TOOLS_DIR }}/morphe-desktop.jar
-          key: morphe-desktop-${{ needs.check-versions.outputs.cli-version }}
+          key: morphe-tools-desktop-${{ needs.check-versions.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
           restore-keys: |
-            morphe-desktop-
+            morphe-tools-desktop-${{ needs.check-versions.outputs.cli-version }}-
+            morphe-tools-desktop-
 
       - name: Get latest Morphe patches + CLI + APKEditor
         id: morphe
