@@ -22,17 +22,16 @@ scripts/
 ├── install_aapt.sh           install aapt + capture build-tools version
 ├── install_bouncycastle.sh   download BouncyCastle provider jar
 ├── install_playwright.sh     install Playwright Chromium + smoke test
-├── download_morphe_tools.sh  download morphe-cli.jar + per-repo .mpp
+├── download_morphe_tools.sh  download morphe-desktop.jar + per-repo .mpp
 ├── fetch_morphe_tools.sh     per-matrix mpp / cli / APKEditor download
 ├── pre_download_apks.sh      parallel pre-download APKs across all apps
 ├── prepare_target_version.sh gather inputs for download-supported-apk.js
 ├── prepare_keystore.sh       decode KEYSTORE_BASE64; produce BKS + PKCS12 keystores
-├── patch_apk.sh              run morphe-cli patch; rename output for Obtainium
+├── patch_apk.sh              run morphe-desktop patch; rename output for Obtainium
 └── create_release.sh         publish per-app GitHub Releases
 ```
-
 The previously-existing helpers under `.github/scripts/` are unchanged:
-they're still the implementation files for things like morphe-cli jar
+they're still the implementation files for things like morphe-desktop jar
 download orchestration, the unified-downloader, and sync-patches. The
 scripts here are thin orchestrators that call into those helpers.
 

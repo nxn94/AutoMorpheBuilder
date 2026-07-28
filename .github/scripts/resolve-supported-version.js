@@ -137,7 +137,7 @@ function tryPinned(patchesList, pinned) {
 }
 
 /**
- * morphe-cli primary source. The CLI is the authoritative version list
+ * morphe-desktop primary source. The CLI is the authoritative version list
  * (reads the .mpp artifact directly), so we prefer it over any
  * patches-list.json logic. Returns array of versions sorted as the CLI
  * returns them (most-preferred first).
@@ -152,7 +152,7 @@ function tryMorpheCli(jarPath, mppFile) {
       { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] },
     );
   } catch (e) {
-    console.error(`morphe-cli list-versions failed: ${e.message}`);
+    console.error(`morphe-desktop list-versions failed: ${e.message}`);
     return null;
   }
   const versions = out.match(/\d+\.\d+\.\d+/g) || [];
@@ -160,7 +160,7 @@ function tryMorpheCli(jarPath, mppFile) {
 }
 
 /**
- * Two-tier fallback when morphe-cli can't be used (missing jar / mpp /
+ * Two-tier fallback when morphe-desktop can't be used (missing jar / mpp /
  * cli broken):
  *   1. strict intersection — versions supported by EVERY enabled patch.
  *   2. count-based — versions ranked by how many enabled patches support
@@ -234,12 +234,12 @@ if (PINNED_VERSION && PINNED_VERSION !== 'null') {
   console.error(`::warning::Pinned version ${PINNED_VERSION} is not in the compatible list for ${APP_ID}; falling back to auto-resolution`);
 }
 
-// 2. morphe-cli primary
+// 2. morphe-desktop primary
 const slug = PATCH_REPO.replace(/\//g, '-');
 const mppFile = path.join(TOOLS_DIR, `${slug}.mpp`);
 let jarPath = '';
 try {
-  const jars = fs.readdirSync(TOOLS_DIR).filter(f => f.startsWith('morphe-cli-') && f.endsWith('-all.jar'));
+  const jars = fs.readdirSync(TOOLS_DIR).filter(f => f.startsWith('morphe-desktop-') && f.endsWith('-all.jar'));
   if (jars.length > 0) jarPath = path.join(TOOLS_DIR, jars[0]);
 } catch { /* TOOLS_DIR may not exist yet */ }
 
@@ -247,12 +247,12 @@ let versions = tryMorpheCli(jarPath, mppFile);
 if (versions && versions.length > 0) {
   setOutput('version', versions[0]);
   setOutput('versions', versions.join(','));
-  console.log(`Selected version for ${APP_ID}: ${versions[0]} (morphe-cli list-versions; experimental targets filtered)`);
+  console.log(`Selected version for ${APP_ID}: ${versions[0]} (morphe-desktop list-versions; experimental targets filtered)`);
   process.exit(0);
 }
 
 if (versions === null && jarPath && fs.existsSync(mppFile)) {
-  console.log('morphe-cli did not return a usable version; falling back to patches-list.json logic...');
+  console.log('morphe-desktop did not return a usable version; falling back to patches-list.json logic...');
 }
 
 // 3. Patches-list.json fallback

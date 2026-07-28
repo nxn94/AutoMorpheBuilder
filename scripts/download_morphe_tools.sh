@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# scripts/download_morphe_tools.sh — download the morphe-cli .jar and
+# scripts/download_morphe_tools.sh — download the morphe-desktop .jar and
 # per-repo .mpp files needed by the build matrix.
 #
 # Replaces the ~50-line `run:` block in the workflow's "Resolve latest
@@ -10,12 +10,12 @@
 #
 # Behaviour matches the original step:
 #   - mkdir tools/ (idempotent)
-#   - gh release download <CLI_TAG> --pattern '*.jar' → tools/morphe-cli.jar
+#   - gh release download <CLI_TAG> --pattern '*.jar' → tools/morphe-desktop.jar
 #   - For each unique patch_repo at its resolved tag:
 #       gh release download <tag> --pattern 'patches-*.mpp' → tools/<slug>.mpp
 #
 # After this script, $TOOLS_DIR contains:
-#   morphe-cli.jar           (always, if CLI release download succeeded)
+#   morphe-desktop.jar       (always, if CLI release download succeeded)
 #   <repo-slug>.mpp          (one per unique patch_repo)
 #
 # Hard-fails if the CLI .jar or any required .mpp cannot be obtained.
@@ -48,25 +48,26 @@ mkdir -p "$TOOLS_DIR"
 
 # --- CLI jar --------------------------------------------------------------
 
-if [ ! -f "$TOOLS_DIR/morphe-cli.jar" ]; then
-  log "Downloading morphe-cli ${CLI_TAG}..."
-  # v1.11.0 renamed the project to "Morphe Desktop" so the release
-  # asset is morphe-desktop-X.Y.Z-all.jar; accept either name.
-  gh_release_download "$CLI_REPO" "$CLI_TAG" "morphe-cli-*-all.jar" "$TOOLS_DIR" || true
-  for f in "$TOOLS_DIR"/morphe-cli-*-all.jar "$TOOLS_DIR"/morphe-desktop-*-all.jar; do
+if [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
+  log "Downloading morphe-desktop ${CLI_TAG}..."
+  # Releases <= v1.10.x shipped as morphe-cli-X.Y.Z-all.jar under the old
+  # MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
+  # either name so legacy pins still resolve.
+  gh_release_download "$CLI_REPO" "$CLI_TAG" "morphe-desktop-*-all.jar" "$TOOLS_DIR" || true
+  for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
     [ -f "$f" ] || continue
-    if [ "$f" != "$TOOLS_DIR/morphe-cli.jar" ]; then
-      mv "$f" "$TOOLS_DIR/morphe-cli.jar"
-      log "  moved $(basename "$f") -> morphe-cli.jar"
+    if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
+      mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
+      log "  moved $(basename "$f") -> morphe-desktop.jar"
     fi
     break
   done
 else
-  log "Using cached $TOOLS_DIR/morphe-cli.jar"
+  log "Using cached $TOOLS_DIR/morphe-desktop.jar"
 fi
 
-if [ ! -f "$TOOLS_DIR/morphe-cli.jar" ]; then
-  log_warn "morphe-cli.jar not found; downstream APK version resolution will be skipped."
+if [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
+  log_warn "morphe-desktop.jar not found; downstream APK version resolution will be skipped."
 fi
 
 # --- patches .mpp files ---------------------------------------------------

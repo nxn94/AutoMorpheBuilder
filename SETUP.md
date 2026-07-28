@@ -84,7 +84,7 @@ Edit `config.json` with your build options:
     }
   },
   "cli": {
-    "repo": "MorpheApp/morphe-cli",
+    "repo": "MorpheApp/morphe-desktop",
     "branch": "main"
   }
 }
@@ -101,8 +101,8 @@ Edit `config.json` with your build options:
 | `patch_repos[*].branch` | - | Patch branch |
 | `patch_repos[*].apkmirror_path` | - | APKMirror URL slug |
 | `patch_repos[*].pin_version` | - | Optional: lock to specific version |
-| `cli.repo` | - | morphe-cli repository |
-| `cli.branch` | - | morphe-cli branch (`main` or `dev`) |
+| `cli.repo` | - | morphe-desktop repository |
+| `cli.branch` | - | morphe-desktop branch (`main` or `dev`) |
 
 > 📝 **Note**: `download_urls` is auto-managed - don't set it manually.
 
@@ -255,4 +255,4 @@ The workflow uses a multi-source fallback chain:
 
 - [README.md](README.md) - Full project documentation
 - [Morphe patches](https://github.com/MorpheApp/morphe-patches)
-- [morphe-cli](https://github.com/MorpheApp/morphe-cli)
+- [morphe-desktop](https://github.com/MorpheApp/morphe-desktop)

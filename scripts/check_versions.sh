@@ -19,6 +19,7 @@
 #   repo-versions   JSON object { "owner/repo": "tag" }
 #   cli-version     CLI release tag
 #   cli-branch      CLI branch (echoed back for downstream steps)
+#   cli-repo        CLI repo slug (echoed back for downstream steps)
 
 set -Eeuo pipefail
 
@@ -99,6 +100,7 @@ if [ "$(jq 'length' <<<"$MATRIX_WITH_TAGS")" = "0" ]; then
   json_set_output repo-versions '{}'
   json_set_output cli-version "$CLI_TAG"
   json_set_output cli-branch "$CLI_BRANCH"
+  json_set_output cli-repo "$CLI_REPO"
   exit 0
 fi
 
@@ -116,4 +118,5 @@ json_set_output matrix-include "$MATRIX_WITH_TAGS"
 json_set_output repo-versions "$REPO_VERSIONS"
 json_set_output cli-version "$CLI_TAG"
 json_set_output cli-branch "$CLI_BRANCH"
+json_set_output cli-repo "$CLI_REPO"
 json_set_output should-build "$SHOULD_BUILD"

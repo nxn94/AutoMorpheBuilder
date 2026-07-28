@@ -75,7 +75,7 @@ app_patches() {
 
 # list_disabled_patches <appId>
 #   Emits one disabled patch name per line. Used by the patch step to
-#   build the morphe-cli `-d` flag list.
+#   build the morphe-desktop `-d` flag list.
 list_disabled_patches() {
   local app_id="$1"
   local repo="${PATCH_REPO:-}"

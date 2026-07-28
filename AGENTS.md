@@ -29,7 +29,7 @@ check-versions → build (matrix per app) → create-release
 ```
 
 - `check-versions` — queries GitHub for latest Morphe patch/CLI tags, emits the build matrix, pre-downloads APKs (in parallel across apps). Sets `should-build=true` (always builds). Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
-- `build` — per-app parallel matrix. Downloads APK, patches with morphe-cli, signs (signing is **enforced** — no unsigned output). Uses `pin_version` from `config.json` if set, otherwise picks the latest Morphe-supported version.
+- `build` — per-app parallel matrix. Downloads APK, patches with morphe-desktop, signs (signing is **enforced** — no unsigned output). Uses `pin_version` from `config.json` if set, otherwise picks the latest Morphe-supported version.
 - `create-release` — one GitHub Release per app, tag `vYYYY.MM.DD`, contains only that app's APK.
 
 ## Developer commands
@@ -67,7 +67,7 @@ GITHUB_REPOSITORY=owner/repo GH_TOKEN=... node .github/scripts/cleanup-caches.js
   "preferred_arch": "arm64-v8a",
   "auto_update_urls": true,
   "patch_repos":      { "com.google.android.youtube": { "name": "youtube", "repo": "MorpheApp/morphe-patches", "branch": "main", "apkmirror_path": "google-inc/youtube", "pin_version": "20.45.36" } },
-  "cli":              { "repo": "MorpheApp/morphe-cli", "branch": "main" },
+  "cli":              { "repo": "MorpheApp/morphe-desktop", "branch": "main" },
   "download_urls":    { "com.google.android.youtube": { "8.44.54": "...", "latest_supported": "..." } }
 }
 ```
@@ -96,7 +96,7 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 ## Signing (enforced)
 
 - Decode `KEYSTORE_BASE64` → `tools/source.keystore`. Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` (defaults to first), `KEY_PASSWORD` (only if differs from keystore password).
-- Workflow detects type (PKCS12 / JKS / BKS / UBER) and converts to BKS for morphe-cli.
+- Workflow detects type (PKCS12 / JKS / BKS / UBER) and converts to BKS for morphe-desktop.
 - Build fails immediately if signing cannot complete — there is no "unsigned" output path.
 
 ## Repo quirks (not obvious from filenames)

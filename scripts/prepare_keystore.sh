@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # scripts/prepare_keystore.sh — decode KEYSTORE_BASE64, detect its type,
-# and produce both BKS (for morphe-cli) and PKCS12 (for apksigner) copies.
+# and produce both BKS (for morphe-desktop) and PKCS12 (for apksigner) copies.
 #
 # Replaces the ~190-line `run:` block in the workflow's "Prepare signing
 # keystore (required)" step. The script is large but no longer inline;
@@ -12,7 +12,7 @@
 #   2. Locate BouncyCastle provider jar (installed by install_bouncycastle.sh).
 #   3. Decode KEYSTORE_BASE64 to a temp keystore.
 #   4. Auto-detect type (PKCS12 > JKS > BKS > UBER).
-#   5. Convert source -> BKS for morphe-cli. Retry with KEY_PASSWORD
+#   5. Convert source -> BKS for morphe-desktop. Retry with KEY_PASSWORD
 #      when the no-keypass import fails.
 #   6. Convert BKS -> PKCS12 for apksigner.
 #   7. Pick alias: KEY_ALIAS secret if provided, else the first alias
@@ -217,4 +217,4 @@ fi
 json_set_output path "$BKS_KEYSTORE"
 json_set_output p12_path "$P12_KEYSTORE"
 json_set_output alias "$KEY_ALIAS"
-log "BKS keystore (morphe-cli) + PKCS12 keystore (apksigner) ready; alias=$KEY_ALIAS"
+log "BKS keystore (morphe-desktop) + PKCS12 keystore (apksigner) ready; alias=$KEY_ALIAS"

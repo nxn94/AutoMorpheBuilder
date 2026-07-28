@@ -4,7 +4,7 @@
  * Clean up stale GitHub Actions caches for the AutoMorpheBuilder project.
  *
  * Caches accumulate because several `actions/cache` steps are keyed by
- * morphe-cli version, morphe-patches tag, or per-app APK version. Each new
+ * morphe-desktop version, morphe-patches tag, or per-app APK version. Each new
  * version creates a new cache entry, and GitHub's default cache eviction
  * only removes entries that haven't been accessed in 7 days - which means
  * superseded versions linger for up to a week after being replaced.
@@ -53,18 +53,19 @@ function resolveRepo() {
 }
 
 const CACHE_PATTERNS = {
-  'morphe-tools-cli-': 'cli',
-  'morphe-cli-': 'cli',
+  'morphe-tools-desktop-': 'cli',
+  'morphe-desktop-': 'cli',
   'morphe-patches-': 'patches',
   'apk-': 'apk',
 };
 
 // `classifyCache` iterates Object.keys(CACHE_PATTERNS) in insertion order.
-// 'morphe-cli-' is a prefix of 'morphe-tools-cli-', so without this ordering
-// every morphe-tools-cli-* cache would be misclassified as the shorter
-// morphe-cli- group. We keep the longer prefix first so the more-specific
-// match wins. The map below re-asserts this order regardless of how the
-// keys above were entered — defence in depth against future reordering.
+// 'morphe-desktop-' is a prefix of 'morphe-tools-desktop-', so without this
+// ordering every morphe-tools-desktop-* cache would be misclassified as the
+// shorter morphe-desktop- group. We keep the longer prefix first so the
+// more-specific match wins. The map below re-asserts this order regardless
+// of how the keys above were entered — defence in depth against future
+// reordering.
 const CACHE_PATTERNS_ORDERED = Object.keys(CACHE_PATTERNS).sort(
   (a, b) => b.length - a.length
 );

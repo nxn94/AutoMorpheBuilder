@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
 # scripts/fetch_morphe_tools.sh — fetch per-matrix Morphe artifacts
-# (patches .mpp, morphe-cli.jar, APKEditor.jar) that the build matrix
+# (patches .mpp, morphe-desktop.jar, APKEditor.jar) that the build matrix
 # needs before resolving + patching the APK.
 #
 # Replaces the ~60-line `run:` block in the workflow's "Get latest
 # Morphe patches + CLI + APKEditor" step. Behaviour is identical:
 #   - download patches-<ver>.mpp into $TOOLS_DIR/<slug>.mpp if missing
 #   - always fetch patches-list.json (small, always fresh)
-#   - download morphe-cli-<ver>-all.jar into $TOOLS_DIR if missing
+#   - download morphe-desktop-<ver>-all.jar into $TOOLS_DIR if missing
 #   - resolve the latest APKEditor release tag + asset and download
 #   - emit apkeditor_jar=<abs-path> to $GITHUB_OUTPUT for downstream
 #
@@ -19,7 +19,9 @@
 #   PATCH_REPO    required  e.g. MorpheApp/morphe-patches
 #   PATCH_TAG     required  e.g. v1.32.0
 #   PATCH_SLUG    required  e.g. MorpheApp-morphe-patches
-#   CLI_VERSION   required  e.g. v1.9.1
+#   CLI_REPO      required  e.g. MorpheApp/morphe-desktop (sourced from
+#                          config.json's `cli.repo` by check-versions.sh)
+#   CLI_VERSION   required  e.g. v1.11.0
 #   TOOLS_DIR     optional  default ./tools
 #   GITHUB_OUTPUT required  workflow output file
 
@@ -32,10 +34,11 @@ set -Eeuo pipefail
 PATCH_REPO="${PATCH_REPO:-}"
 PATCH_TAG="${PATCH_TAG:-}"
 PATCH_SLUG="${PATCH_SLUG:-}"
+CLI_REPO="${CLI_REPO:-}"
 CLI_VERSION="${CLI_VERSION:-}"
 TOOLS_DIR="${TOOLS_DIR:-./tools}"
 
-for var in PATCH_REPO PATCH_TAG PATCH_SLUG CLI_VERSION; do
+for var in PATCH_REPO PATCH_TAG PATCH_SLUG CLI_REPO CLI_VERSION; do
   if [ -z "${!var}" ]; then
     log_error "Required env var $var is empty."
     exit 1
@@ -68,18 +71,18 @@ with_retry 3 5 curl -fsSL \
   "https://raw.githubusercontent.com/${PATCH_REPO}/${PATCH_TAG}/patches-list.json" \
   -o "$TOOLS_DIR/patches-list.json"
 
-# --- morphe-cli.jar ------------------------------------------------------
+# --- morphe-desktop.jar --------------------------------------------------
 
-if [ ! -f "$TOOLS_DIR/morphe-cli.jar" ]; then
-  gh_release_download "MorpheApp/morphe-cli" "$CLI_VERSION" "morphe-cli-*-all.jar" "$TOOLS_DIR" >/dev/null || true
-  if [ ! -f "$TOOLS_DIR/morphe-cli.jar" ]; then
-    gh_release_download "MorpheApp/morphe-cli" "$CLI_VERSION" "morphe-desktop-*-all.jar" "$TOOLS_DIR" >/dev/null || true
-  fi
-  for f in "$TOOLS_DIR"/morphe-cli-*-all.jar "$TOOLS_DIR"/morphe-desktop-*-all.jar; do
+if [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
+  # Releases <= v1.10.x shipped as morphe-cli-X.Y.Z-all.jar under the old
+  # MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
+  # either name so legacy pins still resolve.
+  gh_release_download "$CLI_REPO" "$CLI_VERSION" "morphe-desktop-*-all.jar" "$TOOLS_DIR" >/dev/null || true
+  for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
     [ -f "$f" ] || continue
-    if [ "$f" != "$TOOLS_DIR/morphe-cli.jar" ]; then
-      mv "$f" "$TOOLS_DIR/morphe-cli.jar"
-      log "  moved $(basename "$f") -> morphe-cli.jar"
+    if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
+      mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
+      log "  moved $(basename "$f") -> morphe-desktop.jar"
     fi
     break
   done

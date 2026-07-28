@@ -14,9 +14,9 @@ const {
 } = require('../cleanup-caches');
 
 describe('CACHE_PATTERNS_ORDERED', () => {
-  test('longer prefixes come first (so morphe-tools-cli- beats morphe-cli-)', () => {
-    const idxTools = CACHE_PATTERNS_ORDERED.indexOf('morphe-tools-cli-');
-    const idxCli = CACHE_PATTERNS_ORDERED.indexOf('morphe-cli-');
+  test('longer prefixes come first (so morphe-tools-desktop- beats morphe-desktop-)', () => {
+    const idxTools = CACHE_PATTERNS_ORDERED.indexOf('morphe-tools-desktop-');
+    const idxCli = CACHE_PATTERNS_ORDERED.indexOf('morphe-desktop-');
     expect(idxTools).toBeGreaterThanOrEqual(0);
     expect(idxCli).toBeGreaterThanOrEqual(0);
     expect(idxTools).toBeLessThan(idxCli);
@@ -25,8 +25,8 @@ describe('CACHE_PATTERNS_ORDERED', () => {
   test('every pattern key is in the ordered list', () => {
     expect(CACHE_PATTERNS_ORDERED).toEqual(
       expect.arrayContaining([
-        'morphe-tools-cli-',
-        'morphe-cli-',
+        'morphe-tools-desktop-',
+        'morphe-desktop-',
         'morphe-patches-',
         'apk-',
       ])
@@ -35,18 +35,18 @@ describe('CACHE_PATTERNS_ORDERED', () => {
 });
 
 describe('classifyCache', () => {
-  test('classifies morphe-cli-* as morphe-cli-', () => {
-    expect(classifyCache({ key: 'morphe-cli-v1.9.1' })).toBe('morphe-cli-');
+  test('classifies morphe-desktop-* as morphe-desktop-', () => {
+    expect(classifyCache({ key: 'morphe-desktop-v1.11.0' })).toBe('morphe-desktop-');
   });
 
-  test('classifies morphe-tools-cli-* as morphe-tools-cli- (not morphe-cli-)', () => {
-    // Regression test for the bug where every morphe-tools-cli-* cache
-    // was being grouped under the shorter morphe-cli- prefix.
+  test('classifies morphe-tools-desktop-* as morphe-tools-desktop- (not morphe-desktop-)', () => {
+    // Regression test for the bug where every morphe-tools-desktop-* cache
+    // was being grouped under the shorter morphe-desktop- prefix.
     expect(
       classifyCache({
-        key: 'morphe-tools-cli-v1.9.1-repos-MorpheApp-morphe-patches',
+        key: 'morphe-tools-desktop-v1.11.0-repos-MorpheApp-morphe-patches',
       })
-    ).toBe('morphe-tools-cli-');
+    ).toBe('morphe-tools-desktop-');
   });
 
   test('classifies morphe-patches-* as morphe-patches-', () => {
@@ -82,11 +82,11 @@ describe('classifyCache', () => {
 
 describe('isActive', () => {
   test('matches exact active key', () => {
-    expect(isActive('morphe-cli-v1.9.1', ['morphe-cli-v1.9.1'])).toBe(true);
+    expect(isActive('morphe-desktop-v1.11.0', ['morphe-desktop-v1.11.0'])).toBe(true);
   });
 
   test('does not match a different key', () => {
-    expect(isActive('morphe-cli-v1.8.0', ['morphe-cli-v1.9.1'])).toBe(false);
+    expect(isActive('morphe-desktop-v1.10.0', ['morphe-desktop-v1.11.0'])).toBe(false);
   });
 
   test('matches soft prefix when active key ends with -', () => {
@@ -119,15 +119,15 @@ describe('isActive', () => {
 
   test('returns true if ANY active key matches', () => {
     expect(
-      isActive('morphe-cli-v1.9.1', [
-        'morphe-cli-v1.8.0',
-        'morphe-cli-v1.9.1',
+      isActive('morphe-desktop-v1.11.0', [
+        'morphe-desktop-v1.10.0',
+        'morphe-desktop-v1.11.0',
         'apk-foo-',
       ])
     ).toBe(true);
   });
 
   test('handles empty active keys list', () => {
-    expect(isActive('morphe-cli-v1.9.1', [])).toBe(false);
+    expect(isActive('morphe-desktop-v1.11.0', [])).toBe(false);
   });
 });

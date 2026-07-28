@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# scripts/patch_apk.sh — invoke morphe-cli patch on a single APK, then
+# scripts/patch_apk.sh — invoke morphe-desktop patch on a single APK, then
 # copy the patched output to $OUT_DIR with the canonical Obtainium name.
 #
 # Replaces the inline block inside the workflow's "Patch ${matrix.name}
-# with morphe-cli" step (about 90 lines, including the find/awk scan
+# with morphe-desktop" step (about 90 lines, including the find/awk scan
 # for the patched APK).
 #
 # Behaviour matches the original step:
-#   1. Resolve the morphe-cli jar + .mpp file.
+#   1. Resolve the morphe-desktop jar + .mpp file.
 #   2. Compute enabled/disabled patch counts from patches.json.
-#   3. Run `java -jar morphe-cli.jar patch ...` with all the flags.
+#   3. Run `java -jar morphe-desktop.jar patch ...` with all the flags.
 #   4. Find the patched APK at the deterministic temp path. Fall back to
 #      scanning APKS_DIR / cwd for any newer APK that isn't the input.
 #   5. Rename the patched APK to <app>-v<base-version>-<patches>.apk in
@@ -27,7 +27,7 @@
 #   PATCH_TAG        required  morphe patch tag (e.g. v1.32.0)
 #   PATCH_REPO       required  patch repo slug (used to find .mpp)
 #   PATCH_SLUG       required  repo slug for filename lookup
-#   CLI_JAR          optional  explicit morphe-cli jar override
+#   CLI_JAR          optional  explicit morphe-desktop jar override
 #   KEYSTORE_FILE    required  BKS keystore path (from prepare_keystore)
 #   KEY_ALIAS        required  key alias
 #   KEYSTORE_PASSWORD required  keystore password
@@ -71,10 +71,10 @@ mkdir -p "$OUT_DIR" "$APKS_DIR"
 
 JAR="$CLI_JAR"
 if [ -z "$JAR" ]; then
-  JAR="$(ls -1 "$TOOLS_DIR"/morphe-cli*.jar 2>/dev/null | head -n1 || true)"
+  JAR="$(ls -1 "$TOOLS_DIR"/morphe-desktop*.jar 2>/dev/null | head -n1 || true)"
 fi
 if [ -z "$JAR" ] || [ ! -f "$JAR" ]; then
-  log_error "morphe-cli jar not found in $TOOLS_DIR"
+  log_error "morphe-desktop jar not found in $TOOLS_DIR"
   exit 1
 fi
 
@@ -150,7 +150,7 @@ APK_NORM="${APK#./}"
 
 run_patch() {
   local mode="$1"; shift
-  log "Running morphe-cli for $APP_ID (v$APK_VERSION, mode=$mode)..."
+  log "Running morphe-desktop for $APP_ID (v$APK_VERSION, mode=$mode)..."
   set +e
   "$@" 2>&1 | tee "$PATCH_LOG"
   local rc=${PIPESTATUS[0]}
@@ -183,7 +183,7 @@ OUT_APK=""
 if [ -f "$PATCHED_APK" ]; then
   OUT_APK="$PATCHED_APK"
 else
-  log_warn "morphe-cli --out was not honored; falling back to find-based scan."
+  log_warn "morphe-desktop --out was not honored; falling back to find-based scan."
   OUT_APK="$(
     { find . -maxdepth 1 -type f -name "*.apk" -newer "$MARKER" -printf '%T@ %p\n' || true; \
       find "$APKS_DIR" -maxdepth 1 -type f -name "*.apk" -newer "$MARKER" -printf '%T@ %p\n' || true; } \

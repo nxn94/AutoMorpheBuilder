@@ -12,11 +12,11 @@
 # Behaviour matches the original step:
 #   1. For each app:
 #        - If pin_version is set, use it directly.
-#        - Otherwise, run `morphe-cli list-versions -f <pkg>` and pick
+#        - Otherwise, run `morphe-desktop list-versions -f <pkg>` and pick
 #          the first X.Y.Z version.
 #        - Call unified-downloader.js with (pkg, version, APK_DIR).
 #        - On failure with a pinned version, retry with the head of
-#          morphe-cli list-versions (emergency fallback).
+#          morphe-desktop list-versions (emergency fallback).
 #   2. Merge results and write them to config.json via
 #      update-download-urls.js.
 #
@@ -26,7 +26,7 @@
 #
 # Environment:
 #   REPO_VERSIONS  required  JSON object {repo:tag}
-#   TOOLS_DIR      required  where morphe-cli.jar and *.mpp live
+#   TOOLS_DIR      required  where morphe-desktop.jar and *.mpp live
 #   APK_DIR        required  where APKs land (default ./tools/apks)
 #   RESULTS_DIR    optional  scratch dir for per-app results
 #                            (default $RUNNER_TEMP/download_results)
@@ -63,14 +63,14 @@ resolve_version_for() {
   repo="$(app_config "$pkg" '.repo')"
   slug="$(repo_slug "$repo")"
   mpp="$TOOLS_DIR/${slug}.mpp"
-  if [ ! -f "$mpp" ] || [ ! -f "$TOOLS_DIR/morphe-cli.jar" ]; then
-    log_warn "  [$pkg] no .mpp or morphe-cli.jar; cannot resolve version"
+  if [ ! -f "$mpp" ] || [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
+    log_warn "  [$pkg] no .mpp or morphe-desktop.jar; cannot resolve version"
     return 1
   fi
   cp "$mpp" "$TOOLS_DIR/patches.mpp"
 
   local versions version
-  versions="$(java -jar "$TOOLS_DIR/morphe-cli.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null || true)"
+  versions="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null || true)"
   version="$(printf '%s\n' "$versions" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
   if [ -z "$version" ]; then
     log_warn "  [$pkg] could not determine version"
@@ -100,7 +100,7 @@ download_for() {
   log_warn "  [$pkg] unified-downloader failed for v${version}"
 
   # Pinned-version emergency fallback: retry with the head of
-  # morphe-cli list-versions.
+  # morphe-desktop list-versions.
   local pin
   pin="$(pinned_version "$pkg")"
   if [ -z "$pin" ] || [ "$pin" = "null" ] || [ "$pin" != "$version" ]; then
@@ -108,7 +108,7 @@ download_for() {
     return 0
   fi
   local fallback
-  fallback="$(java -jar "$TOOLS_DIR/morphe-cli.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null \
+  fallback="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
   if [ -z "$fallback" ]; then
     echo "FAILED:no-fallback-version" > "$RESULTS_DIR/${pkg}.failed"

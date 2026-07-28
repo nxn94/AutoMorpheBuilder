@@ -22,7 +22,7 @@
     }
   },
   "cli": {
-    "repo": "MorpheApp/morphe-cli",
+    "repo": "MorpheApp/morphe-desktop",
     "branch": "main"
   },
   "download_urls": {

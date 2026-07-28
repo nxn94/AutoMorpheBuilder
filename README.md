@@ -2,7 +2,7 @@
 
 > ⚠️ **Status**: Vibecoded & Work in Progress | Expect bugs, breaking changes, and incomplete docs
 
-**Automated GitHub Actions pipeline** for building patched Android APKs using [Morphe patches](https://github.com/MorpheApp/morphe-patches), [morphe-cli](https://github.com/MorpheApp/morphe-cli), and [APKEditor](https://github.com/REAndroid/APKEditor).
+**Automated GitHub Actions pipeline** for building patched Android APKs using [Morphe patches](https://github.com/MorpheApp/morphe-patches), [morphe-desktop](https://github.com/MorpheApp/morphe-desktop), and [APKEditor](https://github.com/REAndroid/APKEditor).
 
 🌟 **Forking this repo and patching apps for personal use is encouraged!** Feel free to customize the workflow, add more apps, or modify patches to suit your needs.
 
@@ -21,11 +21,11 @@
 ## 🔧 What It Does
 
 1. ✅ Checks latest Morphe patch/CLI releases
-2. ✅ **Auto-resolves latest supported app versions** from morphe-cli
+2. ✅ **Auto-resolves latest supported app versions** from morphe-desktop
 3. ✅ Downloads APKs from APKMirror (with fallbacks)
 4. ✅ Extracts/selects patchable APK (prefers configured arch, rejects dex-less splits)
 5. ✅ Enforces signing (signed or fail)
-6. ✅ Runs `morphe-cli` with your `patches.json` config
+6. ✅ Runs `morphe-desktop` with your `patches.json` config
 7. ✅ Publishes artifacts & creates GitHub Releases
 
 ---
@@ -95,7 +95,7 @@ Signed builds are **enforced**. Missing required secrets = build fails.
     }
   },
   "cli": {
-    "repo": "MorpheApp/morphe-cli",
+    "repo": "MorpheApp/morphe-desktop",
     "branch": "main"
   }
 }
@@ -110,8 +110,8 @@ Signed builds are **enforced**. Missing required secrets = build fails.
 | `patch_repos[*].branch` | - | Patch branch to use |
 | `patch_repos[*].apkmirror_path` | - | APKMirror URL slug |
 | `patch_repos[*].pin_version` | - | Optional: lock to specific APK version |
-| `cli.repo` | - | morphe-cli repository |
-| `cli.branch` | - | morphe-cli branch (`main` or `dev`) |
+| `cli.repo` | - | morphe-desktop repository |
+| `cli.branch` | - | morphe-desktop branch (`main` or `dev`) |
 
 > 📝 **Note**: `download_urls` is auto-managed by the workflow.
 
@@ -220,7 +220,7 @@ Verify:
 ## 🙏 Thanks
 
 - [Morphe patches](https://github.com/MorpheApp/morphe-patches) - patch definitions & compatibility
-- [morphe-cli](https://github.com/MorpheApp/morphe-cli) - patching & signing
+- [morphe-desktop](https://github.com/MorpheApp/morphe-desktop) - patching & signing
 - [APKEditor](https://github.com/REAndroid/APKEditor) - split package merge
 - [Bouncy Castle](https://www.bouncycastle.org/) - keystore compatibility
 

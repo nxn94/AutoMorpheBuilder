@@ -18,7 +18,7 @@
  *   3. unified-downloader.js (URL cache → parallel resolve → sequential).
  *   4. Manual APKMirror URL from config.json download_urls[pkg].latest_supported.
  *   5. If pinned and everything above failed: emergency fallback to
- *      morphe-cli list-versions, retry with the head of that list.
+ *      morphe-desktop list-versions, retry with the head of that list.
  *
  * Then: aapt-validate, score-rank candidate, merge split packages
  * (APKEditor required — no silent fallback to base.apk-only, which would
@@ -36,7 +36,7 @@
  *   APKEDITOR_JAR  optional  APKEditor.jar path (needed for split-package merge)
  *   PINNED_CHECK   optional  same as config.json patch_repos[pkg].pin_version
  *   PATCH_REPO     optional  patch repo (for emergency fallback)
- *   MORPHE_CLI_JAR optional  morphe-cli jar (for emergency fallback)
+ *   MORPHE_CLI_JAR optional  morphe-desktop jar (for emergency fallback)
  *   MANUAL_URL     optional  config.json download_urls[pkg].latest_supported
  *   RUNNER_TEMP    optional  temp dir (default /tmp)
  *   GITHUB_OUTPUT  required  workflow output file
@@ -199,7 +199,7 @@ function readApkVersion(apkPath) {
  *
  * Flags:
  *   -clean-meta   Strips the META-INF signature block before re-emit.
- *                 morphe-cli re-signs the merged APK anyway, and the
+ *                 morphe-desktop re-signs the merged APK anyway, and the
  *                 original signature is for the per-split contents —
  *                 leaving it in place has caused post-merge install
  *                 failures on some downstream tools. Always safe; the

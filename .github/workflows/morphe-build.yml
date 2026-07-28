@@ -25,6 +25,7 @@ jobs:
       repo-versions: ${{ steps.check.outputs.repo-versions }}
       cli-version: ${{ steps.check.outputs.cli-version }}
       cli-branch: ${{ steps.check.outputs.cli-branch }}
+      cli-repo: ${{ steps.check.outputs.cli-repo }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -100,25 +101,25 @@ jobs:
           path: /usr/local/bin/apkeep
           retention-days: 1
 
-      - name: Download morphe-cli + patches .mpp
+      - name: Download morphe-desktop + patches .mpp
         id: tools
         if: steps.check.outputs.should-build == 'true'
         env:
-          CLI_REPO: MorpheApp/morphe-cli
+          CLI_REPO: ${{ steps.check.outputs.cli-repo }}
           CLI_TAG: ${{ steps.check.outputs.cli-version }}
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
         run: bash scripts/download_morphe_tools.sh
 
-      - name: Cache morphe-cli and patches
+      - name: Cache morphe-desktop and patches
         if: steps.check.outputs.should-build == 'true'
         uses: actions/cache@v5
         with:
           path: |
-            tools/morphe-cli.jar
+            tools/morphe-desktop.jar
             tools/*.mpp
-          key: morphe-tools-cli-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
+          key: morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
           restore-keys: |
-            morphe-tools-cli-${{ steps.check.outputs.cli-version }}-
+            morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-
             morphe-tools-
 
       - name: Install aapt for APK version validation
@@ -171,12 +172,13 @@ jobs:
       PATCH_SLUG: ${{ matrix.patchSlug }}
       CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
       CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
+      CLI_REPO: ${{ needs.check-versions.outputs.cli-repo }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Java (for morphe-cli)
+      - name: Set up Java (for morphe-desktop)
         uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -273,13 +275,13 @@ jobs:
           restore-keys: |
             morphe-patches-${{ matrix.patchSlug }}-
 
-      - name: Cache morphe-cli
+      - name: Cache morphe-desktop
         uses: actions/cache@v5
         with:
-          path: ${{ env.TOOLS_DIR }}/morphe-cli.jar
-          key: morphe-cli-${{ needs.check-versions.outputs.cli-version }}
+          path: ${{ env.TOOLS_DIR }}/morphe-desktop.jar
+          key: morphe-desktop-${{ needs.check-versions.outputs.cli-version }}
           restore-keys: |
-            morphe-cli-
+            morphe-desktop-
 
       - name: Get latest Morphe patches + CLI + APKEditor
         id: morphe
@@ -287,6 +289,7 @@ jobs:
           PATCH_REPO: ${{ matrix.patchRepo }}
           PATCH_TAG: ${{ matrix.patchTag }}
           PATCH_SLUG: ${{ matrix.patchSlug }}
+          CLI_REPO: ${{ env.CLI_REPO }}
           CLI_VERSION: ${{ env.CLI_VERSION }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
         run: bash scripts/fetch_morphe_tools.sh
@@ -309,9 +312,9 @@ jobs:
           set -euo pipefail
           slug="$(printf '%s' "$PATCH_REPO" | tr '/' '-')"
           mpp="$TOOLS_DIR/${slug}.mpp"
-          jar="$TOOLS_DIR/morphe-cli.jar"
+          jar="$TOOLS_DIR/morphe-desktop.jar"
           if [ ! -f "$jar" ] || [ ! -f "$mpp" ]; then
-            echo "::error::morphe-cli jar or $mpp missing"
+            echo "::error::morphe-desktop jar or $mpp missing"
             exit 1
           fi
           if [ -n "$PINNED_VERSION" ] && [ "$PINNED_VERSION" != "null" ]; then
@@ -369,7 +372,7 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: bash scripts/prepare_keystore.sh
 
-      - name: Patch ${{ matrix.name }} with morphe-cli
+      - name: Patch ${{ matrix.name }} with morphe-desktop
         id: patch
         env:
           APP_ID: ${{ matrix.appId }}

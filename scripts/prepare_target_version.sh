@@ -2,7 +2,7 @@
 #
 # scripts/prepare_target_version.sh — gather inputs for the
 # download-supported-apk.js + resolve-supported-version.js steps
-# (pin version, morphe-cli jar, manual fallback URL, disabled patches).
+# (pin version, morphe-desktop jar, manual fallback URL, disabled patches).
 #
 # Replaces the inline `run:` block in the workflow's "Prepare inputs for
 # download-supported-apk.js" step. The job previously wrote three
@@ -12,7 +12,7 @@
 # Environment:
 #   APP_ID        required  package id
 #   PATCH_REPO    required  patch repo (for slug → mpp lookup)
-#   TOOLS_DIR     required  dir containing morphe-cli-*-all.jar
+#   TOOLS_DIR     required  dir containing morphe-desktop-*-all.jar
 #   CONFIG_FILE   optional  default ./config.json
 #   PATCHES_FILE  optional  default ./patches.json
 #   GITHUB_OUTPUT required
@@ -37,7 +37,7 @@ done
 pin="$(pinned_version "$APP_ID" 2>/dev/null || true)"
 if [ -z "$pin" ] || [ "$pin" = "null" ]; then pin=""; fi
 
-jar="$(ls -1 "$TOOLS_DIR"/morphe-cli-*-all.jar 2>/dev/null | head -n1 || true)"
+jar="$(ls -1 "$TOOLS_DIR"/morphe-desktop-*-all.jar 2>/dev/null | head -n1 || true)"
 if [ -z "$jar" ]; then jar=""; fi
 
 url="$(jq -r --arg pkg "$APP_ID" '.download_urls?[$pkg]?["latest_supported"] // empty' "$CONFIG_FILE" 2>/dev/null || true)"
