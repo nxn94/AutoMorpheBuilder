@@ -273,11 +273,9 @@ jobs:
         run: |
           # Artifact download strips executable bits; restore them.
           if [ -f /usr/local/bin/apkeep ] && [ ! -x /usr/local/bin/apkeep ]; then
-            echo "::warning::apkeep on disk without +x; chmod +x"
             chmod +x /usr/local/bin/apkeep
           fi
           if ! command -v apkeep >/dev/null 2>&1 || [ ! -x /usr/local/bin/apkeep ]; then
-            echo "::warning::apkeep missing or not executable after artifact restore; reinstalling"
             bash scripts/install_apkeep.sh
           fi
           apkeep --version

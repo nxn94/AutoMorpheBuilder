@@ -87,8 +87,22 @@ download_for() {
     return 0
   fi
   log "  [$pkg] downloading v${version}..."
-  local result
-  result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>&1 || true)"
+  local result err stderr_log
+  stderr_log="$(mktemp)"
+  # Single-quoted trap so $stderr_log is re-evaluated when the trap
+  # fires (on RETURN) — that way the second node invocation below,
+  # which reassigns stderr_log, gets the right temp file cleaned up.
+  trap 'rm -f "$stderr_log"' RETURN
+  # Separate unified-downloader's stderr (per-source diagnostic lines)
+  # from stdout (the JSON result). The previous 2>&1 merge buried the
+  # JSON inside dozens of `[apkeep-resolve] Failed:` /
+  # `[parallel-resolve] …` lines, so jq couldn't parse it, exited
+  # non-zero, the `|| true` swallowed the error, and the `reason:`
+  # line was silently skipped — leaving the operator guessing whether
+  # the cause was missing APKMirror API credentials, a Cloudflare
+  # block on the Playwright path, an APKPure rate-limit, or something
+  # else entirely.
+  result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>"$stderr_log" || true)"
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
     url="$(printf '%s' "$result" | jq -r '.url // empty')"
@@ -98,6 +112,24 @@ download_for() {
     fi
   fi
   log_warn "  [$pkg] unified-downloader failed for v${version}"
+  err="$(printf '%s' "$result" | jq -r '.error // empty' 2>/dev/null || true)"
+  if [ -n "$err" ] && [ "$err" != "null" ]; then
+    log_warn "  [$pkg]   reason: ${err}"
+  fi
+  # Surface the per-source diagnostic lines so the operator can see
+  # WHICH fallback source failed and what its concrete error was.
+  # Without this, only the composite "All sources failed to resolve
+  # URL" is visible — the per-source cause (missing
+  # APKMIRROR_API_USER/PASS, Cloudflare 403 on the Playwright path,
+  # APKPure rate-limit, apkeep EACCES, etc.) is invisible.
+  if [ -s "$stderr_log" ]; then
+    log_warn "  [$pkg]   stderr:"
+    sed 's/^/    /' "$stderr_log" \
+      | grep -E '^\s+\[(apkeep-resolve|apkmirror-api-resolve|apkmirror-resolve|parallel-resolve|apkeep|apkmirror-api|apkmirror-pw|apkmirror|download)\] ' \
+      | while IFS= read -r line; do
+          log_warn "  [$pkg]   ${line}"
+        done
+  fi
 
   # Pinned-version emergency fallback: retry with the head of
   # morphe-desktop list-versions.
@@ -115,7 +147,10 @@ download_for() {
     return 0
   fi
   log "  [$pkg] emergency fallback to v${fallback}..."
-  result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$fallback" "$APK_DIR" 2>&1 || true)"
+  # Same stderr separation for the fallback attempt. Reassigning
+  # $stderr_log updates which file the RETURN trap cleans up.
+  stderr_log="$(mktemp)"
+  result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$fallback" "$APK_DIR" 2>"$stderr_log" || true)"
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
     url="$(printf '%s' "$result" | jq -r '.url // empty')"
@@ -123,6 +158,19 @@ download_for() {
       printf '%s:%s:%s\n' "$pkg" "$fallback" "$url" > "$RESULTS_DIR/${pkg}.txt"
       return 0
     fi
+  fi
+  log_warn "  [$pkg] unified-downloader failed for fallback v${fallback}"
+  err="$(printf '%s' "$result" | jq -r '.error // empty' 2>/dev/null || true)"
+  if [ -n "$err" ] && [ "$err" != "null" ]; then
+    log_warn "  [$pkg]   reason: ${err}"
+  fi
+  if [ -s "$stderr_log" ]; then
+    log_warn "  [$pkg]   stderr:"
+    sed 's/^/    /' "$stderr_log" \
+      | grep -E '^\s+\[(apkeep-resolve|apkmirror-api-resolve|apkmirror-resolve|parallel-resolve|apkeep|apkmirror-api|apkmirror-pw|apkmirror|download)\] ' \
+      | while IFS= read -r line; do
+          log_warn "  [$pkg]   ${line}"
+        done
   fi
   echo "FAILED:fallback-error" > "$RESULTS_DIR/${pkg}.failed"
   return 0
