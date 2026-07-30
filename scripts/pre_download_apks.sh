@@ -87,7 +87,7 @@ download_for() {
     return 0
   fi
   log "  [$pkg] downloading v${version}..."
-  local result
+  local result err
   result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>&1 || true)"
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
@@ -98,6 +98,17 @@ download_for() {
     fi
   fi
   log_warn "  [$pkg] unified-downloader failed for v${version}"
+  # Surface the actual error from the JSON payload so the next failure
+  # can be diagnosed without rerunning with debug logging. Without this,
+  # the [apkeep-resolve] / [apkmirror-api-resolve] / [apkmirror] stderr
+  # lines captured into $result are silently discarded — leaving the
+  # operator guessing whether the cause was a missing APKMirror API
+  # secret, a Cloudflare block on the Playwright path, an APKPure
+  # rate-limit, or something else entirely.
+  err="$(printf '%s' "$result" | jq -r '.error // empty' 2>/dev/null || true)"
+  if [ -n "$err" ] && [ "$err" != "null" ]; then
+    log_warn "  [$pkg]   reason: ${err}"
+  fi
 
   # Pinned-version emergency fallback: retry with the head of
   # morphe-desktop list-versions.
@@ -123,6 +134,11 @@ download_for() {
       printf '%s:%s:%s\n' "$pkg" "$fallback" "$url" > "$RESULTS_DIR/${pkg}.txt"
       return 0
     fi
+  fi
+  log_warn "  [$pkg] unified-downloader failed for fallback v${fallback}"
+  err="$(printf '%s' "$result" | jq -r '.error // empty' 2>/dev/null || true)"
+  if [ -n "$err" ] && [ "$err" != "null" ]; then
+    log_warn "  [$pkg]   reason: ${err}"
   fi
   echo "FAILED:fallback-error" > "$RESULTS_DIR/${pkg}.failed"
   return 0
