@@ -91,6 +91,14 @@ if [ ! -f "$KEYSTORE_FILE" ]; then
   exit 1
 fi
 
+# NOTE: --keystore-password / --keystore-entry-password are currently
+# passed as inline values, which makes them visible in /proc/<pid>/cmdline
+# to any other process in the same job for the duration of the call.
+# prepare_keystore.sh's keytool invocations already use the safer
+# -storepass:env / -keypass:env form (see that script). If morphe-desktop
+# upstream gains an equivalent env- or file-based password form (e.g.
+# --keystore-password=env:KEYSTORE_PASSWORD or =file:<path>), switch
+# these to it. Until then, this is the documented upstream limitation.
 KEY_ARGS=(
   --keystore="$KEYSTORE_FILE"
   --keystore-password="$KEYSTORE_PASSWORD"

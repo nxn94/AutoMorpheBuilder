@@ -2,25 +2,77 @@
 
 ## What this repo is
 
-GitHub Actions CI/CD project that builds patched Android APKs with [Morphe](https://github.com/MorpheApp/morphe-patches) patches. **The workflow is the product** — there is no app to run locally. The full system is two YAML files plus a handful of Node.js scripts under `.github/scripts/`.
+GitHub Actions CI/CD project that builds patched Android APKs with [Morphe](https://github.com/MorpheApp/morphe-patches) patches. **The workflow is the product** — there is no app to run locally. The full system is three YAML workflows plus two trees of scripts:
+- **Node.js helpers** under `.github/scripts/` (orchestration, downloaders, validators, tests).
+- **Shell pipeline** under `scripts/` — each top-level `scripts/<step>.sh` corresponds to one workflow step, with shared helpers in `scripts/lib/`.
 
 Supported apps (defined in `config.json` `patch_repos`): `com.google.android.youtube`, `com.google.android.apps.youtube.music`, `com.reddit.frontpage`. Add a new app = add a single entry to `config.json` `patch_repos` (includes `apkmirror_path`), no workflow edits.
 
 ## Key files
 
+### Workflows
+
 | File | Purpose |
 |------|---------|
-| `config.json` | Build config: `patch_repos` (per-app, with `name`, `repo`, `branch`, `apkmirror_path`, optional `pin_version`), `cli` repo/branch, `download_urls` cache. |
-| `patches.json` | Patch toggles — **repo-keyed**: `{ "owner/repo": { "pkg": { "Patch": true } } }` |
-| `.github/workflows/morphe-build.yml` | Main workflow (contains all build logic). Runs daily at 05:15 UTC + manual `workflow_dispatch`. |
+| `.github/workflows/morphe-build.yml` | Main build workflow. Runs daily at 05:15 UTC + manual `workflow_dispatch`. `check-versions → build (matrix per app) → create-release`. |
 | `.github/workflows/update-patches.yml` | Manual-only workflow to refresh `patches.json` from upstream patch repos. |
-| `.github/scripts/unified-downloader.js` | APK downloader with multi-source fallback (config cache → URL cache → parallel apkeep/APKMirror-API/Playwright resolution → sequential fallback). |
-| `.github/scripts/update-download-urls.js` | Writes resolved URLs back to `config.json` `download_urls`. CLI: `node update-download-urls.js <pkg> <version> <url>`. |
-| `.github/scripts/install-aapt.js` | Installs Android `aapt` (cmdline-tools + build-tools 34.0.0). Idempotent. |
-| `.github/scripts/install-playwright-browsers.js` | Custom Playwright installer (bypasses a yauzl/Node bug in Playwright 1.58). |
-| `.github/scripts/cleanup-caches.js` | Prunes stale GitHub Actions caches. Dry-run by default; `--apply` to delete. |
-| `.github/scripts/resolve-tag.sh` | Shared shell script: `resolve_release_tag` function (sourced by both workflows). |
-| `.github/scripts/__tests__/apkmirror-scraper.test.js` | Jest unit tests for URL/variant helpers in `unified-downloader.js`. |
+| `.github/workflows/ci.yml` | Pull-request + main-branch CI: `npm ci` → `npm run lint` → `npm test`. Gates broken PRs. |
+
+### Config
+
+| File | Purpose |
+|------|---------|
+| `config.json` | Build config: `patch_repos` (per-app, with `name`, `repo`, `branch`, `apkmirror_path`, optional `pin_version`), `cli` repo/branch, `download_urls` cache, `auto_update_urls` flag (default `true`). |
+| `patches.json` | Patch toggles — **repo-keyed**: `{ "owner/repo": { "pkg": { "Patch": true } } }` |
+| `eslint.config.js` | Flat-config ESLint setup (v9). Scoped to `.github/scripts/**/*.js`. |
+
+### Node.js helpers (`.github/scripts/`)
+
+| File | Purpose |
+|------|---------|
+| `unified-downloader.js` | APK downloader with multi-source fallback (config cache → URL cache → parallel apkeep/APKMirror-API/Playwright resolution → sequential fallback). |
+| `download-supported-apk.js` | Per-app download orchestration with version + ABI validation. |
+| `apk-selection.js` | Pure scoring/ranking helpers (apkHasNativeLibsForArch, listApkAbis, findBundleInDir, etc.). |
+| `apk-abi-validator.js` | Post-download ABI validation for the downloader. |
+| `resolve-supported-version.js` | Morphe-supported version resolver. |
+| `patch-apk-manifest.js` | APK manifest patching primitives. |
+| `patch-playwright-cft-path.js` | Patches Playwright's chromium-for-testing download path on disk. |
+| `update-download-urls.js` | Writes resolved URLs back to `config.json` `download_urls`. CLI: `node update-download-urls.js <pkg> <version> <url>`. Honoured only when `auto_update_urls` is true. |
+| `install-aapt.js` | Installs Android `aapt` (cmdline-tools + build-tools 34.0.0). Idempotent. |
+| `install-playwright-browsers.js` | Custom Playwright installer (bypasses a yauzl/Node bug in Playwright 1.58). |
+| `cleanup-caches.js` | Prunes stale GitHub Actions caches. Dry-run by default; `--apply` to delete. |
+| `resolve-tag.sh` | Shared shell script: `resolve_release_tag` function (sourced by both workflows). |
+| `sync-patches.sh` | Patches.json syncer (used by update-patches.yml). |
+
+### Shell pipeline (`scripts/`)
+
+| File | Purpose |
+|------|---------|
+| `check_versions.sh` | Resolves latest Morphe patch + CLI tags and emits the build matrix. |
+| `pre_download_apks.sh` | Pre-downloads APKs in parallel across all configured apps before the build matrix spins up. Calls `update-download-urls.js` per app (honoured by `auto_update_urls`). |
+| `fetch_morphe_tools.sh` | Fetches `.mpp` patches + `morphe-desktop.jar` + `APKEditor.jar` per matrix entry. |
+| `download_morphe_tools.sh` | Bulk morphe-desktop + patches download (check-versions step). |
+| `prepare_target_version.sh` | Computes the pinned version for the matrix entry. |
+| `prepare_keystore.sh` | Decodes `KEYSTORE_BASE64`, detects type, produces BKS (morphe-desktop) + PKCS12 (apksigner) keystores. Uses `keytool -storepass:env / -keypass:env` so passwords never appear on the cmdline. |
+| `patch_apk.sh` | Runs `morphe-desktop.jar patch` and writes the patched APK to `out/`. |
+| `create_release.sh` | Publishes per-app GitHub Releases. |
+| `install_aapt.sh` | Idempotent `aapt` install. |
+| `install_apkeep.sh` | Downloads apkeep binary; pins SHA-256 against `APKEEP_VERSION`. |
+| `install_bouncycastle.sh` | Downloads BouncyCastle provider jar from Maven Central; verifies SHA-256 from the companion `.sha256` file. |
+| `install_playwright.sh` | Installs Playwright Chromium (uses the download-host env override). |
+| `lib/common.sh`, `lib/json.sh`, `lib/config.sh`, `lib/apk.sh`, `lib/github.sh` | Sourced helpers shared across `scripts/*.sh`. `config.sh` exposes `auto_update_urls_enabled`, `pinned_version`, `list_app_ids`, etc. |
+
+### Tests (`.github/scripts/__tests__/`)
+
+| File | Purpose |
+|------|---------|
+| `apk-selection.test.js` | Pure helpers — scoring, ABI matching, bundle discovery. |
+| `apk-abi-validator.test.js` | Post-download ABI validation. |
+| `apkmirror-scraper.test.js` | URL/variant helpers in `unified-downloader.js`. |
+| `cleanup-caches.test.js` | Cache-pruning script. |
+| `fallback-chain.test.js` | Multi-source download fallback ordering. |
+| `patch-apk-manifest.test.js` | Manifest patching. |
+| `unified-downloader-cleanup.test.js` | Cleanup-on-failure contract for the downloader. |
 
 ## Workflow job graph (morphe-build.yml)
 
@@ -38,15 +90,19 @@ check-versions → build (matrix per app) → create-release
 # Run JS unit tests (Jest)
 npm test
 npx jest .github/scripts/__tests__/apkmirror-scraper.test.js   # single file
+# Note: apk-selection.test.js and apk-abi-validator.test.js shell
+# out to `zip`. Install it (`sudo apt-get install -y zip`) for those
+# tests to actually exercise instead of skipping.
 
 # Validate JSON
 jq '.' patches.json && jq '.' config.json
 
 # Lint JS
-npx eslint .github/scripts/*.js
+npm run lint                              # via eslint.config.js
+npx eslint .github/scripts                # same
 
 # Lint shell
-shellcheck .github/scripts/*.sh
+shellcheck scripts/*.sh scripts/lib/*.sh
 
 # Validate workflow (any of these work)
 docker run --rm -v $(pwd):/repo ghcr.io/rhysd/actionlint:latest -color .
@@ -73,6 +129,7 @@ GITHUB_REPOSITORY=owner/repo GH_TOKEN=... node .github/scripts/cleanup-caches.js
 ```
 
 - `pin_version` (optional, per app) locks the build to a specific APK version, bypassing Morphe-supported resolution. When set, `update-download-urls.js` skips URL updates for that app.
+- `auto_update_urls` (top-level, default `true`) gates whether resolved download URLs are written back to `config.json` after a pre-download. See the "Repo quirks" section for details.
 - `apkmirror_path` (required, per app in `patch_repos`) is the APKMirror URL slug for that package (e.g. `google-inc/youtube`).
 - `download_urls` is auto-managed — do not hand-edit.
 
@@ -103,6 +160,8 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 
 - `patches.json` gets pushed back to `main` by the `update-patches.yml` workflow. Local edits will conflict on the next run. Make `patches.json` changes before the run, or trigger `update-patches.yml` first.
 - `download_urls` cached at `~/.cache/auto-morphe-builder/urls/` is consulted **before** `config.json` `download_urls` — clear it if you want to force re-resolution.
+- `auto_update_urls` in `config.json` gates whether `pre_download_apks.sh` writes back resolved URLs to `config.json` after a pre-download. Default `true`. When `false`, the resolved URL is logged but `config.json` is left untouched (useful if you want to pin downloads to specific URLs or avoid noisy diffs). Set to `true`/`false`/`1`/`0`/`yes`/`no`; anything else is treated as `false`.
+- An older version of this project shipped a `state.json` file (introduced in the original `feat: add CI/CD workflow` commit, removed by `chore: remove state.json and the update-state job`). If you see references to it in old docs, PRs, or commit messages, that's historical — do not re-introduce it.
 - BouncyCastle is cached via `actions/cache@v5` (bcprov-jdk18on 1.77) and only downloaded when the cache misses.
 - APKMirror scraper uses Playwright when curl is blocked by Cloudflare; all 3 pages (release → variant → download) navigate in the same browser session to preserve cookies. The custom `install-playwright-browsers.js` is required — `npx playwright install` is broken on Playwright 1.58 (yauzl extraction hang).
 - `npm ci` + `npx playwright install chromium` runs on every CI build (not cached at the npm level).
@@ -118,4 +177,4 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 
 ## Local environment
 
-`package.json` declares `engines.node >=24` to match the GitHub Actions runner (which uses `actions/setup-node` with `node-version: '24'`). Tests use Jest only. A flat-config ESLint setup exists at the repo root (`eslint.config.js`) and `npm run lint` runs it over `.github/scripts/`; the documented `npx eslint .github/scripts/*.js` command also works. No OpenCode config (`opencode.json`) is present in the repo.
+`package.json` declares `engines.node >=24` to match the GitHub Actions runner (which uses `actions/setup-node` with `node-version: '24'`). Tests use Jest only. The flat-config ESLint setup at the repo root (`eslint.config.js`) is what `npm run lint` runs against `.github/scripts/`; the documented `npx eslint .github/scripts/*.js` command also works. The shell pipeline under `scripts/` is linted via `shellcheck` (not part of `npm run lint`). The PR CI workflow (`.github/workflows/ci.yml`) installs `zip` via `apt-get` because the apk-selection / apk-abi-validator test fixtures shell out to `zip`. No OpenCode config (`opencode.json`) is present in the repo.

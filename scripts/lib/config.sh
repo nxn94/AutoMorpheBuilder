@@ -102,3 +102,18 @@ validate_required_config() {
     return 1
   fi
 }
+
+# auto_update_urls_enabled
+#   Returns 0 when config.json's `auto_update_urls` flag is truthy (or
+#   absent, for backward compatibility with existing configs), non-zero
+#   when explicitly disabled. The pre-download step honours this to
+#   decide whether to write back resolved URLs into config.json.
+auto_update_urls_enabled() {
+  require_file "$CONFIG_FILE" >/dev/null || return 1
+  local flag
+  flag="$(jq -r '.auto_update_urls // true' "$CONFIG_FILE" 2>/dev/null)"
+  case "$flag" in
+    true|True|TRUE|1|yes|YES) return 0 ;;
+    *)                        return 1 ;;
+  esac
+}

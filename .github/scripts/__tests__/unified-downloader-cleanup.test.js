@@ -21,7 +21,7 @@
 // path still preserves the file.
 //
 // Mocking strategy mirrors fallback-chain.test.js: child_process
-// (execFile / spawn / execSync) and playwright are stubbed at the
+// (execFile / spawn / execFileSync) and playwright are stubbed at the
 // module level. apk-abi-validator is jest.mock()'d so the
 // destructured reference inside the downloader resolves to the same
 // jest.fn() instance we configure per-test (a jest.spyOn at the
@@ -50,7 +50,6 @@ jest.mock('child_process', () => {
       throw err;
     }),
     spawn: jest.fn(),
-    execSync: jest.fn(),
   };
 });
 jest.mock('node:child_process', () => jest.requireMock('child_process'));
@@ -78,7 +77,7 @@ jest.mock('../apk-abi-validator', () => {
 process.env.APKMIRROR_API_USER = 'test-user';
 process.env.APKMIRROR_API_PASS = 'test-pass';
 
-const { execFile, execSync, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const { validateDownloadedApkAbi } = require('../apk-abi-validator');
 const { downloadWithUrl, downloadWithApkeep } = require('../unified-downloader');
 
@@ -125,9 +124,9 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
   test('deletes the partial APK when VERSION MISMATCH is detected', async () => {
     // The curl mock writes a fake APK and "succeeds" with code 0,
     // simulating a completed download. Then validateApkVersion (via
-    // execSync) returns a wrong version, triggering VERSION MISMATCH.
+    // execFileSync) returns a wrong version, triggering VERSION MISMATCH.
     spawn.mockImplementation(makeFakeCurlSpawn(apksDir, PKG, VER));
-    execSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
+    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
 
     const expectedPath = path.join(apksDir, `${PKG}_${VER}.apk`);
 
@@ -161,7 +160,7 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
     // contract is exercised on every attempt. Fake timers handle
     // the backoff sleeps.
     spawn.mockImplementation(makeFakeCurlSpawn(apksDir, PKG, VER));
-    execSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
+    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
 
     validateDownloadedApkAbi.mockImplementation(() => {
       throw new Error('Downloaded APK is missing lib/arm64-v8a/*.so (forced for test)');
@@ -200,7 +199,7 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
     // every validation passes. Pin the success path so a future
     // refactor doesn't accidentally delete the working APK.
     spawn.mockImplementation(makeFakeCurlSpawn(apksDir, PKG, VER));
-    execSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
+    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
 
     // ABI validation passes (no throw).
     validateDownloadedApkAbi.mockImplementation(() => { /* no throw — pretend the arch is fine */ });
@@ -252,7 +251,7 @@ describe('downloadWithApkeep — cleanup-on-failure contract', () => {
     });
 
     // Version validation fails.
-    execSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
+    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
 
     // ABI validation never reached in this path (VERSION MISMATCH
     // throws first), but a no-throw implementation keeps the test
@@ -293,7 +292,7 @@ describe('downloadWithApkeep — cleanup-on-failure contract', () => {
     });
 
     // Version validation passes.
-    execSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
+    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
 
     // ABI validation throws — the actual Reddit failure mode that
     // prompted the cleanup contract.

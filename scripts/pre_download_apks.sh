@@ -146,10 +146,14 @@ done
 
 if compgen -G "$RESULTS_DIR/*.txt" >/dev/null; then
   cat "$RESULTS_DIR"/*.txt > "$RESULTS_DIR/merged.txt" || true
-  while IFS=: read -r pkg ver url; do
-    [ -z "$pkg" ] && continue
-    node "$(dirname "$0")/../.github/scripts/update-download-urls.js" "$pkg" "$ver" "$url" >/dev/null || true
-  done < "$RESULTS_DIR/merged.txt"
+  if auto_update_urls_enabled; then
+    while IFS=: read -r pkg ver url; do
+      [ -z "$pkg" ] && continue
+      node "$(dirname "$0")/../.github/scripts/update-download-urls.js" "$pkg" "$ver" "$url" >/dev/null || true
+    done < "$RESULTS_DIR/merged.txt"
+  else
+    log "auto_update_urls is disabled in config.json; skipping download_urls backfill."
+  fi
 fi
 
 log "Pre-download complete."

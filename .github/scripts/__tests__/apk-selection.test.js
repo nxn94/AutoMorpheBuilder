@@ -209,7 +209,7 @@ describe('apkHasDex', () => {
     require('node:child_process').spawnSync('zip', [fakeApk, '/dev/null'], { stdio: 'ignore' });
     // Write a small classes.dex and add it. (Empty zip without dex -> false.)
     fs.writeFileSync(path.join(tmp, 'classes.dex'), 'fake');
-    require('node:child_process').spawnSync('zip', ['-j', fakeApk, path.join(tmp, 'classes.dex')], { stdio: 'ignore' });
+    require('node:child_process').spawnSync('zip', [fakeApk, 'classes.dex'], { cwd: tmp, stdio: 'ignore' });
     expect(apkHasDex(fakeApk)).toBe(true);
   });
 
@@ -227,7 +227,7 @@ describe('apkHasDex', () => {
     }
     const fakeApk = path.join(tmp, 'no-dex.apk');
     fs.writeFileSync(path.join(tmp, 'other.txt'), 'fake');
-    require('node:child_process').spawnSync('zip', ['-j', fakeApk, path.join(tmp, 'other.txt')], { stdio: 'ignore' });
+    require('node:child_process').spawnSync('zip', [fakeApk, 'other.txt'], { cwd: tmp, stdio: 'ignore' });
     expect(apkHasDex(fakeApk)).toBe(false);
   });
 });
@@ -259,12 +259,15 @@ describe('apkHasNativeLibsForArch', () => {
   function makeApk(name, entries) {
     const apkPath = path.join(tmp, name);
     // Create an empty zip first, then add each entry at its full path.
+    // Using `cwd: tmp` plus a relative entry name preserves directory
+    // structure inside the zip — important because the helpers under
+    // test match against `lib/<arch>/...` paths.
     require('node:child_process').spawnSync('zip', [apkPath, '/dev/null'], { stdio: 'ignore' });
     for (const e of entries) {
       const full = path.join(tmp, e);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       fs.writeFileSync(full, 'fake');
-      require('node:child_process').spawnSync('zip', ['-j', apkPath, full], { stdio: 'ignore' });
+      require('node:child_process').spawnSync('zip', [apkPath, e], { cwd: tmp, stdio: 'ignore' });
     }
     return apkPath;
   }
@@ -395,7 +398,7 @@ describe('listApkAbis', () => {
       const full = path.join(tmp, e);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       fs.writeFileSync(full, 'fake');
-      require('node:child_process').spawnSync('zip', ['-j', apkPath, full], { stdio: 'ignore' });
+      require('node:child_process').spawnSync('zip', [apkPath, e], { cwd: tmp, stdio: 'ignore' });
     }
     return apkPath;
   }
@@ -462,7 +465,7 @@ describe('BUNDLE-vs-single-APK regression', () => {
       const full = path.join(tmp, e);
       fs.mkdirSync(path.dirname(full), { recursive: true });
       fs.writeFileSync(full, 'fake');
-      require('node:child_process').spawnSync('zip', ['-j', apkPath, full], { stdio: 'ignore' });
+      require('node:child_process').spawnSync('zip', [apkPath, e], { cwd: tmp, stdio: 'ignore' });
     }
     return apkPath;
   }

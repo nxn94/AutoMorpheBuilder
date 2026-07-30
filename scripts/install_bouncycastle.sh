@@ -25,6 +25,9 @@ set -Eeuo pipefail
 
 BCOPS_VERSION="${BCOPS_VERSION:-1.77}"
 BCOPS_URL="https://repo1.maven.org/maven2/org/bouncycastle/bcprov-jdk18on/${BCOPS_VERSION}/bcprov-jdk18on-${BCOPS_VERSION}.jar"
+# Maven Central publishes a companion .sha256 file alongside every
+# artifact; we fetch it and verify before installing.
+BCOPS_SHA256_URL="${BCOPS_URL}.sha256"
 BCPROV_PATH="${BCPROV_PATH:-/usr/share/java/bcprov.jar}"
 TMP_DIR="${TMP_DIR:-/tmp/bouncycastle}"
 
@@ -35,9 +38,23 @@ fi
 
 mkdir -p "$TMP_DIR"
 TARGET="$TMP_DIR/bcprov.jar"
+SHA_FILE="$TMP_DIR/bcprov.jar.sha256"
 
 log "Downloading BouncyCastle ${BCOPS_VERSION} from Maven Central..."
 with_retry 3 5 curl -fsSL -o "$TARGET" "$BCOPS_URL"
+with_retry 3 5 curl -fsSL -o "$SHA_FILE" "$BCOPS_SHA256_URL"
+
+# The Maven .sha256 file is the bare hash on a single line. Read it,
+# compare against the downloaded jar, refuse to install on mismatch.
+EXPECTED_SHA="$(awk '{print $1}' "$SHA_FILE")"
+log "Verifying BouncyCastle ${BCOPS_VERSION} sha256..."
+if ! echo "${EXPECTED_SHA}  ${TARGET}" | sha256sum -c --strict >/dev/null 2>&1; then
+  log_error "BouncyCastle sha256 mismatch — refusing to install."
+  log_error "Expected: ${EXPECTED_SHA}"
+  log_error "Got:      $(sha256sum "${TARGET}" | awk '{print $1}')"
+  rm -f "${TARGET}" "${SHA_FILE}"
+  exit 1
+fi
 
 mkdir -p "$(dirname "$BCPROV_PATH")"
 if [ -w "$(dirname "$BCPROV_PATH")" ]; then
