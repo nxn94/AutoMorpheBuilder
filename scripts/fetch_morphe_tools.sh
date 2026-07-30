@@ -109,7 +109,7 @@ if [ -z "$APKEDITOR_ASSET" ]; then
     gh release view "$APKEDITOR_TAG" --repo REAndroid/APKEditor --json assets \
       -q '.assets[] | select(.name | endswith(".jar")) | .name' \
       | head -n1
-  )
+  )"
 fi
 if [ -z "$APKEDITOR_ASSET" ]; then
   log_error "Could not find APKEditor .jar asset on release ${APKEDITOR_TAG}."
