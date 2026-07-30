@@ -8,7 +8,7 @@
 
 ---
 
-## 📱 Supported Apps
+## 📱 Tested Apps
 
 | App | Package ID |
 |-----|------------|
