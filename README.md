@@ -30,6 +30,12 @@
 
 ---
 
+## 📄 Setup Guide
+
+Full setup instructions: [→ SETUP.md](SETUP.md)
+
+---
+
 ## 📦 Releases & Obtainium
 
 ### Release Format
@@ -223,12 +229,6 @@ Verify:
 - [morphe-desktop](https://github.com/MorpheApp/morphe-desktop) - patching & signing
 - [APKEditor](https://github.com/REAndroid/APKEditor) - split package merge
 - [Bouncy Castle](https://www.bouncycastle.org/) - keystore compatibility
-
----
-
-## 📄 Setup Guide
-
-Full setup instructions: [→ SETUP.md](SETUP.md)
 
 ---
 
