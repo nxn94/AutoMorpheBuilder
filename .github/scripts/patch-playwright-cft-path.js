@@ -81,7 +81,7 @@ Module._resolveFilename = function (req, parent, ...rest) {
       fs.writeFileSync(sibling, patched);
     }
     return sibling;
-  } catch (err) {
+  } catch (_err) {
     // If anything goes wrong reading/rewriting, fall back to the original file
     // so Playwright still runs (it will just hit the unmodified cft path).
     return resolved;

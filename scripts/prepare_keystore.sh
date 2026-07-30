@@ -77,7 +77,10 @@ printf '%s' "$KEYSTORE_B64" | base64 -d > "$RAW_KEYSTORE"
 
 detect_keystore_type() {
   local type="$1"
-  local -a args=(keytool -list -keystore "$RAW_KEYSTORE" -storetype "$type" -storepass "$KEYSTORE_PASSWORD")
+  # Use -storepass:env / -keypass:env instead of inline -storepass/-keypass
+  # so passwords never appear on the keytool command line (visible via
+  # /proc/<pid>/cmdline to any other process in the same job).
+  local -a args=(keytool -list -keystore "$RAW_KEYSTORE" -storetype "$type" -storepass:env KEYSTORE_PASSWORD)
   if [ "$type" = "BKS" ] || [ "$type" = "UBER" ]; then
     args+=(-providerclass org.bouncycastle.jce.provider.BouncyCastleProvider -providerpath "$BCPROV_JAR")
   fi
@@ -122,8 +125,8 @@ IMPORT_BASE_ARGS=(
   keytool -importkeystore -noprompt
   -srckeystore "$RAW_KEYSTORE"
   -srcstoretype "$SRC_TYPE"
-  -srcstorepass "$KEYSTORE_PASSWORD"
-  -deststorepass "$KEYSTORE_PASSWORD"
+  -srcstorepass:env KEYSTORE_PASSWORD
+  -deststorepass:env KEYSTORE_PASSWORD
   -providerclass org.bouncycastle.jce.provider.BouncyCastleProvider
   -providerpath "$BCPROV_JAR"
 )
@@ -132,7 +135,7 @@ BKS_IMPORT_ARGS=("${IMPORT_BASE_ARGS[@]}" -destkeystore "$BKS_KEYSTORE" -deststo
 if ! run_import no-keypass BKS "${BKS_IMPORT_ARGS[@]}"; then
   if [ -n "$KEY_PASSWORD_RAW" ]; then
     rm -f "$BKS_KEYSTORE"
-    if ! run_import explicit-keypass BKS "${BKS_IMPORT_ARGS[@]}" -srckeypass "$KEY_PASSWORD_RAW" -destkeypass "$KEY_PASSWORD_RAW"; then
+    if ! run_import explicit-keypass BKS "${BKS_IMPORT_ARGS[@]}" -srckeypass:env KEY_PASSWORD_RAW -destkeypass:env KEY_PASSWORD_RAW; then
       log_error "Failed to convert keystore to BKS."
       log_error "Check KEYSTORE_PASSWORD and KEY_PASSWORD secrets."
       exit 1
@@ -162,7 +165,7 @@ P12_IMPORT_ARGS=(
 if ! run_import no-keypass PKCS12 "${P12_IMPORT_ARGS[@]}"; then
   if [ -n "$KEY_PASSWORD_RAW" ]; then
     rm -f "$P12_KEYSTORE"
-    if ! run_import explicit-keypass PKCS12 "${P12_IMPORT_ARGS[@]}" -srckeypass "$KEY_PASSWORD_RAW" -destkeypass "$KEY_PASSWORD_RAW"; then
+    if ! run_import explicit-keypass PKCS12 "${P12_IMPORT_ARGS[@]}" -srckeypass:env KEY_PASSWORD_RAW -destkeypass:env KEY_PASSWORD_RAW; then
       log_error "Failed to convert BKS keystore to PKCS12 for apksigner."
       exit 1
     fi
@@ -183,7 +186,7 @@ list_aliases() {
   keytool -list \
     -keystore "$BKS_KEYSTORE" \
     -storetype BKS \
-    -storepass "$KEYSTORE_PASSWORD" \
+    -storepass:env KEYSTORE_PASSWORD \
     -providerclass org.bouncycastle.jce.provider.BouncyCastleProvider \
     -providerpath "$BCPROV_JAR" \
     2>/dev/null | awk -F, '/,/{print $1}' | sed '/^$/d'

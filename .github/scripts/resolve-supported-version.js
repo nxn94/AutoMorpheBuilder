@@ -243,7 +243,7 @@ try {
   if (jars.length > 0) jarPath = path.join(TOOLS_DIR, jars[0]);
 } catch { /* TOOLS_DIR may not exist yet */ }
 
-let versions = tryMorpheCli(jarPath, mppFile);
+const versions = tryMorpheCli(jarPath, mppFile);
 if (versions && versions.length > 0) {
   setOutput('version', versions[0]);
   setOutput('versions', versions.join(','));

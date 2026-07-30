@@ -416,7 +416,7 @@ if (!downloadSuccess) {
           ['-jar', MORPHE_CLI_JAR, 'list-versions', '-f', APP_ID, '--patches=' + mppFile],
           { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] },
         );
-      } catch (e) {
+      } catch (_e) {
         out = '';
       }
       const versions = out.match(/\d+\.\d+\.\d+/g) || [];

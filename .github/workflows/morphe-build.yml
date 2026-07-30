@@ -5,9 +5,8 @@ on:
   schedule:
     - cron: "15 5 * * *" # daily at 05:15 UTC
 
-permissions:
-  contents: write
-  actions: read
+# Permissions are scoped per-job below. Only create-release actually
+# pushes back to the repo; check-versions and build only read.
 
 # Allow only one in-flight build for this workflow. Concurrent runs would
 # race on patches.json / config.json updates; this lets the runner cancel
@@ -19,6 +18,9 @@ concurrency:
 jobs:
   check-versions:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       should-build: ${{ steps.check.outputs.should-build }}
       matrix-include: ${{ steps.check.outputs.matrix-include }}
@@ -166,6 +168,8 @@ jobs:
     needs: check-versions
     if: needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     strategy:
       fail-fast: false
@@ -421,6 +425,8 @@ jobs:
     needs: [check-versions, build]
     if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6

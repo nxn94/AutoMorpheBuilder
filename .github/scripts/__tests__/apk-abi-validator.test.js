@@ -30,7 +30,7 @@ function makeApk(tmp, name, entries) {
     const full = path.join(tmp, e);
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, 'fake');
-    execFileSync('zip', ['-j', apkPath, full], { stdio: 'ignore' });
+    execFileSync('zip', [apkPath, e], { cwd: tmp, stdio: 'ignore' });
   }
   return apkPath;
 }
@@ -124,13 +124,13 @@ describe('validateDownloadedApkAbi', () => {
     fs.writeFileSync(path.join(bundleDir, 'lib', 'arm64-v8a', 'libfoo.so'), 'fake');
     fs.writeFileSync(path.join(bundleDir, 'classes.dex'), 'fake');
     execFileSync('zip', [path.join(bundleDir, 'base.apk')], { stdio: 'ignore' });
-    execFileSync('zip', ['-j', path.join(bundleDir, 'base.apk'), path.join(bundleDir, 'lib', 'arm64-v8a', 'libfoo.so')], { stdio: 'ignore' });
-    execFileSync('zip', ['-j', path.join(bundleDir, 'base.apk'), path.join(bundleDir, 'classes.dex')], { stdio: 'ignore' });
+    execFileSync('zip', [path.join(bundleDir, 'base.apk'), 'lib/arm64-v8a/libfoo.so'], { cwd: bundleDir, stdio: 'ignore' });
+    execFileSync('zip', [path.join(bundleDir, 'base.apk'), 'classes.dex'], { cwd: bundleDir, stdio: 'ignore' });
 
     // Wrap base.apk in an outer .apk (mimicking APKMirror's mislabel).
     const bundlePath = path.join(tmp, 'fake_bundle_named_apk.apk');
     execFileSync('zip', [bundlePath], { stdio: 'ignore' });
-    execFileSync('zip', ['-j', bundlePath, path.join(bundleDir, 'base.apk')], { stdio: 'ignore' });
+    execFileSync('zip', [bundlePath, path.join('inner', 'base.apk')], { cwd: tmp, stdio: 'ignore' });
 
     // This must NOT throw — content-based detection sees the inner
     // .apk and routes through the bundle branch, which extracts and

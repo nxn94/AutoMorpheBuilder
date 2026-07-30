@@ -91,11 +91,26 @@ fi
 # --- APKEditor ----------------------------------------------------------
 
 APKEDITOR_TAG="$(gh release view --repo REAndroid/APKEditor --json tagName -q .tagName)"
+# Pick the canonical APKEditor-<version>.jar asset by name. The
+# `endswith(".jar") | head -n1` form we used previously was
+# order-dependent: if a release ever shipped both `APKEditor-X.Y.Z.jar`
+# and a `-shaded.jar` or `-all.jar`, we'd pick whichever GitHub
+# returned first. Match the canonical name first, then fall back to
+# any .jar with a warning so we know if the upstream convention ever
+# drifts.
 APKEDITOR_ASSET="$(
   gh release view "$APKEDITOR_TAG" --repo REAndroid/APKEditor --json assets \
-    -q '.assets[] | select(.name | endswith(".jar")) | .name' \
+    -q '.assets[] | select(.name | test("^APKEditor-.*\\.jar$")) | .name' \
     | head -n1
 )"
+if [ -z "$APKEDITOR_ASSET" ]; then
+  log_warn "No asset matched ^APKEditor-.*\\.jar\$ on release ${APKEDITOR_TAG}; falling back to any .jar."
+  APKEDITOR_ASSET="$(
+    gh release view "$APKEDITOR_TAG" --repo REAndroid/APKEditor --json assets \
+      -q '.assets[] | select(.name | endswith(".jar")) | .name' \
+      | head -n1
+  )"
+fi
 if [ -z "$APKEDITOR_ASSET" ]; then
   log_error "Could not find APKEditor .jar asset on release ${APKEDITOR_TAG}."
   exit 1

@@ -42,5 +42,10 @@ resolve_release_tag() {
     exit 1
   fi
 
+  # Strip any CR/LF the upstream release API might have returned.
+  # resolve_release_tag's output is written to $GITHUB_OUTPUT via
+  # KEY=VALUE lines; a newline in the tag would inject extra keys.
+  selected_tag="${selected_tag//$'\r'/}"
+  selected_tag="${selected_tag//$'\n'/}"
   echo "$selected_tag"
 }

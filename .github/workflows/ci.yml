@@ -1,0 +1,44 @@
+name: CI
+
+# Pull-request and main-branch CI. Runs `npm ci` → `npm run lint` →
+# `npm test`. The two existing workflows (morphe-build.yml and
+# update-patches.yml) are dispatch/schedule-only, so this is the only
+# thing that gates a broken PR from merging.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install zip
+        # The apk-selection and apk-abi-validator test fixtures shell
+        # out to `zip` to build fake APKs. `unzip` is preinstalled on
+        # the runner; `zip` is not — without this step several tests
+        # skip with "no zip" warnings instead of actually exercising
+        # the path-stripping bug fix.
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test

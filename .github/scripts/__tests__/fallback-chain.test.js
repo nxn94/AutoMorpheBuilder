@@ -41,7 +41,6 @@ jest.mock('child_process', () => {
       throw err;
     }),
     spawn: jest.fn(),
-    execSync: jest.fn(),
   };
 });
 jest.mock('node:child_process', () => jest.requireMock('child_process'));
@@ -220,13 +219,13 @@ describe('download() fallback chain', () => {
 
     // downloadWithUrl calls validateApkVersion after curl "succeeds".
     // The validator shells out to `aapt dump badging` and parses
-    // versionName out of the output. Mock execSync (the validator
-    // uses execSync) to return our version. Also covers the
+    // versionName out of the output. Mock execFileSync (the validator
+    // uses execFileSync) to return our version. Also covers the
     // "No APK could be downloaded" path's aapt validation, so this
     // test covers the cache-hit short-circuit even when aapt is
     // missing from the test runner.
-    const { execSync } = require('child_process');
-    execSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
+    const { execFileSync } = require('child_process');
+    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
 
     const result = await download(PKG, VER, apksDir);
     expect(result.success).toBe(true);

@@ -20,6 +20,14 @@ function main() {
   }
 
   const [packageId, version, url] = args;
+  // Scrub CR/LF before any of these values touch config.json or
+  // $GITHUB_OUTPUT. The downloader URLs are first-party today, but
+  // versions come from upstream release tags — defense-in-depth
+  // against a hostile or malformed tag.
+  const scrub = (s) => String(s).replace(/[\r\n]/g, '');
+  const safePackageId = scrub(packageId);
+  const safeVersion = scrub(version);
+  const safeUrl = scrub(url);
   const configPath = path.join(process.cwd(), 'config.json');
 
   try {
@@ -42,23 +50,23 @@ function main() {
     if (!config.download_urls) {
       config.download_urls = {};
     }
-    if (!config.download_urls[packageId]) {
-      config.download_urls[packageId] = {};
+    if (!config.download_urls[safePackageId]) {
+      config.download_urls[safePackageId] = {};
     }
 
-    const pinVersion = config.patch_repos?.[packageId]?.pin_version;
+    const pinVersion = config.patch_repos?.[safePackageId]?.pin_version;
     if (pinVersion) {
       console.log(JSON.stringify({
         success: true,
         skipped: true,
-        reason: `pin_version is set for ${packageId} (${pinVersion}) — skipping URL update`
+        reason: `pin_version is set for ${safePackageId} (${pinVersion}) — skipping URL update`
       }, null, 2));
       return;
     }
 
     // Update the URL for the specific version and latest_supported
-    config.download_urls[packageId][version] = url;
-    config.download_urls[packageId].latest_supported = url;
+    config.download_urls[safePackageId][safeVersion] = safeUrl;
+    config.download_urls[safePackageId].latest_supported = safeUrl;
 
     // Prune stale per-version entries. We only ever consume
     // .download_urls[pkg].latest_supported at build time (morphe-build.yml
@@ -67,23 +75,23 @@ function main() {
     // latest_supported; drop the rest. This also matches the
     // "no longer used" intent — once a new version supersedes an old one,
     // its cached URL is no longer needed.
-    const STALE_KEYS = Object.keys(config.download_urls[packageId]).filter(
-      k => k !== version && k !== 'latest_supported'
+    const STALE_KEYS = Object.keys(config.download_urls[safePackageId]).filter(
+      k => k !== safeVersion && k !== 'latest_supported'
     );
     for (const k of STALE_KEYS) {
-      delete config.download_urls[packageId][k];
+      delete config.download_urls[safePackageId][k];
     }
     if (STALE_KEYS.length > 0) {
-      console.error(`Pruned ${STALE_KEYS.length} stale download_urls entries for ${packageId}: ${STALE_KEYS.join(', ')}`);
+      console.error(`Pruned ${STALE_KEYS.length} stale download_urls entries for ${safePackageId}: ${STALE_KEYS.join(', ')}`);
     }
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf8');
 
     console.log(JSON.stringify({
       success: true,
-      packageId,
-      version,
-      url
+      packageId: safePackageId,
+      version: safeVersion,
+      url: safeUrl
     }, null, 2));
 
   } catch (err) {

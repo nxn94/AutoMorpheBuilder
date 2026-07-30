@@ -358,7 +358,7 @@ async function resolveApkeep(packageId, version) {
 
     execFile('apkeep', args, { timeout: TIMEOUTS.apkeepResolve }, (error, stdout, stderr) => {
       // Clean up temp file
-      try { fs.unlinkSync(tempFile); fs.rmdirSync(tempDir); } catch (e) { /* ignore */ }
+      try { fs.unlinkSync(tempFile); fs.rmdirSync(tempDir); } catch (_e) { /* ignore */ }
 
       if (error) {
         console.error(`[apkeep-resolve] Failed: ${error.message}`);
@@ -736,17 +736,21 @@ function runCommand(cmd, args, options = {}) {
  */
 function validateApkVersion(apkPath, expectedVersion) {
   try {
-    const { execSync } = require("child_process");
+    const { execFileSync } = require("child_process");
 
-    // Try using aapt or aapt2
+    // Try using aapt or aapt2. Use execFileSync with argv arrays
+    // (matching the pattern already used in download-supported-apk.js
+    // and apk-abi-validator.js) so apkPath is never interpolated into
+    // a shell string — defense-in-depth for an untrusted download
+    // whose final filename originates upstream.
     const aaptCmd = "aapt";
     let output;
     try {
-      output = execSync(`${aaptCmd} dump badging "${apkPath}" 2>/dev/null`, { encoding: "utf8" });
-    } catch (e) {
+      output = execFileSync(aaptCmd, ["dump", "badging", apkPath], { encoding: "utf8" });
+    } catch (_e) {
       // Try aapt2
       try {
-        output = execSync(`aapt2 dump badging "${apkPath}" 2>/dev/null`, { encoding: "utf8" });
+        output = execFileSync("aapt2", ["dump", "badging", apkPath], { encoding: "utf8" });
       } catch (e2) {
         console.error(`[validate] No aapt available: ${e2.message}`);
         return { valid: false, actualVersion: "unknown", error: "aapt not available - cannot validate version" };
@@ -822,7 +826,7 @@ async function downloadWithApkeep(packageId, version, outputDir) {
       if (file !== '.playwright-temp') {
         try {
           fs.unlinkSync(path.join(outputDir, file));
-        } catch (e) { /* ignore */ }
+        } catch (_e) { /* ignore */ }
       }
     }
   }
@@ -1004,7 +1008,7 @@ async function downloadViaPlaywright(apkmirrorPath, version, outputDir) {
       if (agreeClicked) console.error('[apkmirror-pw] Dismissed consent popup');
       // Give the popup a moment to collapse
       await page.waitForTimeout(1500);
-    } catch (e) {
+    } catch (_e) {
       // Best-effort — some pages won't have the popup at all
     }
 

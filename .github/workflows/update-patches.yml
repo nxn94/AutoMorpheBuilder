@@ -6,6 +6,14 @@ on:
 permissions:
   contents: write
 
+# Shared concurrency group with morphe-build.yml's create-release step:
+# both push to main (patches.json here, config.json + release tags
+# there). Serializing them prevents a manual update-patches run from
+# racing against a scheduled build's release push.
+concurrency:
+  group: morphe-writes-to-main
+  cancel-in-progress: false
+
 jobs:
   update-patches:
     runs-on: ubuntu-latest
