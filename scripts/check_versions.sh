@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 #
 # scripts/check_versions.sh — resolve the latest Morphe / CLI release
-# tags and decide whether a build is needed.
+# tags and emit the build matrix. The should-build decision is made
+# later, in check_existing_releases.sh, which can short-circuit the
+# build when every app already has a current release.
 #
 # Replaces the ~140-line inline `run:` block in the workflow's
-# check-versions job. The behaviour is identical:
+# check-versions job. The behaviour is identical except for the
+# should-build contract:
 #   1. Validate config.json shape.
 #   2. For every unique patch_repo+branch, resolve the latest matching
 #      tag using resolve-tag.sh.
 #   3. Resolve the CLI tag.
-#   4. Emit a matrix-include JSON array of build entries.
-#   5. Emit should-build=true. The build always runs (the daily schedule
-#      rebuilds every day regardless of upstream).
+#   4. Emit a matrix-include JSON array of build entries (the FULL
+#      matrix — filtering happens in check_existing_releases.sh).
+#   5. Emit should-build=true as the optimistic default. The
+#      check_existing_releases.sh step (run later in the same job, after
+#      the morphe-desktop jar + .mpp files are downloaded) overrides
+#      this to false if every app's release already exists.
 #
 # Outputs (written to $GITHUB_OUTPUT):
-#   should-build    "true" | "false"
+#   should-build    "true" | "false"  (default true; overridden downstream)
 #   matrix-include  JSON array of {name, appId, patchRepo, patchBranch, patchSlug, patchTag}
 #   repo-versions   JSON object { "owner/repo": "tag" }
 #   cli-version     CLI release tag
@@ -109,10 +115,13 @@ REPO_VERSIONS="$TAGS_JSON"
 
 # --- decide + emit -------------------------------------------------------
 
-# The build always runs. The daily schedule + the manual `update-patches`
-# workflow drive meaningful version transitions.
+# Optimistic default: a build is needed. The downstream
+# check_existing_releases.sh step (run after the morphe-desktop jar +
+# .mpp files are downloaded) compares each app's resolved APK version
+# + patches tag against the existing releases and overrides this to
+# false when every app is already up-to-date.
 SHOULD_BUILD=true
-log "::notice::Build always runs."
+log "Default should-build=true; check_existing_releases.sh will override if all apps are current."
 
 json_set_output matrix-include "$MATRIX_WITH_TAGS"
 json_set_output repo-versions "$REPO_VERSIONS"

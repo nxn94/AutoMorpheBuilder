@@ -22,12 +22,17 @@ jobs:
       contents: read
       actions: read
     outputs:
-      should-build: ${{ steps.check.outputs.should-build }}
-      matrix-include: ${{ steps.check.outputs.matrix-include }}
+      # The `filter` step overrides should-build + matrix-include based
+      # on whether each app's resolved APK version + patches tag
+      # already has a corresponding release. The other outputs come
+      # from the `check` step (resolved tags) and are passed through.
+      should-build: ${{ steps.filter.outputs.should-build }}
+      matrix-include: ${{ steps.filter.outputs.matrix-include }}
       repo-versions: ${{ steps.check.outputs.repo-versions }}
       cli-version: ${{ steps.check.outputs.cli-version }}
       cli-branch: ${{ steps.check.outputs.cli-branch }}
       cli-repo: ${{ steps.check.outputs.cli-repo }}
+      skip-list: ${{ steps.filter.outputs.skip-list }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -35,88 +40,30 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Resolve latest Morphe + CLI versions
+        # Emits the optimistic defaults: should-build=true and the FULL
+        # matrix. The downstream `filter` step overrides both based on
+        # whether every app's release already exists.
         id: check
         run: bash scripts/check_versions.sh
 
       - name: Set up Java (for morphe-desktop)
-        # check-versions runs `java -jar morphe-desktop.jar list-versions`
-        # in pre_download_apks.sh. morphe-desktop 1.12.0 requires Java 21
-        # (default Java on the runner image is older and fails to invoke
-        # the jar). The build job sets up Java 21 separately.
-        if: steps.check.outputs.should-build == 'true'
+        # The `filter` and `pre_download_apks` steps both shell out to
+        # `java -jar morphe-desktop.jar list-versions`. morphe-desktop
+        # 1.12.0 requires Java 21 (default Java on the runner image is
+        # older and fails to invoke the jar). The build job sets up
+        # Java 21 separately. Runs unconditionally so the filter step
+        # can compare against existing releases before any of the
+        # expensive Playwright / apkeep / APK pre-download steps fire.
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Setup Node.js
-        if: steps.check.outputs.should-build == 'true'
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        if: steps.check.outputs.should-build == 'true'
-        run: npm ci
-
-      - name: Upload node_modules for build jobs
-        # Avoids re-running npm ci in each build matrix entry. The
-        # lockfile content is identical for every matrix entry so this
-        # is a safe shortcut.
-        if: steps.check.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: node-modules
-          path: node_modules
-          retention-days: 1
-          if-no-files-found: error
-
-      - name: Cache Playwright browsers
-        if: steps.check.outputs.should-build == 'true'
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-chromium-${{ hashFiles('package.json', 'package-lock.json') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-chromium-
-
-      - name: Install Playwright browsers
-        if: steps.check.outputs.should-build == 'true'
-        env:
-          PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
-        run: bash scripts/install_playwright.sh
-
-      - name: Upload Playwright browsers for build jobs
-        if: steps.check.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-browsers
-          path: ~/.cache/ms-playwright
-          retention-days: 1
-
-      - name: Cache apkeep
-        id: cache-apkeep
-        if: steps.check.outputs.should-build == 'true'
-        uses: actions/cache@v5
-        with:
-          path: /usr/local/bin/apkeep
-          key: apkeep-${{ runner.os }}-v1
-
-      - name: Install apkeep
-        if: steps.check.outputs.should-build == 'true'
-        run: bash scripts/install_apkeep.sh
-
-      - name: Upload apkeep for build jobs
-        if: steps.check.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: apkeep-binary
-          path: /usr/local/bin/apkeep
-          retention-days: 1
-
       - name: Download morphe-desktop + patches .mpp
+        # Provides the jar + per-repo .mpp files the filter step needs
+        # to resolve each app's APK version. Runs unconditionally so the
+        # filter step can run before the expensive setup.
         id: tools
-        if: steps.check.outputs.should-build == 'true'
         env:
           CLI_REPO: ${{ steps.check.outputs.cli-repo }}
           CLI_TAG: ${{ steps.check.outputs.cli-version }}
@@ -124,7 +71,6 @@ jobs:
         run: bash scripts/download_morphe_tools.sh
 
       - name: Cache morphe-desktop and patches
-        if: steps.check.outputs.should-build == 'true'
         uses: actions/cache@v5
         with:
           path: |
@@ -135,24 +81,103 @@ jobs:
             morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-
             morphe-tools-
 
+      - name: Filter matrix by existing releases
+        # For every matrix entry, resolve the APK version (pinned or via
+        # morphe-desktop list-versions) and check whether
+        # <name>-v<apk>-<patches> already exists as a release. Drops
+        # those entries from the matrix and emits a skip-list for
+        # pre_download_apks.sh. When every entry is already current,
+        # should-build flips to false → build + create-release skip.
+        id: filter
+        env:
+          REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+          TOOLS_DIR: tools
+        run: bash scripts/check_existing_releases.sh
+
+      - name: Setup Node.js
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        if: steps.filter.outputs.should-build == 'true'
+        run: npm ci
+
+      - name: Upload node_modules for build jobs
+        # Avoids re-running npm ci in each build matrix entry. The
+        # lockfile content is identical for every matrix entry so this
+        # is a safe shortcut.
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-modules
+          path: node_modules
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Cache Playwright browsers
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-${{ hashFiles('package.json', 'package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-chromium-
+
+      - name: Install Playwright browsers
+        if: steps.filter.outputs.should-build == 'true'
+        env:
+          PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
+        run: bash scripts/install_playwright.sh
+
+      - name: Upload Playwright browsers for build jobs
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-browsers
+          path: ~/.cache/ms-playwright
+          retention-days: 1
+
+      - name: Cache apkeep
+        id: cache-apkeep
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/cache@v5
+        with:
+          path: /usr/local/bin/apkeep
+          key: apkeep-${{ runner.os }}-v1
+
+      - name: Install apkeep
+        if: steps.filter.outputs.should-build == 'true'
+        run: bash scripts/install_apkeep.sh
+
+      - name: Upload apkeep for build jobs
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: apkeep-binary
+          path: /usr/local/bin/apkeep
+          retention-days: 1
+
       - name: Install aapt for APK version validation
         id: aapt
-        if: steps.check.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true'
         env:
           ANDROID_HOME: /tmp/android-sdk
         run: bash scripts/install_aapt.sh
 
       - name: Pre-download APKs (parallel)
         id: download-apks
-        if: steps.check.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true'
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+          SKIP_LIST: ${{ steps.filter.outputs.skip-list }}
           ANDROID_HOME: /tmp/android-sdk
           ANDROID_BUILD_TOOLS_VERSION: ${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
         run: bash scripts/pre_download_apks.sh
 
       - name: Upload pre-downloaded APKs
-        if: steps.check.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: pre-downloaded-apks

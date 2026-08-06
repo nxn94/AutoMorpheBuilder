@@ -35,6 +35,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `apk-selection.js` | Pure scoring/ranking helpers (apkHasNativeLibsForArch, listApkAbis, findBundleInDir, etc.). |
 | `apk-abi-validator.js` | Post-download ABI validation for the downloader. |
 | `resolve-supported-version.js` | Morphe-supported version resolver. |
+| `check-existing-releases.js` | Per-app release-tag comparison: for each matrix entry, resolve the APK version (pinned or via `morphe-desktop list-versions`) and drop entries whose `<name>-v<apk>-<patches>` release already exists. Pure `decide(matrix, apkVersions, releaseExists)` is unit-tested; the env-dependent `main()` shell-outs are integration-tested by the workflow. |
 | `patch-apk-manifest.js` | APK manifest patching primitives. |
 | `patch-playwright-cft-path.js` | Patches Playwright's chromium-for-testing download path on disk. |
 | `update-download-urls.js` | Writes resolved URLs back to `config.json` `download_urls`. CLI: `node update-download-urls.js <pkg> <version> <url>`. Honoured only when `auto_update_urls` is true. |
@@ -48,8 +49,9 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 
 | File | Purpose |
 |------|---------|
-| `check_versions.sh` | Resolves latest Morphe patch + CLI tags and emits the build matrix. |
-| `pre_download_apks.sh` | Pre-downloads APKs in parallel across all configured apps before the build matrix spins up. Calls `update-download-urls.js` per app (honoured by `auto_update_urls`). |
+| `check_versions.sh` | Resolves latest Morphe patch + CLI tags and emits the optimistic-default build matrix (`should-build=true`, full set). The downstream `check_existing_releases.sh` step may override both. |
+| `check_existing_releases.sh` | Thin shell wrapper around `.github/scripts/check-existing-releases.js`. Validates env then `exec node`s the implementation. |
+| `pre_download_apks.sh` | Pre-downloads APKs in parallel across all configured apps before the build matrix spins up. Calls `update-download-urls.js` per app (honoured by `auto_update_urls`). Honours the `SKIP_LIST` env var emitted by `check_existing_releases.sh` — apps in the skip-list are not pre-downloaded. |
 | `fetch_morphe_tools.sh` | Fetches `.mpp` patches + `morphe-desktop.jar` + `APKEditor.jar` per matrix entry. |
 | `download_morphe_tools.sh` | Bulk morphe-desktop + patches download (check-versions step). |
 | `prepare_target_version.sh` | Computes the pinned version for the matrix entry. |
@@ -73,6 +75,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `fallback-chain.test.js` | Multi-source download fallback ordering. |
 | `patch-apk-manifest.test.js` | Manifest patching. |
 | `unified-downloader-cleanup.test.js` | Cleanup-on-failure contract for the downloader. |
+| `check-existing-releases.test.js` | Pure `decide()` + `buildMatrix()` helpers — release-tag comparison, fail-open on unresolved versions, mixed keep/skip matrices. |
 
 ## Workflow job graph (morphe-build.yml)
 
@@ -80,9 +83,14 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 check-versions → build (matrix per app) → create-release
 ```
 
-- `check-versions` — queries GitHub for latest Morphe patch/CLI tags, emits the build matrix, pre-downloads APKs (in parallel across apps). Sets `should-build=true` (always builds). Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
-- `build` — per-app parallel matrix. Downloads APK, patches with morphe-desktop, signs (signing is **enforced** — no unsigned output). Uses `pin_version` from `config.json` if set, otherwise picks the latest Morphe-supported version.
-- `create-release` — one GitHub Release per app, tag `vYYYY.MM.DD`, contains only that app's APK.
+- `check-versions` — two-phase:
+  1. **Tag resolution** (`scripts/check_versions.sh`): queries GitHub for the latest Morphe patch + CLI tags, emits the full matrix and `should-build=true` (optimistic default).
+  2. **Release comparison** (`scripts/check_existing_releases.sh`): for each app, resolves the APK version (pinned or via `morphe-desktop list-versions`), computes the expected release tag `<name>-v<apk>-<patches>`, and checks `gh release view <tag>`. Apps whose release already exists are dropped from the matrix and added to `skip-list`. If the filtered matrix is empty, `should-build` flips to `false` and both `build` and `create-release` skip. If the matrix is non-empty, only the changed apps are built and pre-downloaded.
+  - The expensive setup steps (npm ci, Playwright, apkeep, aapt, APK pre-download) are all gated on the **post-filter** `should-build`, so a no-op day avoids the network/install cost entirely.
+  - Failure policy is **fail-open**: if the APK version can't be resolved (missing jar/.mpp) or `gh release view` errors, the app is kept in the matrix and a `::warning::` is logged. The build never silently skips an app we couldn't version-check.
+  - Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
+- `build` — per-app parallel matrix (already filtered to apps that need re-building). Downloads APK, patches with morphe-desktop, signs (signing is **enforced** — no unsigned output). Uses `pin_version` from `config.json` if set, otherwise picks the latest Morphe-supported version.
+- `create-release` — one GitHub Release per app, tag `<name>-v<apk-version>-<patches-version>` (e.g. `youtube-v20.44.38-v1.24.0-dev.8`), contains only that app's APK.
 
 ## Developer commands
 
@@ -174,6 +182,7 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 - **APK download fails / `No APK could be downloaded`** — Cloudflare rate-limit on APKMirror. Re-run; transient. Verify `apkmirror_path` slugs in `config.json` `patch_repos` are still valid.
 - **Obtainium not finding updates** — confirm both filters are set (Release Tag Filter + APK Filter) and the APK filter includes the `-v` infix.
 - **Untracked `.xapk`/`.apkm` from a failed source pre-empts the good one** — the downloader's cleanup-on-failure contract (delete partial APK on validation throw) ensures that when the apkeep / direct-URL curl / Playwright fallback fails ABI or version validation, the file goes away. Without this, the `APKS_DIR` ends up with a stale file that gets picked by `findPackageCandidate` (first-encountered tiebreak on equal scores, via filesystem-dependent readdir order — not guaranteed alphabetical on ext4) over the working bundle from a later source. Symptom: the merged APK is missing the preferred arch even though the downloader reported success via a later source. The new tests in `__tests__/unified-downloader-cleanup.test.js` pin this contract.
+- **Workflow skipping apps that should be rebuilt** — `check_existing_releases.sh` is fail-open, so the only way it can skip an app that genuinely needs a rebuild is if `morphe-desktop list-versions` returns a *different* version than what `releaseExists` matches against (e.g. experimental versions filtered out by the CLI). If you need to force a rebuild, manually delete the offending release tag (`gh release delete <app>-v<apk>-<patches>`) and re-run. The next scheduled run will rebuild it.
 
 ## Local environment
 
