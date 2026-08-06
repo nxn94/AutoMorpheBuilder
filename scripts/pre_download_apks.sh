@@ -30,6 +30,10 @@
 #   APK_DIR        required  where APKs land (default ./tools/apks)
 #   RESULTS_DIR    optional  scratch dir for per-app results
 #                            (default $RUNNER_TEMP/download_results)
+#   SKIP_LIST      optional  JSON array of appIds to skip (already-built apps
+#                            that have a current release). Emitted by
+#                            check_existing_releases.sh and threaded in by
+#                            the workflow. Empty / unset ⇒ no skip.
 
 set -Eeuo pipefail
 
@@ -42,6 +46,7 @@ APK_DIR="${APK_DIR:-${TOOLS_DIR}/apks}"
 RESULTS_DIR="${RESULTS_DIR:-${RUNNER_TEMP:-/tmp}/download_results}"
 _default_repo_versions='{}'
 REPO_VERSIONS="${REPO_VERSIONS:-$_default_repo_versions}"
+SKIP_LIST="${SKIP_LIST:-[]}"
 
 mkdir -p "$APK_DIR" "$RESULTS_DIR"
 
@@ -178,13 +183,39 @@ download_for() {
 
 # --- parallel download -----------------------------------------------------
 
-log "Pre-downloading APKs for $(list_app_ids | wc -l | tr -d ' ') app(s)..."
+# Filter to apps that need pre-downloading. The skip list is an array
+# of appIds that already have a current release (per
+# check_existing_releases.sh). They don't need an APK fetch — the
+# build matrix won't include them either.
+declare -A SKIPPED
+if [ "$SKIP_LIST" != "[]" ] && [ -n "$SKIP_LIST" ]; then
+  while IFS= read -r pkg; do
+    [ -n "$pkg" ] || continue
+    SKIPPED["$pkg"]=1
+  done < <(jq -r '.[]' <<<"$SKIP_LIST")
+fi
+
+buildable=()
+while IFS= read -r pkg; do
+  if [ -n "${SKIPPED[$pkg]:-}" ]; then
+    log "  [$pkg] in skip-list; not pre-downloading."
+    continue
+  fi
+  buildable+=("$pkg")
+done < <(list_app_ids)
+
+if [ "${#buildable[@]}" -eq 0 ]; then
+  log "All apps are in the skip-list; nothing to pre-download."
+  exit 0
+fi
+
+log "Pre-downloading APKs for ${#buildable[@]} app(s)..."
 
 pids=()
-while IFS= read -r pkg; do
+for pkg in "${buildable[@]}"; do
   download_for "$pkg" &
   pids+=("$!")
-done < <(list_app_ids)
+done
 
 for pid in "${pids[@]}"; do
   wait "$pid" || true
