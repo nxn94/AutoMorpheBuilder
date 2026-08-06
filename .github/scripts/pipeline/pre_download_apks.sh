@@ -107,7 +107,7 @@ download_for() {
   # the cause was missing APKMirror API credentials, a Cloudflare
   # block on the Playwright path, an APKPure rate-limit, or something
   # else entirely.
-  result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>"$stderr_log" || true)"
+  result="$(node "$(dirname "$0")/../unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>"$stderr_log" || true)"
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
     url="$(printf '%s' "$result" | jq -r '.url // empty')"
@@ -155,7 +155,7 @@ download_for() {
   # Same stderr separation for the fallback attempt. Reassigning
   # $stderr_log updates which file the RETURN trap cleans up.
   stderr_log="$(mktemp)"
-  result="$(node "$(dirname "$0")/../.github/scripts/unified-downloader.js" "$pkg" "$fallback" "$APK_DIR" 2>"$stderr_log" || true)"
+  result="$(node "$(dirname "$0")/../unified-downloader.js" "$pkg" "$fallback" "$APK_DIR" 2>"$stderr_log" || true)"
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
     url="$(printf '%s' "$result" | jq -r '.url // empty')"
@@ -228,7 +228,7 @@ if compgen -G "$RESULTS_DIR/*.txt" >/dev/null; then
   if auto_update_urls_enabled; then
     while IFS=: read -r pkg ver url; do
       [ -z "$pkg" ] && continue
-      node "$(dirname "$0")/../.github/scripts/update-download-urls.js" "$pkg" "$ver" "$url" >/dev/null || true
+      node "$(dirname "$0")/../update-download-urls.js" "$pkg" "$ver" "$url" >/dev/null || true
     done < "$RESULTS_DIR/merged.txt"
   else
     log "auto_update_urls is disabled in config.json; skipping download_urls backfill."

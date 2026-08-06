@@ -25,7 +25,7 @@ set -Eeuo pipefail
 export ANDROID_HOME="${ANDROID_HOME:-/tmp/android-sdk}"
 
 BT_VERSION="$(
-  node "${SCRIPTS_DIR:-$(dirname "$0")}/../.github/scripts/install-aapt.js" \
+  node "${SCRIPTS_DIR:-$(dirname "$0")}/../install-aapt.js" \
     | grep '^ANDROID_BUILD_TOOLS_VERSION=' \
     | cut -d= -f2
 )"

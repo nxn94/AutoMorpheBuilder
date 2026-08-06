@@ -30,7 +30,7 @@ export PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST
 
 # --- install if missing ---------------------------------------------------
 
-SCRIPTS_DIR="$(cd "$(dirname "$0")/../.github/scripts" && pwd)"
+SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE_DIR="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
 
 needs_install=true

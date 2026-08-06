@@ -38,7 +38,7 @@ jobs:
           fi
 
           # Resolve branch → tag. Same logic as morphe-build.yml.
-          source "$GITHUB_WORKSPACE/.github/scripts/resolve-tag.sh"
+          source "$GITHUB_WORKSPACE/.github/scripts/pipeline/resolve-tag.sh"
 
           # Build list of unique repo+branch pairs from config.json
           REPO_PAIRS="$(jq -r '
@@ -68,7 +68,7 @@ jobs:
             CONFIG_FILE=./config.json \
             PATCHES_FILE=./patches.json \
             RUNNER_TEMP="$RUNNER_TEMP" \
-            bash "$GITHUB_WORKSPACE/.github/scripts/sync-patches.sh"
+            bash "$GITHUB_WORKSPACE/.github/scripts/pipeline/sync-patches.sh"
 
       - name: Commit if changed
         run: |

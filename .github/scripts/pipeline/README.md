@@ -1,15 +1,14 @@
-# scripts/
+# .github/scripts/pipeline/
 
-Build helpers used by `.github/workflows/morphe-build.yml` (and friends).
+Shell pipeline for `.github/workflows/morphe-build.yml` (and friends).
 The scripts are split by responsibility: each one is small enough to read
 in a few minutes and has a focused purpose. Cross-cutting helpers live
-under `scripts/lib/` and are sourced (not executed) by the per-step
-scripts.
+under `lib/` and are sourced (not executed) by the per-step scripts.
 
 ## Layout
 
 ```
-scripts/
+.github/scripts/pipeline/
 ├── README.md                 this file
 ├── lib/                      shared helpers (sourced)
 │   ├── common.sh             logging, retry, validation, tempdirs
@@ -28,12 +27,15 @@ scripts/
 ├── prepare_target_version.sh gather inputs for download-supported-apk.js
 ├── prepare_keystore.sh       decode KEYSTORE_BASE64; produce BKS + PKCS12 keystores
 ├── patch_apk.sh              run morphe-desktop patch; rename output for Obtainium
-└── create_release.sh         publish per-app GitHub Releases
+├── create_release.sh         publish per-app GitHub Releases
+├── resolve-tag.sh            resolve branch → tag (sourced by check_versions.sh + update-patches.yml)
+└── sync-patches.sh           sync patches.json from upstream patch repos (invoked by update-patches.yml)
 ```
-The previously-existing helpers under `.github/scripts/` are unchanged:
-they're still the implementation files for things like morphe-desktop jar
-download orchestration, the unified-downloader, and sync-patches. The
-scripts here are thin orchestrators that call into those helpers.
+
+The Node.js helpers under `.github/scripts/` are unchanged: they're still
+the implementation files for things like morphe-desktop jar download
+orchestration, the unified-downloader, and check-existing-releases. The
+shell scripts here are thin orchestrators that call into those helpers.
 
 ## Conventions
 
@@ -55,18 +57,17 @@ locally:
 
 ```bash
 # export the variables the script expects, then:
-bash scripts/install_apkeep.sh
-bash scripts/check_versions.sh
+bash .github/scripts/pipeline/install_apkeep.sh
+bash .github/scripts/pipeline/check_versions.sh
 ```
 
 For the JSON state scripts, you can dry-run them against the local
 `config.json` / `patches.json`:
 
 ```bash
-# sync-patches.sh lives under .github/scripts/ and is invoked from the
-# manual update-patches.yml workflow, not from scripts/.
+# sync-patches.sh is invoked from the manual update-patches.yml workflow.
 REPO_VERSIONS='{"MorpheApp/morphe-patches":"v1.32.0"}' \
-  bash .github/scripts/sync-patches.sh
+  bash .github/scripts/pipeline/sync-patches.sh
 ```
 
 ## Validation
@@ -74,9 +75,10 @@ REPO_VERSIONS='{"MorpheApp/morphe-patches":"v1.32.0"}' \
 Run before opening a PR:
 
 ```bash
-bash -n scripts/*.sh scripts/lib/*.sh        # syntax
-node node_modules/.bin/eslint scripts         # JS (covers .github/scripts/)
-node node_modules/.bin/jest                  # JS unit tests
+bash -n .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh        # syntax
+shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh     # shell lint
+node node_modules/.bin/eslint .github/scripts                                   # JS (covers .github/scripts/)
+node node_modules/.bin/jest                                                     # JS unit tests
 ```
 
 The workflow YAML itself is validated by GitHub Actions; for local
