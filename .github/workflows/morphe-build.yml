@@ -71,7 +71,7 @@ jobs:
         run: bash .github/scripts/pipeline/download_morphe_tools.sh
 
       - name: Cache morphe-desktop and patches
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             tools/morphe-desktop.jar
@@ -122,7 +122,7 @@ jobs:
 
       - name: Cache Playwright browsers
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-chromium-${{ hashFiles('package.json', 'package-lock.json') }}
@@ -146,7 +146,7 @@ jobs:
       - name: Cache apkeep
         id: cache-apkeep
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /usr/local/bin/apkeep
           key: apkeep-${{ runner.os }}-v1
@@ -245,7 +245,7 @@ jobs:
 
       - name: Cache BouncyCastle
         id: cache-bc
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /usr/share/java/bcprov.jar
           key: bouncycastle-bcprov-1.77
@@ -310,7 +310,7 @@ jobs:
           apkeep --version
 
       - name: Cache patches .mpp
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.TOOLS_DIR }}/${{ matrix.patchSlug }}.mpp
           key: morphe-patches-${{ matrix.patchSlug }}-${{ matrix.patchTag }}
@@ -325,7 +325,7 @@ jobs:
         # also contains the .mpp files written by check-versions.
         # Save-always defaults to false → on hit, no save → no race among
         # the 3 parallel matrix entries.
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.TOOLS_DIR }}/morphe-desktop.jar
           key: morphe-tools-desktop-${{ needs.check-versions.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
@@ -383,7 +383,7 @@ jobs:
 
       - name: Cache APK for ${{ matrix.appId }}
         id: cache-apk
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ${{ env.APKS_DIR }}
           key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}
