@@ -88,10 +88,14 @@ jobs:
         # those entries from the matrix and emits a skip-list for
         # pre_download_apks.sh. When every entry is already current,
         # should-build flips to false → build + create-release skip.
+        # FORCE_BUILD bypasses that check so manual `Run workflow` runs
+        # always patch + release, regardless of whether a release for
+        # the current tag already exists.
         id: filter
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           TOOLS_DIR: tools
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' }}
         run: bash .github/scripts/pipeline/check_existing_releases.sh
 
       - name: Setup Node.js

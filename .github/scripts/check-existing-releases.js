@@ -35,6 +35,14 @@
  *   TOOLS_DIR      required  where morphe-desktop.jar + *.mpp live
  *   GITHUB_OUTPUT  required  workflow output file
  *   CONFIG_FILE    optional  default ./config.json
+ *   FORCE_BUILD    optional  truthy bypasses the release-existence
+ *                            comparison. The workflow sets this when
+ *                            triggered via workflow_dispatch so a
+ *                            manual run always patches + releases,
+ *                            regardless of whether a release for the
+ *                            current APK version + patches tag already
+ *                            exists. Default behaviour (cron / push)
+ *                            stays as the smart skip-when-current.
  *
  * Outputs (written to $GITHUB_OUTPUT):
  *   matrix-include   JSON array of {name,appId,patchRepo,patchBranch,patchSlug,patchTag}
@@ -137,6 +145,11 @@ function buildMatrix(config, repoVersions) {
   }));
 }
 
+function isTruthyEnv(name) {
+  const v = process.env[name];
+  return v === '1' || v === 'true' || v === 'TRUE' || v === 'yes' || v === 'YES';
+}
+
 function main() {
   if (!REPO_VERSIONS) {
     console.error('::error::REPO_VERSIONS is empty; check-versions must run first.');
@@ -150,8 +163,24 @@ function main() {
   const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
   const repoVersions = JSON.parse(REPO_VERSIONS);
   const jarPath = path.join(TOOLS_DIR, 'morphe-desktop.jar');
-
   const matrix = buildMatrix(config, repoVersions);
+
+  // Manual trigger (workflow_dispatch): the workflow sets FORCE_BUILD so
+  // a manual run always patches + releases, regardless of whether the
+  // current APK version + patches tag already has a release. The
+  // existing release-tag is overwritten on publish. This restores the
+  // pre-check-existing-releases behaviour for `Run workflow`.
+  if (isTruthyEnv('FORCE_BUILD')) {
+    console.log('::notice::FORCE_BUILD is set; building all apps without release-existence check.');
+    for (const entry of matrix) {
+      const tag = `${entry.name}-v<apk>-${entry.patchTag}`;
+      console.log(`  [${entry.name}] force-build; release ${tag} will be overwritten if it exists.`);
+    }
+    setOutput('matrix-include', JSON.stringify(matrix));
+    setOutput('skip-list', '[]');
+    setOutput('should-build', String(matrix.length > 0));
+    return;
+  }
 
   // Fail-open: if any entry has no patchTag, we can't compute a
   // deterministic release tag, so we build everything rather than
@@ -203,4 +232,5 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { decide, buildMatrix };
+module.exports = { decide, buildMatrix, main, isTruthyEnv };
+
