@@ -37,7 +37,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Resolve latest Morphe + CLI versions
         # Emits the optimistic defaults: should-build=true and the FULL
@@ -220,7 +220,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Java (for morphe-desktop)
         uses: actions/setup-java@v5
@@ -456,7 +456,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download all patched APKs
         uses: actions/download-artifact@v8
