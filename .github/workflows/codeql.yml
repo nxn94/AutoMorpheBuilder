@@ -1,0 +1,44 @@
+name: CodeQL
+
+# Replaces the repo's "Default setup" so query-pack config lives in
+# version control. Default setup is auto-disabled by GitHub as soon
+# as this file exists on the default branch.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly Monday 06:00 UTC — staggered from morphe-build (05:15)
+    # to avoid runner contention.
+    - cron: '0 6 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # `javascript-typescript` covers both `javascript` and `typescript`
+        # analyses — matches what default setup enabled for this repo.
+        language: [actions, javascript-typescript]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
