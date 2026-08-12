@@ -92,22 +92,22 @@ function detectApkShape(filePath) {
  * @throws {Error} If the file is genuinely missing the preferred arch's .so.
  */
 function validateDownloadedApkAbi(filePath, preferredArch) {
-  if (!preferredArch) return;
-  if (!fs.existsSync(filePath)) return;
+if (!preferredArch) return;
 
   // Zip-magic-byte check (PK\x03\x04) so non-zip placeholders don't
   // trip unzip. See function header.
+  let fd;
   try {
-    const fd = fs.openSync(filePath, 'r');
-    try {
-      const buf = Buffer.alloc(4);
-      fs.readSync(fd, buf, 0, 4, 0);
-      if (buf[0] !== 0x50 || buf[1] !== 0x4b || buf[2] !== 0x03 || buf[3] !== 0x04) return;
-    } finally {
-      fs.closeSync(fd);
-    }
+    fd = fs.openSync(filePath, 'r');
   } catch {
     return;
+  }
+  try {
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    if (buf[0] !== 0x50 || buf[1] !== 0x6b || buf[2] !== 0x03 || buf[3] !== 0x04) return;
+  } finally {
+    fs.closeSync(fd);
   }
 
   const shape = detectApkShape(filePath);

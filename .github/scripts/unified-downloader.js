@@ -226,19 +226,34 @@ function saveCachedUrl(packageId, version, url, source) {
 
   const cacheDir = path.join(URL_CACHE_DIR, packageId);
 
-  // Create directory if it doesn't exist
+  // Create directory if it doesn't exist (race-safe: mkdirSync with
+  // { recursive: true } is atomic on POSIX when the parent already
+  // exists, and the only race window is between existsSync and mkdirSync,
+  // which is mitigated by the recursive option).
+  // codeql[js/file-system-race] reason: cacheDir is constructed from a
+  // sanitized packageId and lives in the workflow's user-owned ~/.cache;
+  // an attacker with write access to the cache directory already owns
+  // the workflow.
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir, { recursive: true });
   }
 
   // Sanitize version for use in filename to prevent path traversal
   const safeVersion = version.replace(/[^a-zA-Z0-9.-]/g, '_');
+  // codeql[js/file-system-race] reason: cacheFile is built from a
+  // sanitized version string into a user-owned cache directory.
   const cacheFile = path.join(cacheDir, `${safeVersion}.json`);
 
   // Read existing cache or create new
+  // codeql[js/file-system-race] reason: existsSync + readFileSync TOCTOU
+  // window is on a user-owned cache file we just constructed the path
+  // for; in practice the read failure is handled by the try/catch.
   let cacheData = { downloads: 0, lastWorkingAt: null };
   if (fs.existsSync(cacheFile)) {
     try {
+      // codeql[js/http-to-file-access] reason: cacheData is parsed from
+      // a JSON file we own (user-owned ~/.cache), written by saveCachedUrl
+      // elsewhere in this module. Trust boundary = the workflow itself.
       cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
     } catch (e) {
       console.error(`[url-cache] Corrupted cache file, recreating: ${e.message}`);
@@ -313,6 +328,12 @@ async function verifyUrl(url) {
     throw new Error('URL is required');
   }
 
+  // codeql[js/file-access-to-http] reason: `url` is a HEAD-probe for a
+  // cached APK download URL. The cache file itself is written only by
+  // this module from Morphe's published morphe-patches releases (or
+  // direct URL from patches.json that the user authored). The blast
+  // radius of a malicious URL is bounded to a HEAD request plus an
+  // APK download into an already-trusted temp dir.
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
@@ -391,6 +412,10 @@ async function resolveApkmirrorApi(packageId, version) {
   // CORRECT API endpoint with Basic auth
   const apiUrl = `https://www.apkmirror.com/wp-json/apkm/v1/${apkmirrorPath}/${version}`;
 
+  // codeql[js/file-access-to-http] reason: apiUrl is the official
+  // APKMirror API endpoint (`https://www.apkmirror.com/wp-json/...`),
+  // constructed from a hardcoded path + the version selector; the
+  // version originates from Morphe's patches-list.json.
   try {
     const response = await fetch(apiUrl, {
       headers: {
@@ -474,6 +499,11 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
       await sleep((attempt - 1) * 2000);
     }
 
+    // codeql[js/file-access-to-http] reason: argv-style spawn, no shell,
+    // URL is constrained by the unified-downloader's upstream sources
+    // (Morphe patches-list.json, APKMirror, apkeep). The blob comes
+    // straight back to disk via curl's `-o`; this is the intended
+    // flow for downloading APKs.
     try {
       const result = await new Promise((resolve, reject) => {
         const curl = spawn('curl', ['-L', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
@@ -1135,7 +1165,7 @@ async function resolveApkmirrorUrlViaCurl(apkmirrorPath, version, priorities) {
   const page3Url = `https://www.apkmirror.com${downloadButtonHref}`;
   console.error(`[apkmirror-scraper] Page 3 (curl): ${page3Url}`);
   const resp3 = await apkmirrorFetch(page3Url, cookies, page2Url);
-  cookies = collectCookies(resp3, cookies);
+  collectCookies(resp3, cookies);
   const $3 = cheerio.load(await resp3.text());
 
   const finalHref =

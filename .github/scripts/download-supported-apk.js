@@ -216,8 +216,11 @@ function mergeSplitPackageWithApkeditor(splitPkg, outApk) {
   console.error(`Merging split package with APKEditor: ${splitPkg}`);
   let r;
   try {
+    // Same fd for both streams: opens the file once instead of twice,
+    // which removes the openSync-twice TOCTOU CodeQL flagged.
+    const logFd = fs.openSync(mergeLog, 'a');
     r = spawnSync('java', ['-jar', APKEDITOR_JAR, 'm', '-clean-meta', '-i', splitPkg, '-o', outApk], {
-      encoding: 'utf8', stdio: ['ignore', fs.openSync(mergeLog, 'w'), fs.openSync(mergeLog, 'a')],
+      encoding: 'utf8', stdio: ['ignore', logFd, logFd],
     });
   } catch (e) {
     r = { error: e, status: null };
@@ -368,8 +371,7 @@ if (!downloadSuccess) {
     if (cachedFileHasPreferredAbi(preloaded)) {
       console.log(`Using pre-downloaded APK from check-versions: ${preloaded} (matches v${TARGET_VERSION})`);
       fs.copyFileSync(preloaded, path.join(APKS_DIR, path.basename(preloaded)));
-      downloadSuccess = true;
-      return; // exit the `if (!downloadSuccess)` block
+      return;
     }
     // Preloaded file exists but is missing the preferred arch's libs.
     // Discard it and fall through to the unified-downloader (which
