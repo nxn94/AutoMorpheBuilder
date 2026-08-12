@@ -6,7 +6,7 @@
       "Change miniplayer color": true,
       "Change start page": true,
       "Check watch history domain name resolution": true,
-      "Crossfade": true,
+      "Crossfade": false,
       "Custom branding": true,
       "Disable DRC audio": true,
       "Disable QUIC protocol": true,
