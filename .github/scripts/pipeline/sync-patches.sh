@@ -106,9 +106,18 @@ else
   echo '{}' > "$WORK_DIR/patches_base.json"
 fi
 
-# compat_pkg_names helper — same as both workflows used inline. Handles
-# the old key-indexed compatiblePackages syntax AND the newer
-# array-of-objects syntax (.packageName).
+# compat_pkg_names helper — same shape as the Node.js
+# resolve-supported-version.js helper, so the shell pipeline and the
+# Node APK version resolver agree on which package IDs a patch supports.
+# Handles four historical shapes of patches-list.json:
+#   1. compatiblePackages as object (old): keys ARE the package IDs
+#   2. compatible_packages as object (old): keys ARE the package IDs
+#   3. compatiblePackages as array (current):
+#        each entry has BOTH .name (friendly label, e.g. "YouTube")
+#        AND .packageName (package id, e.g. "com.google.android.youtube").
+#        Both must be returned so the filter below matches whichever
+#        form the caller's config.json uses.
+#   4. compatible_packages as array: same as #3.
 COMPAT_FN='
   def compat_pkg_names($patch):
     if ($patch.compatiblePackages? | type) == "object" then
@@ -116,9 +125,11 @@ COMPAT_FN='
     elif ($patch.compatible_packages? | type) == "object" then
       ($patch.compatible_packages | keys)
     elif ($patch.compatiblePackages? | type) == "array" then
-      ($patch.compatiblePackages | map(.name // .packageName // empty))
+      ([$patch.compatiblePackages[] | (.name // empty), (.packageName // empty)]
+        | map(select(. != "")) | unique)
     elif ($patch.compatible_packages? | type) == "array" then
-      ($patch.compatible_packages | map(.name // .packageName // empty))
+      ([$patch.compatible_packages[] | (.name // empty), (.packageName // empty)]
+        | map(select(. != "")) | unique)
     else
       []
     end;
@@ -157,7 +168,10 @@ while IFS='|' read -r repo branch; do
   # Merge defaults with existing user toggles for this repo.
   # Key rule: only upstream patch names survive (stale keys are dropped).
   # For each patch name present in upstream, use the existing user toggle
-  # if set, otherwise default to true.
+  # if it was explicitly set (including explicit `false`), otherwise
+  # default to true.
+  # jq's `//` falls back on both `null` AND `false`, so it would silently
+  # turn user-set `false` toggles back to `true`. `has()` is key-only.
   jq -n \
     --arg repo "$repo" \
     --slurpfile defaults "$WORK_DIR/defaults_${slug}.json" \
@@ -165,14 +179,13 @@ while IFS='|' read -r repo branch; do
     ($defaults[0] // {}) as $d
     | ($base[0] // {}) as $existing
     | ($existing[$repo] // {}) as $repo_existing
-    | reduce ($d | keys[]) as $pkg ({};
-        .[$pkg] = (
-          reduce ($d[$pkg] | keys[]) as $pname ({};
-            .[$pname] = (($repo_existing[$pkg] // {})[$pname] // true)
+    | reduce ($d | keys[]) as $pkg (.;
+        ($repo_existing[$pkg] // {}) as $pkg_existing
+        | .[$pkg] = reduce ($d[$pkg] | keys[]) as $pname ({};
+            .[$pname] = (if $pkg_existing | has($pname) then $pkg_existing[$pname] else true end)
           )
-        )
       )
-  ' > "$WORK_DIR/merged_${slug}.json"
+    ' > "$WORK_DIR/merged_${slug}.json"
 
   # Inject merged section back into base.
   jq --arg repo "$repo" \

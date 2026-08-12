@@ -1,0 +1,36 @@
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    rebase-strategy: "auto"
+    groups:
+      deps:
+        applies-to: version-updates
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # Pinned to an exact version on purpose: the bundled Chromium
+    # build, the CI runner image, and the morphe-desktop tooling all
+    # need to move together. Bump manually after testing locally.
+    ignore:
+      - dependency-name: "playwright"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Europe/Berlin"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    open-pull-requests-limit: 3

@@ -45,3 +45,6 @@ build/
 .claude/
 docs/
 CLAUDE.md
+
+# OpenCode state
+.omo/

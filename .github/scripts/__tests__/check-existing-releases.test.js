@@ -240,3 +240,118 @@ describe('decide', () => {
     expect(result.shouldBuild).toBe(true);
   });
 });
+
+describe('FORCE_BUILD branch', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const os = require('node:os');
+
+  function loadFresh() {
+    jest.resetModules();
+    return require('../check-existing-releases');
+  }
+
+  function withEnv(vars, fn) {
+    const saved = {};
+    for (const k of Object.keys(vars)) {
+      saved[k] = process.env[k];
+      if (!(k in process.env)) saved[k] = undefined;
+    }
+    for (const k of Object.keys(vars)) process.env[k] = vars[k];
+    try { return fn(); }
+    finally {
+      for (const k of Object.keys(saved)) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  }
+
+  test('isTruthyEnv accepts 1/true/TRUE/yes/YES and rejects everything else', () => {
+    const { isTruthyEnv } = loadFresh();
+    expect(isTruthyEnv('X')).toBe(false);
+    withEnv({ X: '' },        () => expect(isTruthyEnv('X')).toBe(false));
+    withEnv({ X: '0' },       () => expect(isTruthyEnv('X')).toBe(false));
+    withEnv({ X: 'false' },   () => expect(isTruthyEnv('X')).toBe(false));
+    withEnv({ X: 'no' },      () => expect(isTruthyEnv('X')).toBe(false));
+    withEnv({ X: '1' },       () => expect(isTruthyEnv('X')).toBe(true));
+    withEnv({ X: 'true' },    () => expect(isTruthyEnv('X')).toBe(true));
+    withEnv({ X: 'TRUE' },    () => expect(isTruthyEnv('X')).toBe(true));
+    withEnv({ X: 'yes' },     () => expect(isTruthyEnv('X')).toBe(true));
+    withEnv({ X: 'YES' },     () => expect(isTruthyEnv('X')).toBe(true));
+  });
+
+  test('main() with FORCE_BUILD emits full matrix + should-build=true + empty skip-list', () => {
+    const tmpFile = path.join(os.tmpdir(), `force-build-out-${Date.now()}-${Math.random()}.txt`);
+    const cfgFile = path.join(os.tmpdir(), `force-build-cfg-${Date.now()}-${Math.random()}.json`);
+    fs.writeFileSync(cfgFile, JSON.stringify({
+      patch_repos: {
+        'com.google.android.youtube': { name: 'youtube', repo: 'MorpheApp/morphe-patches', branch: 'main' },
+        'com.google.android.apps.youtube.music': { name: 'ytmusic', repo: 'MorpheApp/morphe-patches', branch: 'main' },
+        'com.reddit.frontpage': { name: 'reddit', repo: 'MorpheApp/morphe-patches', branch: 'main' },
+      },
+    }));
+    fs.writeFileSync(tmpFile, '');
+    try {
+      withEnv({
+        REPO_VERSIONS: '{"MorpheApp/morphe-patches":"v1.39.1"}',
+        GITHUB_OUTPUT: tmpFile,
+        CONFIG_FILE: cfgFile,
+        // Forces the java call (resolveApkVersion) to error → fail-open.
+        // Used to prove the FORCE_BUILD branch short-circuits before it.
+        TOOLS_DIR: '/nonexistent',
+        FORCE_BUILD: 'true',
+      }, () => {
+        const { main } = loadFresh();
+        main();
+      });
+      const out = fs.readFileSync(tmpFile, 'utf8');
+      const line = (key) => out.split('\n').find((l) => l.startsWith(`${key}=`));
+      expect(line('should-build')).toBe('should-build=true');
+      expect(line('skip-list')).toBe('skip-list=[]');
+      const matrix = JSON.parse(line('matrix-include').replace(/^matrix-include=/, ''));
+      expect(matrix).toHaveLength(3);
+      expect(matrix.map((e) => e.appId).sort()).toEqual([
+        'com.google.android.apps.youtube.music',
+        'com.google.android.youtube',
+        'com.reddit.frontpage',
+      ]);
+      expect(matrix.every((e) => e.patchTag === 'v1.39.1')).toBe(true);
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch {}
+      try { fs.unlinkSync(cfgFile); } catch {}
+    }
+  });
+
+  test('main() without FORCE_BUILD falls through to the decide() path', () => {
+    // TOOLS_DIR points at /nonexistent so resolveApkVersion returns ''
+    // and the fail-open path emits should-build=true. This proves the
+    // FORCE_BUILD guard is a real toggle: with it absent, main() does
+    // not short-circuit and the same setup still produces a build.
+    const tmpFile = path.join(os.tmpdir(), `noforce-out-${Date.now()}-${Math.random()}.txt`);
+    const cfgFile = path.join(os.tmpdir(), `noforce-cfg-${Date.now()}-${Math.random()}.json`);
+    fs.writeFileSync(cfgFile, JSON.stringify({
+      patch_repos: {
+        'com.google.android.youtube': { name: 'youtube', repo: 'MorpheApp/morphe-patches', branch: 'main' },
+      },
+    }));
+    fs.writeFileSync(tmpFile, '');
+    try {
+      withEnv({
+        REPO_VERSIONS: '{"MorpheApp/morphe-patches":"v1.39.1"}',
+        GITHUB_OUTPUT: tmpFile,
+        CONFIG_FILE: cfgFile,
+        TOOLS_DIR: '/nonexistent',
+      }, () => {
+        const { main } = loadFresh();
+        main();
+      });
+      const out = fs.readFileSync(tmpFile, 'utf8');
+      const line = (key) => out.split('\n').find((l) => l.startsWith(`${key}=`));
+      expect(line('should-build')).toBe('should-build=true');
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch {}
+      try { fs.unlinkSync(cfgFile); } catch {}
+    }
+  });
+});
