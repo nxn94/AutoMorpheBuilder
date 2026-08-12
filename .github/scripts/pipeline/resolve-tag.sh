@@ -2,7 +2,7 @@
 # resolve-tag.sh — resolve the latest release tag for a GitHub repo given a branch
 #
 # Usage:
-#   source .github/scripts/resolve-tag.sh
+#   source .github/scripts/pipeline/resolve-tag.sh
 #   tag="$(resolve_release_tag "owner/repo" "branch")"
 #
 # Requires GH_TOKEN in environment.

@@ -35,4 +35,4 @@ if [ -z "${GITHUB_OUTPUT:-}" ]; then
   exit 1
 fi
 
-exec node "$(dirname "$0")/../.github/scripts/check-existing-releases.js"
+exec node "$(dirname "$0")/../check-existing-releases.js"

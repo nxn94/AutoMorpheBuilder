@@ -44,7 +44,7 @@ jobs:
         # matrix. The downstream `filter` step overrides both based on
         # whether every app's release already exists.
         id: check
-        run: bash scripts/check_versions.sh
+        run: bash .github/scripts/pipeline/check_versions.sh
 
       - name: Set up Java (for morphe-desktop)
         # The `filter` and `pre_download_apks` steps both shell out to
@@ -68,7 +68,7 @@ jobs:
           CLI_REPO: ${{ steps.check.outputs.cli-repo }}
           CLI_TAG: ${{ steps.check.outputs.cli-version }}
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
-        run: bash scripts/download_morphe_tools.sh
+        run: bash .github/scripts/pipeline/download_morphe_tools.sh
 
       - name: Cache morphe-desktop and patches
         uses: actions/cache@v5
@@ -92,7 +92,7 @@ jobs:
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           TOOLS_DIR: tools
-        run: bash scripts/check_existing_releases.sh
+        run: bash .github/scripts/pipeline/check_existing_releases.sh
 
       - name: Setup Node.js
         if: steps.filter.outputs.should-build == 'true'
@@ -129,7 +129,7 @@ jobs:
         if: steps.filter.outputs.should-build == 'true'
         env:
           PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
-        run: bash scripts/install_playwright.sh
+        run: bash .github/scripts/pipeline/install_playwright.sh
 
       - name: Upload Playwright browsers for build jobs
         if: steps.filter.outputs.should-build == 'true'
@@ -149,7 +149,7 @@ jobs:
 
       - name: Install apkeep
         if: steps.filter.outputs.should-build == 'true'
-        run: bash scripts/install_apkeep.sh
+        run: bash .github/scripts/pipeline/install_apkeep.sh
 
       - name: Upload apkeep for build jobs
         if: steps.filter.outputs.should-build == 'true'
@@ -164,7 +164,7 @@ jobs:
         if: steps.filter.outputs.should-build == 'true'
         env:
           ANDROID_HOME: /tmp/android-sdk
-        run: bash scripts/install_aapt.sh
+        run: bash .github/scripts/pipeline/install_aapt.sh
 
       - name: Pre-download APKs (parallel)
         id: download-apks
@@ -174,7 +174,7 @@ jobs:
           SKIP_LIST: ${{ steps.filter.outputs.skip-list }}
           ANDROID_HOME: /tmp/android-sdk
           ANDROID_BUILD_TOOLS_VERSION: ${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
-        run: bash scripts/pre_download_apks.sh
+        run: bash .github/scripts/pipeline/pre_download_apks.sh
 
       - name: Upload pre-downloaded APKs
         if: steps.filter.outputs.should-build == 'true'
@@ -237,7 +237,7 @@ jobs:
 
       - name: Install BouncyCastle
         if: steps.cache-bc.outputs.cache-hit != 'true'
-        run: bash scripts/install_bouncycastle.sh
+        run: bash .github/scripts/pipeline/install_bouncycastle.sh
 
       - name: Cache BouncyCastle
         id: cache-bc
@@ -292,7 +292,7 @@ jobs:
       - name: Install Playwright browsers (fallback if missing)
         env:
           PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
-        run: bash scripts/install_playwright.sh
+        run: bash .github/scripts/pipeline/install_playwright.sh
 
       - name: Ensure apkeep is available
         run: |
@@ -301,7 +301,7 @@ jobs:
             chmod +x /usr/local/bin/apkeep
           fi
           if ! command -v apkeep >/dev/null 2>&1 || [ ! -x /usr/local/bin/apkeep ]; then
-            bash scripts/install_apkeep.sh
+            bash .github/scripts/pipeline/install_apkeep.sh
           fi
           apkeep --version
 
@@ -338,14 +338,14 @@ jobs:
           CLI_REPO: ${{ env.CLI_REPO }}
           CLI_VERSION: ${{ env.CLI_VERSION }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
-        run: bash scripts/fetch_morphe_tools.sh
+        run: bash .github/scripts/pipeline/fetch_morphe_tools.sh
 
       - name: Prepare inputs for download
         id: targetver_prep
         env:
           APP_ID: ${{ matrix.appId }}
           PATCH_REPO: ${{ matrix.patchRepo }}
-        run: bash scripts/prepare_target_version.sh
+        run: bash .github/scripts/pipeline/prepare_target_version.sh
 
       - name: Resolve supported version for ${{ matrix.appId }}
         id: targetver
@@ -389,7 +389,7 @@ jobs:
         id: aapt
         env:
           ANDROID_HOME: /tmp/android-sdk
-        run: bash scripts/install_aapt.sh
+        run: bash .github/scripts/pipeline/install_aapt.sh
 
       - name: Download supported APK for ${{ matrix.appId }}
         id: getapk
@@ -416,7 +416,7 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: bash scripts/prepare_keystore.sh
+        run: bash .github/scripts/pipeline/prepare_keystore.sh
 
       - name: Patch ${{ matrix.name }} with morphe-desktop
         id: patch
@@ -436,7 +436,7 @@ jobs:
           OUT_DIR: ${{ env.OUT_DIR }}
           APKS_DIR: ${{ env.APKS_DIR }}
           RUNNER_TEMP: ${{ runner.temp }}
-        run: bash scripts/patch_apk.sh
+        run: bash .github/scripts/pipeline/patch_apk.sh
 
       - name: Upload patched ${{ matrix.name }}
         uses: actions/upload-artifact@v7
@@ -471,4 +471,4 @@ jobs:
           CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
           CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
           REPO_VERSIONS: ${{ needs.check-versions.outputs.repo-versions }}
-        run: bash scripts/create_release.sh
+        run: bash .github/scripts/pipeline/create_release.sh

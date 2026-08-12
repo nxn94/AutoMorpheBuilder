@@ -2,9 +2,9 @@
 
 ## What this repo is
 
-GitHub Actions CI/CD project that builds patched Android APKs with [Morphe](https://github.com/MorpheApp/morphe-patches) patches. **The workflow is the product** — there is no app to run locally. The full system is three YAML workflows plus two trees of scripts:
-- **Node.js helpers** under `.github/scripts/` (orchestration, downloaders, validators, tests).
-- **Shell pipeline** under `scripts/` — each top-level `scripts/<step>.sh` corresponds to one workflow step, with shared helpers in `scripts/lib/`.
+GitHub Actions CI/CD project that builds patched Android APKs with [Morphe](https://github.com/MorpheApp/morphe-patches) patches. **The workflow is the product** — there is no app to run locally. The full system is three YAML workflows plus one tree of scripts under `.github/scripts/`:
+- **Node.js helpers** (top-level `.github/scripts/*.js` and `__tests__/`) — orchestration, downloaders, validators, tests.
+- **Shell pipeline** under `.github/scripts/pipeline/` — each top-level `<step>.sh` corresponds to one workflow step, with shared helpers in `pipeline/lib/`.
 
 Supported apps (defined in `config.json` `patch_repos`): `com.google.android.youtube`, `com.google.android.apps.youtube.music`, `com.reddit.frontpage`. Add a new app = add a single entry to `config.json` `patch_repos` (includes `apkmirror_path`), no workflow edits.
 
@@ -45,7 +45,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `resolve-tag.sh` | Shared shell script: `resolve_release_tag` function (sourced by both workflows). |
 | `sync-patches.sh` | Patches.json syncer (used by update-patches.yml). |
 
-### Shell pipeline (`scripts/`)
+### Shell pipeline (`.github/scripts/pipeline/`)
 
 | File | Purpose |
 |------|---------|
@@ -62,7 +62,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `install_apkeep.sh` | Downloads apkeep binary; pins SHA-256 against `APKEEP_VERSION`. |
 | `install_bouncycastle.sh` | Downloads BouncyCastle provider jar from Maven Central; verifies SHA-256 from the companion `.sha256` file. |
 | `install_playwright.sh` | Installs Playwright Chromium (uses the download-host env override). |
-| `lib/common.sh`, `lib/json.sh`, `lib/config.sh`, `lib/apk.sh`, `lib/github.sh` | Sourced helpers shared across `scripts/*.sh`. `config.sh` exposes `auto_update_urls_enabled`, `pinned_version`, `list_app_ids`, etc. |
+| `lib/common.sh`, `lib/json.sh`, `lib/config.sh`, `lib/apk.sh`, `lib/github.sh` | Sourced helpers shared across `pipeline/*.sh`. `config.sh` exposes `auto_update_urls_enabled`, `pinned_version`, `list_app_ids`, etc. |
 
 ### Tests (`.github/scripts/__tests__/`)
 
@@ -84,8 +84,8 @@ check-versions → build (matrix per app) → create-release
 ```
 
 - `check-versions` — two-phase:
-  1. **Tag resolution** (`scripts/check_versions.sh`): queries GitHub for the latest Morphe patch + CLI tags, emits the full matrix and `should-build=true` (optimistic default).
-  2. **Release comparison** (`scripts/check_existing_releases.sh`): for each app, resolves the APK version (pinned or via `morphe-desktop list-versions`), computes the expected release tag `<name>-v<apk>-<patches>`, and checks `gh release view <tag>`. Apps whose release already exists are dropped from the matrix and added to `skip-list`. If the filtered matrix is empty, `should-build` flips to `false` and both `build` and `create-release` skip. If the matrix is non-empty, only the changed apps are built and pre-downloaded.
+  1. **Tag resolution** (`.github/scripts/pipeline/check_versions.sh`): queries GitHub for the latest Morphe patch + CLI tags, emits the full matrix and `should-build=true` (optimistic default).
+  2. **Release comparison** (`.github/scripts/pipeline/check_existing_releases.sh`): for each app, resolves the APK version (pinned or via `morphe-desktop list-versions`), computes the expected release tag `<name>-v<apk>-<patches>`, and checks `gh release view <tag>`. Apps whose release already exists are dropped from the matrix and added to `skip-list`. If the filtered matrix is empty, `should-build` flips to `false` and both `build` and `create-release` skip. If the matrix is non-empty, only the changed apps are built and pre-downloaded.
   - The expensive setup steps (npm ci, Playwright, apkeep, aapt, APK pre-download) are all gated on the **post-filter** `should-build`, so a no-op day avoids the network/install cost entirely.
   - Failure policy is **fail-open**: if the APK version can't be resolved (missing jar/.mpp) or `gh release view` errors, the app is kept in the matrix and a `::warning::` is logged. The build never silently skips an app we couldn't version-check.
   - Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
@@ -110,7 +110,7 @@ npm run lint                              # via eslint.config.js
 npx eslint .github/scripts                # same
 
 # Lint shell
-shellcheck scripts/*.sh scripts/lib/*.sh
+shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh
 
 # Validate workflow (any of these work)
 docker run --rm -v $(pwd):/repo ghcr.io/rhysd/actionlint:latest -color .
@@ -186,4 +186,4 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 
 ## Local environment
 
-`package.json` declares `engines.node >=24` to match the GitHub Actions runner (which uses `actions/setup-node` with `node-version: '24'`). Tests use Jest only. The flat-config ESLint setup at the repo root (`eslint.config.js`) is what `npm run lint` runs against `.github/scripts/`; the documented `npx eslint .github/scripts/*.js` command also works. The shell pipeline under `scripts/` is linted via `shellcheck` (not part of `npm run lint`). The PR CI workflow (`.github/workflows/ci.yml`) installs `zip` via `apt-get` because the apk-selection / apk-abi-validator test fixtures shell out to `zip`. No OpenCode config (`opencode.json`) is present in the repo.
+`package.json` declares `engines.node >=24` to match the GitHub Actions runner (which uses `actions/setup-node` with `node-version: '24'`). Tests use Jest only. The flat-config ESLint setup at the repo root (`eslint.config.js`) is what `npm run lint` runs against `.github/scripts/`; the documented `npx eslint .github/scripts/*.js` command also works. The shell pipeline under `.github/scripts/pipeline/` is linted via `shellcheck` (not part of `npm run lint`). The PR CI workflow (`.github/workflows/ci.yml`) installs `zip` via `apt-get` because the apk-selection / apk-abi-validator test fixtures shell out to `zip`. No OpenCode config (`opencode.json`) is present in the repo.

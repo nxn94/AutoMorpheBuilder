@@ -50,8 +50,8 @@ fi
 
 # Sourced here because it uses GH_TOKEN. resolve-tag.sh is a function
 # library, not an executable script.
-# shellcheck source=../.github/scripts/resolve-tag.sh
-. "$(dirname "$0")/../.github/scripts/resolve-tag.sh"
+# shellcheck source=resolve-tag.sh
+. "$(dirname "$0")/resolve-tag.sh"
 
 # --- resolve tags for every patch repo ------------------------------------
 

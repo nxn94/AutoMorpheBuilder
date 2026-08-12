@@ -1,7 +1,7 @@
 // ESLint flat config (v9). Scoped to the Node.js helpers under
-// .github/scripts — the shell pipeline under scripts/ is linted via
-// shellcheck separately (see AGENTS.md). The CI workflow (ci.yml)
-// runs `npm run lint` against this config.
+// .github/scripts — the shell pipeline under .github/scripts/pipeline/
+// is linted via shellcheck separately (see AGENTS.md). The CI workflow
+// (ci.yml) runs `npm run lint` against this config.
 'use strict';
 
 const js = require('@eslint/js');
