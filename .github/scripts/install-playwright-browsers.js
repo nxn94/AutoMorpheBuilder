@@ -151,13 +151,18 @@ function install(name) {
     try { fs.unlinkSync(tmpZip); } catch { /* ignore */ }
   }
 
-  // Validate: the expected executable must exist
+  // Validate: the expected executable must exist. Use chmodSync directly
+  // (chmod throws ENOENT atomically) so the existsSync + chmodSync pair
+  // doesn't have a TOCTOU window — covers CodeQL js/file-system-race.
   const expectedExec = exec.executablePath();
-  if (!fs.existsSync(expectedExec)) {
-    throw new Error(`Expected ${expectedExec} after extraction, but it's missing`);
+  try {
+    fs.chmodSync(expectedExec, 0o755);
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      throw new Error(`Expected ${expectedExec} after extraction, but it's missing`);
+    }
+    throw e;
   }
-  // Make sure it's executable
-  fs.chmodSync(expectedExec, 0o755);
 
   // Mark install complete (Playwright's marker convention)
   fs.writeFileSync(marker, '');

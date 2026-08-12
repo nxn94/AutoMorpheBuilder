@@ -224,12 +224,9 @@ class AxmlPatcher {
       //   null terminator (1 byte)
       let p = absOffset;
       const c0 = this.buf.readUInt8(p);
-      let _charLen;
       if (c0 & 0x80) {
-        _charLen = ((c0 & 0x7F) << 8) | this.buf.readUInt8(p + 1);
         p += 2;
       } else {
-        _charLen = c0;
         p += 1;
       }
       const b0 = this.buf.readUInt8(p);
