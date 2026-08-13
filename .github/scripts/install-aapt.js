@@ -91,12 +91,9 @@ function acceptLicenses() {
   // The license prompt cycles through ~7 licenses; `yes` answers them all,
   // and the trailing `y/N?` after the last "All accepted" is harmless
   // because we've already written all accept records.
-  // codeql[js/indirect-command-line-injection] reason: SDK_ROOT comes from
-  // ANDROID_HOME which the morphe-build workflow hardcodes to
-  // /tmp/android-sdk (`env: ANDROID_HOME: /tmp/android-sdk` in
-  // .github/workflows/morphe-build.yml); the default fallback is a
-  // path.join() into os.tmpdir(). Neither path is attacker-controllable
-  // in our threat model.
+  // codeql[js/indirect-command-line-injection] reason: SDK_ROOT comes
+  // from ANDROID_HOME (hardcoded to /tmp/android-sdk by the workflow)
+  // or os.tmpdir() fallback — not attacker-controllable.
   const cmd = `printf 'y\\ny\\ny\\ny\\ny\\ny\\ny\\ny\\n' | "${sdkMgr}" --sdk_root="${SDK_ROOT}" --licenses >/dev/null 2>&1; true`;
   const r = spawnSync('bash', ['-c', cmd], { stdio: 'inherit' });
   if (r.status !== 0) {

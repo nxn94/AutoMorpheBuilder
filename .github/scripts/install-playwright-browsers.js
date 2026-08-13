@@ -165,6 +165,9 @@ function install(name) {
   }
 
   // Mark install complete (Playwright's marker convention)
+  // codeql[js/file-system-race] reason: marker path is constructed
+  // by Playwright in targetDir (user-owned); the file is a zero-byte
+  // sentinel, not attacker-controlled content.
   fs.writeFileSync(marker, '');
   console.error(`[install] ${name} r${revision} installed at ${targetDir}`);
 }

@@ -270,6 +270,10 @@ function saveCachedUrl(packageId, version, url, source) {
     lastWorkingAt: new Date().toISOString()
   };
 
+  // codeql[js/file-system-race] reason: cacheFile is built from a sanitized
+  // packageId + sanitized version, lives in the user-owned cache dir.
+  // codeql[js/http-to-file-access] reason: newCacheData is constructed
+  // in this module from URL metadata we cached; not attacker-controlled.
   fs.writeFileSync(cacheFile, JSON.stringify(newCacheData, null, 2));
   console.error(`[url-cache] Saved: ${packageId} v${version} from ${source}`);
 
@@ -338,6 +342,10 @@ async function verifyUrl(url) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
 
+    // codeql[js/file-access-to-http] reason: `url` is a HEAD-probe for
+    // a cached APK download URL from Morphe's patches-list.json or the
+    // user's own patches.json. Blast radius is bounded to a HEAD
+    // request plus an APK download into a user-owned temp dir.
     const response = await fetch(url, {
       method: 'HEAD',
       signal: controller.signal,
@@ -413,10 +421,11 @@ async function resolveApkmirrorApi(packageId, version) {
   const apiUrl = `https://www.apkmirror.com/wp-json/apkm/v1/${apkmirrorPath}/${version}`;
 
   // codeql[js/file-access-to-http] reason: apiUrl is the official
-  // APKMirror API endpoint (`https://www.apkmirror.com/wp-json/...`),
-  // constructed from a hardcoded path + the version selector; the
-  // version originates from Morphe's patches-list.json.
+  // APKMirror API endpoint; constructed from a hardcoded path + the
+  // version selector from Morphe's patches-list.json.
   try {
+    // codeql[js/file-access-to-http] reason: same as the apiUrl comment
+    // above; this fetch targets the hardcoded APKMirror API host.
     const response = await fetch(apiUrl, {
       headers: {
         "Authorization": apkMirrorAuthHeader(),
@@ -499,13 +508,12 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
       await sleep((attempt - 1) * 2000);
     }
 
-    // codeql[js/file-access-to-http] reason: argv-style spawn, no shell,
-    // URL is constrained by the unified-downloader's upstream sources
-    // (Morphe patches-list.json, APKMirror, apkeep). The blob comes
-    // straight back to disk via curl's `-o`; this is the intended
-    // flow for downloading APKs.
+    // codeql[js/file-access-to-http] reason: argv-style spawn, no shell;
+    // URL is constrained by the unified-downloader's upstream sources.
     try {
       const result = await new Promise((resolve, reject) => {
+        // codeql[js/file-access-to-http] reason: same as above; the curl
+        // invocation is the unified-downloader's intended download path.
         const curl = spawn('curl', ['-L', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
 
         let stderr = '';
