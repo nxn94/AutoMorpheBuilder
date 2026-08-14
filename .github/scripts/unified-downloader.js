@@ -116,7 +116,11 @@ function buildReleasePageUrl(apkmirrorPath, version) {
  * @returns {Promise<string>} Absolute release-page URL
  */
 async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
-  const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  // Curl by default — Node's TLS fingerprint gets HTTP 403 from
+  // Cloudflare on /all-versions/, which trips the catch block below
+  // and falls back to buildReleasePageUrl (the wrong slug). Curl
+  // matches Firefox's TLS fingerprint and sails through.
+  const fetchImpl = opts.fetchImpl || apkmirrorFetch;
   const cheerioImpl = opts.cheerioImpl || cheerio;
 
   const listUrl = `https://www.apkmirror.com/apk/${apkmirrorPath}/all-versions/`;
