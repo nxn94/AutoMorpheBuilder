@@ -43,22 +43,41 @@ describe('buildVariantPriorities', () => {
     expect(priorities[4]).toEqual({ arch: 'noarch', dpi: 'nodpi', type: 'APK' });
   });
 
-  test('returns 15 priorities total (5 arch/type combos × 3 DPIs)', () => {
-    expect(buildVariantPriorities('arm64-v8a')).toHaveLength(15);
+  test('returns 25 priorities total (5 arch/type combos × 5 DPIs)', () => {
+    // 5 DPIs × 5 arch/type combos per DPI (preferredArch APK,
+    // preferredArch BUNDLE, universal APK, universal BUNDLE, noarch APK)
+    // = 25. If you add or remove a DPI tier, this number must move with
+    // it — otherwise the per-tier ordering assertions below silently
+    // index past the end of the array.
+    expect(buildVariantPriorities('arm64-v8a')).toHaveLength(25);
   });
 
-  test('nodpi entries come before 120-640dpi entries', () => {
+  test('DPI tiers are ordered outer-loop: nodpi → 120-640 → 480-640 → 120-480 → 240-480', () => {
+    // Outer loop = DPI, inner loop = arch/type. The first arm64-v8a APK
+    // for each DPI tier should land at indices 0, 5, 10, 15, 20.
     const priorities = buildVariantPriorities('arm64-v8a');
-    const firstNodpi = priorities.findIndex(p => p.dpi === 'nodpi');
-    const first120 = priorities.findIndex(p => p.dpi === '120-640dpi');
-    expect(firstNodpi).toBeLessThan(first120);
+    const orderedDpis = ['nodpi', '120-640dpi', '480-640dpi', '120-480dpi', '240-480dpi'];
+    const firstArm64ApkIndices = orderedDpis.map(dpi =>
+      priorities.findIndex(p => p.dpi === dpi && p.arch === 'arm64-v8a' && p.type === 'APK')
+    );
+    expect(firstArm64ApkIndices).toEqual([0, 5, 10, 15, 20]);
   });
 
-  test('120-640dpi entries come before 240-480dpi entries', () => {
+  test('480-640dpi tier comes between 120-640dpi and 120-480dpi', () => {
     const priorities = buildVariantPriorities('arm64-v8a');
     const first120 = priorities.findIndex(p => p.dpi === '120-640dpi');
+    const first480 = priorities.findIndex(p => p.dpi === '480-640dpi');
+    const first120to480 = priorities.findIndex(p => p.dpi === '120-480dpi');
+    expect(first120).toBeLessThan(first480);
+    expect(first480).toBeLessThan(first120to480);
+  });
+
+  test('240-480dpi entries still come last', () => {
+    const priorities = buildVariantPriorities('arm64-v8a');
     const first240 = priorities.findIndex(p => p.dpi === '240-480dpi');
-    expect(first120).toBeLessThan(first240);
+    const allOtherDpis = priorities.filter(p => p.dpi !== '240-480dpi');
+    const lastOtherDpiIndex = priorities.lastIndexOf(allOtherDpis[allOtherDpis.length - 1]);
+    expect(first240).toBeGreaterThan(lastOtherDpiIndex);
   });
 });
 
@@ -110,13 +129,41 @@ describe('selectVariant', () => {
     expect(selectVariant($, priorities)).toBe('/apk/120dpi');
   });
 
-  test('falls back to 240-480dpi when nodpi and 120-640dpi not found', () => {
+  test('falls back to 480-640dpi when nodpi and 120-640dpi not found', () => {
+    const html = makeHtml([
+      { version: '20.44.38', dpi: '480-640dpi', arch: 'arm64-v8a', type: 'APK', href: '/apk/480dpi' },
+    ]);
+    const $ = cheerio.load(html);
+    const priorities = buildVariantPriorities('arm64-v8a');
+    expect(selectVariant($, priorities)).toBe('/apk/480dpi');
+  });
+
+  test('falls back to 120-480dpi when nodpi, 120-640dpi, and 480-640dpi not found', () => {
+    const html = makeHtml([
+      { version: '20.44.38', dpi: '120-480dpi', arch: 'arm64-v8a', type: 'APK', href: '/apk/120to480dpi' },
+    ]);
+    const $ = cheerio.load(html);
+    const priorities = buildVariantPriorities('arm64-v8a');
+    expect(selectVariant($, priorities)).toBe('/apk/120to480dpi');
+  });
+
+  test('falls back to 240-480dpi when all higher-priority DPI tiers are missing', () => {
     const html = makeHtml([
       { version: '20.44.38', dpi: '240-480dpi', arch: 'arm64-v8a', type: 'APK', href: '/apk/240dpi' },
     ]);
     const $ = cheerio.load(html);
     const priorities = buildVariantPriorities('arm64-v8a');
     expect(selectVariant($, priorities)).toBe('/apk/240dpi');
+  });
+
+  test('prefers 480-640dpi over 120-480dpi when both are offered', () => {
+    const html = makeHtml([
+      { version: '20.44.38', dpi: '120-480dpi', arch: 'arm64-v8a', type: 'APK', href: '/apk/120to480dpi' },
+      { version: '20.44.38', dpi: '480-640dpi', arch: 'arm64-v8a', type: 'APK', href: '/apk/480dpi' },
+    ]);
+    const $ = cheerio.load(html);
+    const priorities = buildVariantPriorities('arm64-v8a');
+    expect(selectVariant($, priorities)).toBe('/apk/480dpi');
   });
 
   test('throws with list of available variants when nothing matches', () => {

@@ -82,11 +82,29 @@ function buildReleasePageUrl(apkmirrorPath, version) {
 
 /**
  * Build ordered variant priority list from preferred arch.
- * Priority: preferred APK → preferred BUNDLE → universal APK → universal BUNDLE → noarch APK
+ * Outer loop = DPI tier (outer is more important), inner loop = arch/type.
+ * Within each DPI tier: preferred APK → preferred BUNDLE → universal APK
+ * → universal BUNDLE → noarch APK.
+ *
+ * DPI preference is APKMirror-only. APKMirror exposes a variant table
+ * with explicit DPI columns, so we can pick a precise target. APKPure
+ * (via apkeep) doesn't expose DPI as a selectable axis — the apkeep
+ * path takes whatever APKPure serves, then validates the resulting
+ * .apk against `preferred_arch` post-download and falls back to the
+ * next source if the ABI doesn't match.
+ *
+ * Tiers ordered by band tightness:
+ *   nodpi        → no DPI-specific resources, runs on any density.
+ *   120-640dpi   → assets-up to 640, asset-densities up to 480 — a
+ *                  wide umbrella that covers every shipping device.
+ *   480-640dpi   → upper-density-only, falls back to lower densities
+ *                  visually (smaller assets on a phone but fine).
+ *   120-480dpi   → explicit upper bound of 480 (xxxhdpi excluded).
+ *   240-480dpi   → narrower band than 120-480dpi, last resort.
  */
 function buildVariantPriorities(preferredArch) {
   const archs = [preferredArch, 'universal', 'noarch'];
-  const dpis  = ['nodpi', '120-640dpi', '240-480dpi'];
+  const dpis  = ['nodpi', '120-640dpi', '480-640dpi', '120-480dpi', '240-480dpi'];
   const priorities = [];
   for (const dpi of dpis) {
     for (const arch of archs) {

@@ -208,7 +208,7 @@ The workflow uses a multi-source fallback chain:
 | Criteria | Priority |
 |----------|----------|
 | Architecture | `preferred_arch` from config (default: `arm64-v8a`) |
-| DPI | `nodpi` → `120-640dpi` → `240-480dpi` |
+| DPI | `nodpi` → `120-640dpi` → `480-640dpi` → `120-480dpi` → `240-480dpi` (APKMirror only — apkeep takes whatever APKPure serves) |
 | APK Type | `APK` preferred over `BUNDLE` for same arch/DPI |
 | Split Packages | APKEditor merge → dex-bearing APK extraction |
 | Validation | **Rejects** dex-less APKs (requires `classes*.dex`) |

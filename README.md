@@ -168,7 +168,7 @@ flowchart TD
 - ✅ Handles: `.apk`, `.xapk`, `.apkm`, `.apks`
 - ✅ For splits: tries APKEditor merge → falls back to dex-bearing APK extraction
 - ✅ Architecture: prefers `preferred_arch` from config
-- ✅ DPI preference: `nodpi` → `120-640dpi` → `240-480dpi`
+- ✅ DPI preference (APKMirror only — apkeep takes whatever APKPure serves): `nodpi` → `120-640dpi` → `480-640dpi` → `120-480dpi` → `240-480dpi`
 - ❌ Rejects dex-less APKs (requires `classes*.dex`)
 
 ---
