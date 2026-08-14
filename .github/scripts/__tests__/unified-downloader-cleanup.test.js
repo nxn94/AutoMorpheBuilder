@@ -224,19 +224,15 @@ describe('downloadWithApkeep — cleanup-on-failure contract', () => {
     try { fs.rmSync(apksDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
-  test('deletes the partial .xapk when VERSION MISMATCH is detected', async () => {
-    // downloadWithApkeep clears outputDir before invoking apkeep, so
-    // any pre-staged file is wiped. We mock the apkeep subprocess
-    // (execFile, which runCommand delegates to) to create a fake
-    // .xapk as a side effect of "succeeding", matching the real
-    // apkeep behavior of writing the download to outputDir.
-    //
-    // runCommand uses execFile with the *promise* signature (no
-    // callback) and listens for 'close' / 'error' events on the
-    // returned ChildProcess. Our mock returns a ChildProcess-shaped
-    // EventEmitter, writes a fake .xapk to outputDir synchronously,
-    // and emits 'close' with code 0 on the next tick so runCommand
-    // resolves successfully.
+  test('skips aapt version validation for split packages (.xapk/.apkm/.apks)', async () => {
+    // Repro of the Sofascore bug: apkeep legitimately downloads a xapk
+    // bundle for the requested package@version. aapt can't parse
+    // zip-of-zips, so the old code threw VERSION MISMATCH and deleted
+    // the working xapk, leaving the operator thinking apkeep didn't
+    // find the package. The fix: split packages skip the aapt version
+    // check entirely (aapt can't read them anyway) and rely on the
+    // caller's merge step in download-supported-apk.js to validate the
+    // inner base.apk's versionName.
     const { EventEmitter } = require('node:events');
 
     execFile.mockImplementation(() => {
@@ -250,28 +246,17 @@ describe('downloadWithApkeep — cleanup-on-failure contract', () => {
       return cp;
     });
 
-    // Version validation fails.
+    // aapt returns a wrong versionName. The split-package path must ignore it.
     execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
 
-    // ABI validation never reached in this path (VERSION MISMATCH
-    // throws first), but a no-throw implementation keeps the test
-    // from getting a confusing secondary error if the order ever
-    // changes.
     validateDownloadedApkAbi.mockImplementation(() => { /* no throw */ });
 
-    // downloadWithApkeep inspects findApkFile(outputDir) to locate
-    // the file apkeep produced. With our side-effect mock writing
-    // a .xapk, that lookup returns the .xapk path.
     const expectedPath = path.join(apksDir, `${PKG}@${VER}.xapk`);
 
-    await expect(downloadWithApkeep(PKG, VER, apksDir)).rejects.toThrow(
-      /VERSION MISMATCH|APKPure does not have/
-    );
-
-    // The contract: execFile ran (apkeep wrote the file) AND the
-    // .xapk is gone after the rejection.
-    expect(execFile).toHaveBeenCalled();
-    expect(fs.existsSync(expectedPath)).toBe(false);
+    const result = await downloadWithApkeep(PKG, VER, apksDir);
+    expect(result.success).toBe(true);
+    expect(result.filepath).toBe(expectedPath);
+    expect(fs.existsSync(expectedPath)).toBe(true);
   });
 
   test('deletes the partial .xapk when ABI validation throws', async () => {

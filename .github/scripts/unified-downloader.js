@@ -902,17 +902,30 @@ async function downloadWithApkeep(packageId, version, outputDir) {
       if (stats.size > 1000) {
         console.error(`[apkeep] Downloaded: ${apkPath} (${stats.size} bytes)`);
 
-        // ALWAYS validate the downloaded APK matches requested version
-        const validation = validateApkVersion(apkPath, version);
-        if (!validation.valid) {
-          // Cleanup-on-failure: APKPure just served a partial / wrong-
-          // version download. Delete it so the next source
-          // (apkmirror-api → apkmirror-pw) isn't contaminated by a
-          // stale .xapk/.apkm that findPackageCandidate's
-          // first-encountered tiebreak would pick over the working
-          // bundle. Best-effort.
-          try { fs.unlinkSync(apkPath); } catch { /* best-effort */ }
-          throw new Error(`VERSION MISMATCH: Downloaded APK v${validation.actualVersion} but wanted v${version}. ${validation.error || "The requested version is not available from APKPure."}`);
+        // Split packages (.xapk / .apkm / .apks) are zip-of-zips — aapt
+        // can't parse them, so version validation on the outer archive
+        // always returns false. The caller in download-supported-apk.js
+        // already extracts base.apk and validates its versionName
+        // (which aapt can read), so duplicating the check here would
+        // spuriously reject every split package. Sofascore is the
+        // prime example: apkeep ships a xapk bundle with a no-libs
+        // base.apk + config.armeabi_v7a.apk + config.mdpi.apk.
+        const isSplitPackage = /\.(xapk|apkm|apks)$/i.test(apkPath);
+
+        if (!isSplitPackage) {
+          // ALWAYS validate the downloaded APK matches requested version
+          const validation = validateApkVersion(apkPath, version);
+          if (!validation.valid) {
+            // Cleanup-on-failure: APKPure just served a partial / wrong-
+            // version download. Delete it so the next source
+            // (apkmirror-api → apkmirror-pw) isn't contaminated by a
+            // stale .apk that findPackageCandidate's first-encountered
+            // tiebreak would pick over the working bundle. Best-effort.
+            try { fs.unlinkSync(apkPath); } catch { /* best-effort */ }
+            throw new Error(`VERSION MISMATCH: Downloaded APK v${validation.actualVersion} but wanted v${version}. ${validation.error || "The requested version is not available from APKPure."}`);
+          }
+        } else {
+          console.error(`[apkeep] Split package detected — skipping aapt version check (aapt can't parse zip-of-zips; caller validates inner base.apk)`);
         }
 
         // Validate ABI composition. APKPure commonly serves a single-
@@ -920,6 +933,13 @@ async function downloadWithApkeep(packageId, version, outputDir) {
         // that doesn't match the operator's preferred_arch, reject the
         // download so the fallback chain (apkmirror-api → apkmirror-pw)
         // can try a source that ships the right ABI.
+        //
+        // The validator (apk-abi-validator.js) is bundle-aware: it
+        // detects the zip-of-zips shape, extracts inner .apk files to
+        // a temp dir, and checks each one for lib/<arch>/*.so. So a
+        // Sofascore xapk with only config.armeabi_v7a.apk is correctly
+        // rejected for an arm64-v8a preference; the next source (APKMirror)
+        // gets a chance to serve a multi-arch APK.
         let preferredArchForApkeep = '';
         try {
           preferredArchForApkeep = loadConfig().preferred_arch || '';
