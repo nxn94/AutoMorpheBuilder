@@ -7,6 +7,7 @@ const {
   buildVariantPriorities,
   selectVariant,
   collectCookies,
+  resolveApkmirrorReleaseSlug,
 } = require('../unified-downloader');
 
 const cheerio = require('cheerio');
@@ -214,5 +215,61 @@ describe('collectCookies', () => {
     const resp = makeResponse([]);
     const cookies = collectCookies(resp, { keep: 'me' });
     expect(cookies).toEqual({ keep: 'me' });
+  });
+});
+
+describe('resolveApkmirrorReleaseSlug', () => {
+  const sofascorePath = 'sofascore/soccer-scores-and-sports-livescore-sofascore';
+  const youtubePath = 'google-inc/youtube';
+  const sofascoreAllVersionsHtml = `
+    <html><body>
+      <a class="fontBlack" href="/apk/${sofascorePath}/soccer-scores-and-sports-livescore-sofascore-26-06-29-release/">26.06.29</a>
+      <a class="fontBlack" href="/apk/${sofascorePath}/sofascore-live-sports-scores-26-07-27-release/">26.07.27</a>
+      <a class="fontBlack" href="/apk/${sofascorePath}/sofascore-live-sports-scores-26-08-03-release/">26.08.03</a>
+    </body></html>
+  `;
+  const youtubeAllVersionsHtml = `
+    <html><body>
+      <a class="fontBlack" href="/apk/${youtubePath}/youtube-21-29-366-release/">21.29.366</a>
+      <a class="fontBlack" href="/apk/${youtubePath}/youtube-21-31-529-release/">21.31.529</a>
+    </body></html>
+  `;
+
+  test('resolves the slug from /all-versions/ when it differs from the path slug', async () => {
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(sofascoreAllVersionsHtml) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(sofascorePath, '26.07.27', { fetchImpl });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/sofascore-live-sports-scores-26-07-27-release/`
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/all-versions/`
+    );
+  });
+
+  test('falls back to path-slug URL when /all-versions/ fetch fails', async () => {
+    const fetchImpl = jest.fn(() => Promise.reject(new Error('network down (mocked)')));
+
+    const url = await resolveApkmirrorReleaseSlug(youtubePath, '20.44.38', { fetchImpl });
+
+    expect(url).toBe(
+      'https://www.apkmirror.com/apk/google-inc/youtube/youtube-20-44-38-release/'
+    );
+  });
+
+  test('falls back to path-slug URL when version not listed on /all-versions/', async () => {
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(youtubeAllVersionsHtml) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(youtubePath, '20.44.38', { fetchImpl });
+
+    expect(url).toBe(
+      'https://www.apkmirror.com/apk/google-inc/youtube/youtube-20-44-38-release/'
+    );
   });
 });

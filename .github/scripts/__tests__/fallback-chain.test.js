@@ -90,11 +90,15 @@ describe('parallelResolveSources', () => {
     // apkeep (execFile) → always fails (forces the loop past index 0).
     // apkmirror (chromium) → already mocked to reject fast.
     //
-    // fetch is now called twice: once by resolveApkeepVariant
-    // (the custom APKPure protobuf resolver inside the apkeep path)
-    // and once by resolveApkmirrorApi. Promise.allSettled does not
-    // cancel in-flight promises, so apkmirror-api's fetch has
-    // already been kicked off by the time the loop picks apkmirror-api.
+    // fetch is called three times by parallelResolveSources:
+    //   1. resolveApkeepVariant (the custom APKPure protobuf resolver
+    //      inside the apkeep path).
+    //   2. resolveApkmirrorApi (the API path).
+    //   3. resolveApkmirrorReleaseSlug (the apkmirror curl path resolves
+    //      its real release-page slug from /all-versions/ before
+    //      scraping the variant table).
+    // Promise.allSettled does not cancel in-flight promises, so all three
+    // have been kicked off by the time the loop picks apkmirror-api.
     global.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
@@ -110,7 +114,7 @@ describe('parallelResolveSources', () => {
       url: 'https://api.example/x.apk',
       source: 'apkmirror-api',
     });
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
     expect(execFile).toHaveBeenCalledTimes(1);
   });
 
@@ -119,11 +123,12 @@ describe('parallelResolveSources', () => {
     // before considering apkmirror-api or apkmirror at later indices.
     // apkmirror-api is mocked to fail; apkmirror is rejected.
     //
-    // fetch is called twice: once by resolveApkeepVariant (custom
-    // APKPure resolver) and once by resolveApkmirrorApi (which fails).
-    // The loop wins on apkeep before the apkmirror-api fetch resolves,
-    // but Promise.allSettled has already started the apkmirror-api
-    // promise by then.
+    // fetch is called three times: once by resolveApkeepVariant
+    // (custom APKPure resolver), once by resolveApkmirrorApi (fails),
+    // and once by resolveApkmirrorReleaseSlug (the apkmirror curl
+    // path resolves its real release-page slug). The loop wins on apkeep
+    // before those fetches resolve, but Promise.allSettled has already
+    // started their promises by then.
     global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
     execFile.mockImplementation((cmd, _args, _opts, cb) => {
       cb(null, '', '');
@@ -131,7 +136,7 @@ describe('parallelResolveSources', () => {
 
     const result = await parallelResolveSources(PKG, VER);
     expect(result.source).toBe('apkeep');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
   test('picks apkeep when apkmirror-api fails', async () => {

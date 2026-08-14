@@ -81,6 +81,79 @@ function buildReleasePageUrl(apkmirrorPath, version) {
 }
 
 /**
+ * Resolve APKMirror's actual release-page slug for a given (path, version).
+ *
+ * APKMirror's `apkmirror_path` config value points at the package's index
+ * page (e.g. `sofascore/soccer-scores-and-sports-livescore-sofascore`), but
+ * individual release pages use a SEPARATE slug baked into the URL — and
+ * the slug for the same package can drift over time. Sofascore is the
+ * canonical example:
+ *   apkmirror_path → sofascore/soccer-scores-and-sports-livescore-sofascore
+ *   2024 releases   → /apk/.../soccer-scores-and-sports-livescore-sofascore-<ver>-release/
+ *   2025+ releases  → /apk/.../sofascore-live-sports-scores-<ver>-release/
+ *
+ * `buildReleasePageUrl` derives the slug from the last path component
+ * (`soccer-scores-and-sports-livescore-sofascore`), which happens to
+ * match for old releases and YouTube (where `google-inc/youtube`'s last
+ * component is the same `youtube` the release URL uses), but 404s on
+ * Sofascore's 2025+ releases. Without this fix the Playwright fallback
+ * can't reach the variant table for the Morphe-supported 26.07.27.
+ *
+ * We scrape the package's `/all-versions/` page (a single fetch — no
+ * pagination; `show-more` is purely a visual fold that hides nothing
+ * from the HTML source) and match the URL whose tail ends in
+ * `<dashed-version>-release/`. We always return the path observed on
+ * APKMirror's server — never a fabricated one.
+ *
+ * Falls back to `buildReleasePageUrl(apkmirrorPath, version)` on network
+ * / parse errors so the existing path-slug contract still works for
+ * apps whose release slug matches the path slug (YouTube, YT Music,
+ * Reddit, …).
+ *
+ * @param {string} apkmirrorPath - Path from config (e.g. "sofascore/soccer-scores-and-sports-livescore-sofascore")
+ * @param {string} version - Version (e.g. "26.07.27")
+ * @param {object} [opts] - Inject for tests: { fetchImpl, cheerioImpl }
+ * @returns {Promise<string>} Absolute release-page URL
+ */
+async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
+  const fetchImpl = opts.fetchImpl || globalThis.fetch;
+  const cheerioImpl = opts.cheerioImpl || cheerio;
+
+  const listUrl = `https://www.apkmirror.com/apk/${apkmirrorPath}/all-versions/`;
+  const versionTail = `-${version.replace(/\./g, '-')}-release/`;
+
+  try {
+    // codeql[js/file-access-to-http] reason: listUrl is APKMirror's public
+    // package index page; only the parsed HTML is read, no file write.
+    const response = await fetchImpl(listUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const html = await response.text();
+    const $ = cheerioImpl.load(html);
+
+    // Every release row links to the release page with href ending in
+    // `<dashed-version>-release/`. We capture that href verbatim —
+    // never reconstruct the slug from the version.
+    const href = $(`a[href$="${versionTail}"]`).first().attr('href');
+    if (href) {
+      const abs = href.startsWith('http') ? href : `https://www.apkmirror.com${href}`;
+      console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${abs}`);
+      return abs;
+    }
+    throw new Error(`No release link found ending in ${versionTail}`);
+  } catch (err) {
+    console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
+    return buildReleasePageUrl(apkmirrorPath, version);
+  }
+}
+
+/**
  * Build ordered variant priority list from preferred arch.
  * Outer loop = DPI tier (outer is more important), inner loop = arch/type.
  * Within each DPI tier: preferred APK → preferred BUNDLE → universal APK
@@ -1177,8 +1250,8 @@ async function downloadViaPlaywright(apkmirrorPath, version, outputDir) {
     });
     const page = await context.newPage();
 
-    // Page 1: Release page → select variant using priority list
-    const page1Url = buildReleasePageUrl(apkmirrorPath, version);
+    // Page 1: Release page (slug resolved via /all-versions/, not path last component).
+    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
     console.error(`[apkmirror-pw] Page 1: ${page1Url}`);
     await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const $1 = cheerio.load(await page.content());
@@ -1314,8 +1387,8 @@ async function downloadWithApkmirror(packageId, version, outputDir) {
  * Page 3: Download page → find final APK link
  */
 async function resolveApkmirrorUrlViaCurl(apkmirrorPath, version, priorities) {
-  // Page 1: Release page
-  const page1Url = buildReleasePageUrl(apkmirrorPath, version);
+  // Page 1: Release page (slug resolved via /all-versions/, not path last component).
+  const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
   console.error(`[apkmirror-scraper] Page 1 (curl): ${page1Url}`);
   const resp1 = await apkmirrorFetch(page1Url);
   let cookies = collectCookies(resp1);
@@ -1382,8 +1455,8 @@ async function resolveApkmirrorUrlViaPlaywright(apkmirrorPath, version, prioriti
     });
     const page = await context.newPage();
 
-    // Page 1: Release page
-    const page1Url = buildReleasePageUrl(apkmirrorPath, version);
+    // Page 1: Release page (slug resolved via /all-versions/, not path last component).
+    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
     console.error(`[apkmirror-scraper] Page 1 (PW): ${page1Url}`);
     await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const html1 = await page.content();
@@ -1592,6 +1665,7 @@ module.exports = {
   buildVariantPriorities,
   selectVariant,
   collectCookies,
+  resolveApkmirrorReleaseSlug,
   resolveApkmirrorUrl,
   resolveApkeep,
   resolveApkeepVariant,
