@@ -137,4 +137,37 @@ describe('validateDownloadedApkAbi', () => {
     // finds arm64-v8a inside base.apk.
     expect(() => validateDownloadedApkAbi(bundlePath, 'arm64-v8a')).not.toThrow();
   });
+
+  // Regression guard for the PK magic-byte typo. The previous test
+  // exercises a bundle with arm64-v8a inside — the bundle branch
+  // returns early on the first matching split, so the magic-byte
+  // check at the top of validateDownloadedApkAbi is never exercised
+  // for "wrong arch" bundles. This test builds a bundle with NO
+  // arm64-v8a split, forcing the validator to reach the throw at
+  // the end of the bundle loop — which only runs if the magic-byte
+  // check accepts the zip. If the check rejects real zips (e.g. 0x6b
+  // vs 0x4b), this test silently passes, hiding the bug the way the
+  // existing positive-case test hid it.
+  test('throws on real-zip bundle with no arm64-v8a split', () => {
+    if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
+
+    const v7aInner = path.join(tmp, 'inner', 'config.armeabi_v7a.apk');
+    fs.mkdirSync(path.dirname(v7aInner), { recursive: true });
+    execFileSync('zip', [v7aInner], { stdio: 'ignore' });
+    const v7aLib = path.join('lib', 'armeabi-v7a', 'libfoo.so');
+    fs.mkdirSync(path.join(tmp, 'lib', 'armeabi-v7a'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, v7aLib), 'fake');
+    execFileSync('zip', [v7aInner, v7aLib], { cwd: tmp, stdio: 'ignore' });
+
+    const xapk = path.join(tmp, 'v7a_only.xapk');
+    execFileSync('zip', [xapk], { stdio: 'ignore' });
+    execFileSync('zip', [xapk, path.join('inner', 'config.armeabi_v7a.apk')], { cwd: tmp, stdio: 'ignore' });
+
+    // Sanity: the file really does start with the real PK signature.
+    const head = fs.readFileSync(xapk).slice(0, 4);
+    expect(head[0]).toBe(0x50);
+    expect(head[1]).toBe(0x4b);
+
+    expect(() => validateDownloadedApkAbi(xapk, 'arm64-v8a')).toThrow(/no split containing.*arm64-v8a/);
+  });
 });

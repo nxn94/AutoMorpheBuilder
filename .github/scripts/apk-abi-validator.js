@@ -105,7 +105,7 @@ if (!preferredArch) return;
   try {
     const buf = Buffer.alloc(4);
     fs.readSync(fd, buf, 0, 4, 0);
-    if (buf[0] !== 0x50 || buf[1] !== 0x6b || buf[2] !== 0x03 || buf[3] !== 0x04) return;
+    if (buf[0] !== 0x50 || buf[1] !== 0x4b || buf[2] !== 0x03 || buf[3] !== 0x04) return;
   } finally {
     fs.closeSync(fd);
   }
