@@ -272,4 +272,44 @@ describe('resolveApkmirrorReleaseSlug', () => {
       'https://www.apkmirror.com/apk/google-inc/youtube/youtube-20-44-38-release/'
     );
   });
+
+  // GitHub Actions runner's outbound IP block trips Cloudflare's bot
+  // edge on /all-versions/ — BOTH Node fetch AND curl subprocess get
+  // HTTP 403. The Playwright path already has Chromium running, so we
+  // reuse it for the slug scrape: Chromium's TLS fingerprint passes
+  // Cloudflare. This test exercises that path end-to-end.
+  test('resolves the slug via a Playwright page when provided', async () => {
+    const goto = jest.fn(() => Promise.resolve({ ok: () => true }));
+    const content = jest.fn(() => Promise.resolve(sofascoreAllVersionsHtml));
+    const page = { goto, content };
+
+    const url = await resolveApkmirrorReleaseSlug(sofascorePath, '26.07.27', { page });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/sofascore-live-sports-scores-26-07-27-release/`
+    );
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(goto.mock.calls[0][0]).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/all-versions/`
+    );
+    expect(content).toHaveBeenCalledTimes(1);
+  });
+
+  test('falls back to buildReleasePageUrl when the Playwright page goto fails', async () => {
+    const page = {
+      goto: jest.fn(() => Promise.resolve({ ok: () => false, status: () => 403 })),
+      content: jest.fn(),
+    };
+
+    const url = await resolveApkmirrorReleaseSlug(sofascorePath, '26.07.27', { page });
+
+    // Falls back to the path-slug URL — same wrong URL the production
+    // failure was hitting before this fix. Better than throwing: the
+    // outer Playwright code can still try to navigate it and detect
+    // the 404 / variant table empty state downstream.
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/soccer-scores-and-sports-livescore-sofascore-26-07-27-release/`
+    );
+    expect(page.content).not.toHaveBeenCalled();
+  });
 });

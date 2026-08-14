@@ -116,10 +116,13 @@ function buildReleasePageUrl(apkmirrorPath, version) {
  * @returns {Promise<string>} Absolute release-page URL
  */
 async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
-  // Curl by default — Node's TLS fingerprint gets HTTP 403 from
-  // Cloudflare on /all-versions/, which trips the catch block below
-  // and falls back to buildReleasePageUrl (the wrong slug). Curl
-  // matches Firefox's TLS fingerprint and sails through.
+  // Cloudflare's bot edge blocks BOTH Node fetch and curl from the
+  // GitHub Actions runner's outbound IP block on /all-versions/
+  // (HTTP 403). Chromium's TLS fingerprint passes; when Playwright is
+  // already running, reuse its page for this scrape. Curl from a local
+  // dev machine has a different fingerprint and sails through, so the
+  // curl default still works for local runs.
+  const page = opts.page;
   const fetchImpl = opts.fetchImpl || apkmirrorFetch;
   const cheerioImpl = opts.cheerioImpl || cheerio;
 
@@ -127,18 +130,28 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
   const versionTail = `-${version.replace(/\./g, '-')}-release/`;
 
   try {
-    // codeql[js/file-access-to-http] reason: listUrl is APKMirror's public
-    // package index page; only the parsed HTML is read, no file write.
-    const response = await fetchImpl(listUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    let html;
+    if (page) {
+      const resp = await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      if (!resp || !resp.ok()) {
+        throw new Error(`page.goto HTTP ${resp ? resp.status() : 'no response'}`);
+      }
+      html = await page.content();
+    } else {
+      // codeql[js/file-access-to-http] reason: listUrl is APKMirror's
+      // public package index page; only the parsed HTML is read, no
+      // file write.
+      const response = await fetchImpl(listUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      html = await response.text();
     }
-    const html = await response.text();
     const $ = cheerioImpl.load(html);
 
     // Every release row links to the release page with href ending in
@@ -1255,7 +1268,7 @@ async function downloadViaPlaywright(apkmirrorPath, version, outputDir) {
     const page = await context.newPage();
 
     // Page 1: Release page (slug resolved via /all-versions/, not path last component).
-    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
+    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     console.error(`[apkmirror-pw] Page 1: ${page1Url}`);
     await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const $1 = cheerio.load(await page.content());
@@ -1460,7 +1473,7 @@ async function resolveApkmirrorUrlViaPlaywright(apkmirrorPath, version, prioriti
     const page = await context.newPage();
 
     // Page 1: Release page (slug resolved via /all-versions/, not path last component).
-    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
+    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     console.error(`[apkmirror-scraper] Page 1 (PW): ${page1Url}`);
     await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const html1 = await page.content();
