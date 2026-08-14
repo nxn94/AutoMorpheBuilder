@@ -138,5 +138,10 @@
       "Show view count": true,
       "Spoof signature": true
     }
+  },
+  "heval99/morphe-patches": {
+    "com.sofascore.results": {
+      "Disable ads": true
+    }
   }
 }
