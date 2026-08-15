@@ -78,6 +78,7 @@ process.env.APKMIRROR_API_USER = 'test-user';
 process.env.APKMIRROR_API_PASS = 'test-pass';
 
 const { execFile, execFileSync, spawn } = require('child_process');
+const actualExecFileSync = jest.requireActual('child_process').execFileSync;
 const { validateDownloadedApkAbi } = require('../apk-abi-validator');
 const { downloadWithUrl, downloadWithApkeep } = require('../unified-downloader');
 
@@ -209,6 +210,86 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
     expect(result.path).toBe(path.join(apksDir, `${PKG}_${VER}.apk`));
     // File is preserved — this is the negative of the cleanup tests.
     expect(fs.existsSync(result.path)).toBe(true);
+  });
+
+  test('skips aapt version validation for split packages (.xapk/.apkm/.apks)', async () => {
+    // Sofascore regression: apkeep resolves arm64-v8a as a .xapk URL.
+    // aapt can't parse the outer zip-of-zips, so the old code threw
+    // VERSION MISMATCH and deleted the working bundle. The split-package
+    // path must skip the aapt check (caller validates inner base.apk).
+    const xapkPath = path.join(apksDir, `${PKG}_${VER}.apk`);
+    // Build a minimal zip-of-zips in pure JS. Layout: [local file header
+    // + inner apk data] [central dir] [EOCD]. Field offsets per the ZIP
+    // spec (PKWARE APPNOTE.TXT). CRC/size fields are 0 — detectApkShape
+    // only inspects the file listing, not the entry data.
+    const innerName = 'config.arm64_v8a.apk';
+    const innerData = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
+    const nameBuf = Buffer.from(innerName, 'utf8');
+    const lfh = Buffer.alloc(30);
+    lfh.writeUInt32LE(0x04034b50, 0);
+    lfh.writeUInt16LE(20, 4);
+    lfh.writeUInt16LE(0, 6);
+    lfh.writeUInt16LE(0, 8);
+    lfh.writeUInt16LE(0, 10);
+    lfh.writeUInt16LE(0, 12);
+    lfh.writeUInt32LE(0, 14);
+    lfh.writeUInt32LE(innerData.length, 18);
+    lfh.writeUInt32LE(innerData.length, 22);
+    lfh.writeUInt16LE(nameBuf.length, 26);
+    lfh.writeUInt16LE(0, 28);
+    const cdh = Buffer.alloc(46);
+    cdh.writeUInt32LE(0x02014b50, 0);
+    cdh.writeUInt16LE(20, 4);
+    cdh.writeUInt16LE(20, 6);
+    cdh.writeUInt16LE(0, 8);
+    cdh.writeUInt16LE(0, 10);
+    cdh.writeUInt16LE(0, 12);
+    cdh.writeUInt16LE(0, 14);
+    cdh.writeUInt32LE(0, 16);
+    cdh.writeUInt32LE(innerData.length, 20);
+    cdh.writeUInt32LE(innerData.length, 24);
+    cdh.writeUInt16LE(nameBuf.length, 28);
+    cdh.writeUInt16LE(0, 30);
+    cdh.writeUInt16LE(0, 32);
+    cdh.writeUInt16LE(0, 34);
+    cdh.writeUInt16LE(0, 36);
+    cdh.writeUInt32LE(0, 38);
+    cdh.writeUInt32LE(0, 42);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(0, 4);
+    eocd.writeUInt16LE(0, 6);
+    eocd.writeUInt16LE(1, 8);
+    eocd.writeUInt16LE(1, 10);
+    eocd.writeUInt32LE(cdh.length + nameBuf.length, 12);
+    eocd.writeUInt32LE(lfh.length + nameBuf.length + innerData.length, 16);
+    eocd.writeUInt16LE(0, 20);
+    const xapkBytes = Buffer.concat([lfh, nameBuf, innerData, cdh, nameBuf, eocd, Buffer.alloc(12 * 1024, 0x43)]);
+    spawn.mockImplementation(() => {
+      fs.writeFileSync(xapkPath, xapkBytes);
+      return {
+        stderr: { on: jest.fn() },
+        on: (event, cb) => {
+          if (event === 'close') setImmediate(() => cb(0));
+        },
+      };
+    });
+
+    // aapt returns a wrong versionName — the split-package path must ignore it.
+    // Also forward to the real unzip so detectApkShape can identify the bundle.
+    execFileSync.mockImplementation((cmd, args) => {
+      if (cmd === 'unzip' && args[0] === '-Z1') {
+        return actualExecFileSync('unzip', ['-Z1', args[1]], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      }
+      return `package: name='${PKG}' versionName='99.99.99'\n`;
+    });
+    validateDownloadedApkAbi.mockImplementation(() => { /* no throw */ });
+
+    const result = await downloadWithUrl(`https://example.invalid/${PKG}_${VER}.xapk`, apksDir, PKG, VER);
+    expect(result.success).toBe(true);
+    expect(result.path).toBe(xapkPath);
+    expect(result.version).toBe(VER); // falls back to expected version for split packages
+    expect(fs.existsSync(xapkPath)).toBe(true);
   });
 });
 

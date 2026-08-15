@@ -19,6 +19,7 @@ const { chromium } = require("playwright");
 const os = require("node:os");
 const cheerio = require('cheerio');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
+const { detectApkShape } = require('./apk-selection');
 
 // APKMirror API credentials (from environment; no defaults — see apkMirrorAuthHeader).
 const APK_MIRROR_API_USER = process.env.APKMIRROR_API_USER;
@@ -776,34 +777,34 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
             return;
           }
 
-          // Validate APK version
-          const validation = validateApkVersion(outputPath, version);
-          if (!validation.valid) {
-            // Cleanup-on-failure: delete the partial file so a later
-            // fallback source's output isn't pre-empted by this stale
-            // file in findPackageCandidate's first-encountered tiebreak
-            // (filesystem-dependent readdir order; not guaranteed
-            // alphabetical on ext4). Best-effort; never mask the
-            // original error.
-            try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
-            reject(new Error(`VERSION MISMATCH: expected ${version}, got ${validation.version}`));
-            return;
+          // Validate APK version. Skip the aapt check for split packages
+          // (zip-of-zips — aapt can't parse them). The post-merge verifier
+          // in download-supported-apk.js re-checks the inner base.apk.
+          // Content-based detection is required: the downloader hardcodes
+          // the saved filename to `${packageId}_${version}.apk`,
+          // extension-based detection would miss every split-package URL.
+          const isSplitPackage = detectApkShape(outputPath) === 'bundle';
+          let validation = { valid: true, actualVersion: version };
+          if (!isSplitPackage) {
+            validation = validateApkVersion(outputPath, version);
+            if (!validation.valid) {
+              // Cleanup-on-failure: same TOCTOU rationale as the
+              // unlinkSync below.
+              try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
+              reject(new Error(`VERSION MISMATCH: expected ${version}, got ${validation.version}`));
+              return;
+            }
+          } else {
+            console.error(`[download-url] Split package detected — skipping aapt version check (caller validates inner base.apk)`);
           }
 
-          // Validate ABI composition. If the upstream returned a file
-          // that doesn't actually ship the preferred architecture's .so
-          // libs, reject the download — the caller's fallback chain
-          // (apkmirror-api → apkeep → apkmirror-pw) will try the next
-          // source. Without this, a 32-bit-only "universal" APK would
-          // get cached and only fail much later inside
-          // download-supported-apk.js's ABI guardrail.
+          // Validate ABI composition. The validator is bundle-aware
+          // (apk-abi-validator.js): it extracts inner .apk files for
+          // XAPK/APKM/APKS and checks each one for lib/<arch>/*.so.
           try {
             validateDownloadedApkAbi(outputPath, preferredArchForUrl);
           } catch (e) {
-            // Cleanup-on-failure: same rationale as VERSION MISMATCH
-            // above. The throw from validateDownloadedApkAbi tells us
-            // upstream mislabelled the file; we must not let the
-            // partial APK survive to contaminate the next source.
+            // Cleanup-on-failure: same rationale as VERSION MISMATCH.
             try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
             reject(e);
             return;
@@ -814,7 +815,7 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
             success: true,
             path: outputPath,
             filename,
-            version: validation.version,
+            version: validation.actualVersion,
             source: 'direct-url',
             url
           });
