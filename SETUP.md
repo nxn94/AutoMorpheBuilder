@@ -81,6 +81,12 @@ Edit `config.json` with your build options:
       "repo": "MorpheApp/morphe-patches",
       "branch": "main",
       "apkmirror_path": "redditinc/reddit"
+    },
+    "com.sofascore.results": {
+      "name": "sofascore",
+      "repo": "heval99/morphe-patches",
+      "branch": "main",
+      "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore"
     }
   },
   "cli": {
@@ -89,6 +95,8 @@ Edit `config.json` with your build options:
   }
 }
 ```
+
+> 📝 **Note**: Sofascore uses `heval99/morphe-patches` (community patches) instead of the upstream `MorpheApp/morphe-patches` repo. The `apkmirror_path` slug is the package's *index* page — the slug resolver at `/all-versions/` will pick up the current 2025+ slug (`sofascore-live-sports-scores`) automatically. You can omit the `com.sofascore.results` entry if you don't want to build Sofascore.
 
 ### Configuration Options
 
@@ -163,6 +171,7 @@ Each app gets its own release:
 | YouTube | `youtube v<base>-<patches>` | `youtube-v20.44.38-v1.24.0-dev.8.apk` |
 | YouTube Music | `ytmusic v<base>-<patches>` | `ytmusic-v8.44.54-v1.24.0-dev.8.apk` |
 | Reddit | `reddit v<base>-<patches>` | `reddit-v2025.02.17-v1.24.0-dev.8.apk` |
+| Sofascore | `sofascore v<base>-<patches>` | `sofascore-v26.07.27-v1.0.0.apk` |
 
 ### GitHub Actions Artifacts
 Same files available as workflow artifacts.
@@ -171,7 +180,7 @@ Same files available as workflow artifacts.
 
 ## 📱 Step 8: Add to Obtainium
 
-Create **3 separate entries** (same repo, different filters per app).
+Create **one entry per app** (same repo, different filters per app).
 
 ### For Each App:
 
@@ -181,6 +190,7 @@ Create **3 separate entries** (same repo, different filters per app).
    - YouTube: `^youtube`
    - YouTube Music: `^ytmusic`
    - Reddit: `^reddit`
+   - Sofascore: `^sofascore`
 
 ---
 
@@ -194,12 +204,14 @@ The workflow uses a multi-source fallback chain:
 4. **Parallel resolution** - tries these simultaneously:
    - apkeep (APKPure)
    - APKMirror API (if credentials set)
-   - APKMirror scraper (curl → Playwright fallback)
+   - APKMirror scraper (curl → Chromium slug fallback)
 
 **APKMirror Scraper Details:**
 - Navigates: release page → variant page → download page
 - Uses same browser session to preserve cookies
-- Falls back to Playwright if Cloudflare blocks curl
+- Slug resolution uses `/all-versions/` to fetch the *current* slug (the `apkmirror_path` in `config.json` is the package's index page, not the release page). When curl hits Cloudflare's HTTP 403 on that page, the scraper falls back to a Chromium browser for the slug scrape only; the rest of the flow stays on curl. Sofascore's `apkmirror_path` is the deprecated `soccer-scores-and-sports-livescore-sofascore` slug but the current 2025+ slug is `sofascore-live-sports-scores` — the slug resolver captures this drift automatically.
+
+**Split packages (XAPK/APKM/APKS):** The downloader hardcodes the saved filename to `${packageId}_${version}.apk` regardless of the URL path, so a downloaded XAPK bundle arrives as `.apk` on disk. The downloader and the post-merge step both use content-based shape detection (`detectApkShape`) to recognise these as bundles: aapt validation is skipped on the outer zip-of-zips and the inner `base.apk` is validated by the post-merge verifier, and the merge step picks up the right file regardless of extension. Sofascore's arm64-v8a variant from APKPure is a XAPK bundle (57MB with `config.arm64_v8a.apk` inside) — this path lets the 57MB arm64-v8a variant win instead of the 93MB universal.
 
 ---
 
@@ -222,12 +234,16 @@ The workflow uses a multi-source fallback chain:
 - [ ] `apkmirror_path` values in `config.json` are correct
 - [ ] Retry workflow (Cloudflare blocks are often transient)
 - [ ] Consider adding APKMirror-API credentials
+- [ ] In `check-versions` → `Pre-download APKs (parallel)` logs, look for `[pkg] could not determine version` — this means `morphe-desktop list-versions` returned no matching version for the per-app `.mpp`. Verify the patch repo at `patch_repos[*].repo` actually publishes a `.mpp` for your app
 
 ### ❌ `Chosen APK has no classes.dex`
 **Solution:**
 - The selected file is a split config APK, not the base APK
 - Check APKMirror manually to confirm an APK variant exists
-- The scraper uses priority list but some releases only have BUNDLE variants
+- The scraper uses priority list but some releases only have BUNDLE variants — the post-merge step in `download-supported-apk.js` invokes APKEditor when the file is a bundle, so the build needs APKEditor installed and on the runner image (the `morphe` GitHub Actions setup handles this)
+
+### ❌ Sofascore builds download `armeabi-v7a`-only libs
+- The APKPure arm64-v8a variant is a 57MB XAPK bundle. The downloader picks it by size; the post-merge step merges `base.apk` with `config.arm64_v8a.apk` to produce a real arm64-v8a APK. If your build is shipping the 93MB universal variant instead, the upstream bundle is mislabeled — try `pin_version` to lock to a known-good version
 
 ### ❌ `Wrong version of key store`
 **Verify:**
