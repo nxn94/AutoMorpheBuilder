@@ -372,34 +372,38 @@ if (!downloadSuccess) {
     if (cachedFileHasPreferredAbi(preloaded)) {
       console.log(`Using pre-downloaded APK from check-versions: ${preloaded} (matches v${TARGET_VERSION})`);
       fs.copyFileSync(preloaded, path.join(APKS_DIR, path.basename(preloaded)));
-      return;
+      // Mark success and skip the unified-downloader fallback below,
+      // but DO NOT return — the post-processing block (aapt validation,
+      // split-package merge for .apkm bundles, ABI guardrail, setOutput)
+      // must still run, otherwise the workflow gets an empty `apk`
+      // output and patch_apk.sh fails with "Required env var APK is
+      // empty." (see exp-3 report on run 31908351240).
+      downloadSuccess = true;
+    } else {
+      // Preloaded file exists but is missing the preferred arch's libs.
+      // Discard it and fall through to the unified-downloader (which
+      // has its own ABI validation + fallback chain).
+      console.log(`Discarding bad pre-downloaded APK — will re-download via unified-downloader.`);
+      try { fs.unlinkSync(preloaded); } catch { /* ignore */ }
     }
-    // Preloaded file exists but is missing the preferred arch's libs.
-    // Discard it and fall through to the unified-downloader (which
-    // has its own ABI validation + fallback chain). The structure
-    // here intentionally does NOT use an else-branch: previously, a
-    // bad cache was discarded but the code returned up to the
-    // `if (!downloadSuccess)` failure exit without ever invoking
-    // the downloader, leading to "No APK could be downloaded" even
-    // though APKMirror was still waiting to be tried.
-    console.log(`Discarding bad pre-downloaded APK — will re-download via unified-downloader.`);
-    try { fs.unlinkSync(preloaded); } catch { /* ignore */ }
   }
 
-  // No preloaded file (or we just discarded a bad one): run the
-  // unified-downloader's full fallback chain (URL cache → parallel
-  // resolve → apkeep → apkmirror-api → apkmirror Playwright).
-  console.log(`No matching pre-downloaded APK, running unified-downloader...`);
-  const dl = runUnifiedDownloader(APP_ID, TARGET_VERSION, APKS_DIR);
-  if (dl.ok) {
-    console.log(`unified-downloader succeeded: ${JSON.stringify(dl.result)}`);
-    downloadSuccess = true;
-  } else {
-    console.log(`unified-downloader failed: ${dl.error}`);
-    if (MANUAL_URL) {
-      console.log('Trying manual URL fallback...');
-      if (downloadWithCurl(MANUAL_URL, APKS_DIR, APP_ID)) {
-        downloadSuccess = true;
+  if (!downloadSuccess) {
+    // No preloaded file (or we just discarded a bad one): run the
+    // unified-downloader's full fallback chain (URL cache → parallel
+    // resolve → apkeep → apkmirror-api → apkmirror Playwright).
+    console.log(`No matching pre-downloaded APK, running unified-downloader...`);
+    const dl = runUnifiedDownloader(APP_ID, TARGET_VERSION, APKS_DIR);
+    if (dl.ok) {
+      console.log(`unified-downloader succeeded: ${JSON.stringify(dl.result)}`);
+      downloadSuccess = true;
+    } else {
+      console.log(`unified-downloader failed: ${dl.error}`);
+      if (MANUAL_URL) {
+        console.log('Trying manual URL fallback...');
+        if (downloadWithCurl(MANUAL_URL, APKS_DIR, APP_ID)) {
+          downloadSuccess = true;
+        }
       }
     }
   }
