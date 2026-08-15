@@ -139,8 +139,10 @@ function tryPinned(patchesList, pinned) {
 /**
  * morphe-desktop primary source. The CLI is the authoritative version list
  * (reads the .mpp artifact directly), so we prefer it over any
- * patches-list.json logic. Returns array of versions sorted as the CLI
- * returns them (most-preferred first).
+ * patches-list.json logic. Returns array of versions sorted descending
+ * (numeric-aware) — the CLI's print order is not guaranteed (e.g. Twitch's
+ * RookieEnough/De-Vanced mpp prints 16.9.1 before 25.3.0, which would
+ * otherwise pick the wrong "first" version).
  */
 function tryMorpheCli(jarPath, mppFile) {
   if (!jarPath || !fs.existsSync(jarPath) || !fs.existsSync(mppFile)) return null;
@@ -156,6 +158,7 @@ function tryMorpheCli(jarPath, mppFile) {
     return null;
   }
   const versions = out.match(/\d+\.\d+\.\d+/g) || [];
+  versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   return versions;
 }
 

@@ -118,7 +118,11 @@ function resolveApkVersion(appId, jarPath, mppPath, config) {
       { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] },
     );
     const m = out.match(/\d+\.\d+\.\d+/g);
-    return m ? m[0] : '';
+    if (!m) return '';
+    // Sort descending (numeric-aware) so the head picks the recommended
+    // version, not whatever order the CLI happens to print — e.g. Twitch's
+    // RookieEnough/De-Vanced mpp prints 16.9.1 before 25.3.0.
+    return m.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
   } catch (e) {
     console.log(`  ::warning::[${appId}] morphe-desktop list-versions failed: ${e.message}`);
     return '';
