@@ -261,7 +261,14 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: pre-downloaded-apks
-          path: ${{ env.TOOLS_DIR }}
+          # The artifact zip has a `tools/apks/` path prefix (uploaded as
+          # `tools/apks/*.apk` from check-versions). Downloading to
+          # `$TOOLS_DIR` would extract to `./tools/tools/apks/*` (double
+          # prefix) and neither findCachedApk(APKS_DIR) at line 333 nor
+          # findCachedApk(TOOLS_DIR) at line 364 would see them.
+          # Downloading to `$TOOLS_DIR/apks` strips the prefix and lands
+          # the files where download-supported-apk.js expects them.
+          path: ${{ env.TOOLS_DIR }}/apks
         continue-on-error: true
 
       - name: Restore Playwright browsers from check-versions

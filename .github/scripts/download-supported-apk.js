@@ -361,7 +361,7 @@ if (!downloadSuccess) {
     process.exit(1);
   }
 
-  const preloaded = findCachedApk(TOOLS_DIR, TARGET_VERSION);
+  const preloaded = findCachedApk(path.join(TOOLS_DIR, 'apks'), TARGET_VERSION);
   if (preloaded) {
     // Same ABI validation as the APKS_DIR cache above. The
     // pre-downloaded file was produced by pre_download_apks.sh, which
