@@ -16,6 +16,47 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 /**
+ * Inspect the zip at `filePath` and decide whether it's a single APK
+ * or a bundle (zip-of-zips with inner .apk entries). Returns:
+ *   'apk'       — file has lib/* or AndroidManifest.xml at top level
+ *   'bundle'    — file has inner .apk entries (apks / apkm / xapk shape)
+ *   'unknown'   — non-zip, empty, or unrecognizable
+ *
+ * Content-based detection matters because upstream sources sometimes
+ * mislabel the extension: APKMirror's apkm-pw flow saves bundle files
+ * with whatever filename the server's Content-Disposition sets, and
+ * Reddit's variant downloads come back with a `.apk` filename even
+ * though the contents are a zip-of-zips. Extension-based dispatch
+ * would treat such a bundle as a single APK, run lib/<arch>/*.so
+ * detection on it, find no top-level native libs, and reject it —
+ * even though the bundle's inner base.apk / split_config.*.apk files
+ * DO contain the right ABIs and would merge into a universal APK.
+ */
+function detectApkShape(filePath) {
+  try {
+    const out = execFileSync('unzip', ['-Z1', filePath], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const lines = out.split('\n');
+    let hasInnerApk = false;
+    let hasTopLevelLib = false;
+    let hasManifest = false;
+    for (const line of lines) {
+      if (!line) continue;
+      if (line.toLowerCase().endsWith('.apk')) { hasInnerApk = true; continue; }
+      if (/^lib\/[^/]+\//.test(line)) { hasTopLevelLib = true; continue; }
+      if (line === 'AndroidManifest.xml') { hasManifest = true; continue; }
+    }
+    if (hasInnerApk && !hasTopLevelLib && !hasManifest) return 'bundle';
+    if (hasTopLevelLib || hasManifest) return 'apk';
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * Extract the first X.Y.Z version-like sequence from a string (typically
  * an APK filename). Returns the matched substring, or ''.
  */
@@ -188,10 +229,21 @@ function findBundleInDir(dir) {
   } catch {
     return null;
   }
+  // First: extension-based check (fast path).
   for (const ext of ['xapk', 'apkm', 'apks']) {
     for (const f of entries) {
       if (f.toLowerCase().endsWith('.' + ext)) return path.join(dir, f);
     }
+  }
+  // Fallback: content-based check for .apk files that are actually
+  // bundles (zip-of-zips). The downloader in unified-downloader.js
+  // hardcodes the saved filename to .apk regardless of the URL path,
+  // so call-by-extension misses every split-package download from that
+  // path. detectApkShape inspects the zip contents to discriminate.
+  for (const f of entries) {
+    if (!f.toLowerCase().endsWith('.apk')) continue;
+    const full = path.join(dir, f);
+    if (detectApkShape(full) === 'bundle') return full;
   }
   return null;
 }
@@ -230,4 +282,5 @@ module.exports = {
   apkHasNativeLibsForArch,
   findBundleInDir,
   listApkAbis,
+  detectApkShape,
 };

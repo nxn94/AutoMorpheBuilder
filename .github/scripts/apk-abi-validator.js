@@ -22,51 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { apkHasNativeLibsForArch } = require('./apk-selection');
-
-/**
- * Inspect the zip at `filePath` and decide whether it's a single APK
- * or a bundle (zip-of-zips with inner .apk entries). Returns:
- *   'apk'       — file has lib/* or AndroidManifest.xml at top level
- *   'bundle'    — file has inner .apk entries (apks / apkm / xapk shape)
- *   'unknown'   — non-zip, empty, or unrecognizable
- *
- * Content-based detection matters because upstream sources sometimes
- * mislabel the extension: APKMirror's apkm-pw flow saves bundle files
- * with whatever filename the server's Content-Disposition sets, and
- * Reddit's variant downloads come back with a `.apk` filename even
- * though the contents are a zip-of-zips. Extension-based dispatch
- * would treat such a bundle as a single APK, run lib/<arch>/*.so
- * detection on it, find no top-level native libs, and reject it —
- * even though the bundle's inner base.apk / split_config.*.apk files
- * DO contain the right ABIs and would merge into a universal APK.
- */
-function detectApkShape(filePath) {
-  try {
-    const out = execFileSync('unzip', ['-Z1', filePath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const lines = out.split('\n');
-    let hasInnerApk = false;
-    let hasTopLevelLib = false;
-    let hasManifest = false;
-    for (const line of lines) {
-      if (!line) continue;
-      // Inner .apk → bundle
-      if (line.toLowerCase().endsWith('.apk')) { hasInnerApk = true; continue; }
-      // Top-level lib/<arch>/ → single APK with native libs
-      if (/^lib\/[^/]+\//.test(line)) { hasTopLevelLib = true; continue; }
-      // AndroidManifest.xml at top level → single APK (signature)
-      if (line === 'AndroidManifest.xml') { hasManifest = true; continue; }
-    }
-    if (hasInnerApk && !hasTopLevelLib && !hasManifest) return 'bundle';
-    if (hasTopLevelLib || hasManifest) return 'apk';
-    return 'unknown';
-  } catch {
-    return 'unknown';
-  }
-}
+const { apkHasNativeLibsForArch, detectApkShape } = require('./apk-selection');
 
 /**
  * Reject a freshly-downloaded APK/bundle that lacks libs for the

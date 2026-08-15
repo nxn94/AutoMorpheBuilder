@@ -365,6 +365,59 @@ describe('findBundleInDir', () => {
     fs.writeFileSync(apks, 'fake');
     expect(findBundleInDir(tmp)).toBe(apks);
   });
+
+  test('finds a bundle saved with .apk extension (content-based detection)', () => {
+    // The unified-downloader hardcodes the saved filename to
+    // `${packageId}_${version}.apk` regardless of the URL path, so a
+    // downloaded XAPK bundle arrives as `.apk` on disk. Extension-based
+    // checks would miss it — the content-based fallback has to detect
+    // the zip-of-zips shape and recognize it as a bundle.
+    const innerName = 'config.arm64_v8a.apk';
+    const innerData = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
+    const nameBuf = Buffer.from(innerName, 'utf8');
+    const lfh = Buffer.alloc(30);
+    lfh.writeUInt32LE(0x04034b50, 0);
+    lfh.writeUInt16LE(20, 4);
+    lfh.writeUInt16LE(0, 6);
+    lfh.writeUInt16LE(0, 8);
+    lfh.writeUInt16LE(0, 10);
+    lfh.writeUInt16LE(0, 12);
+    lfh.writeUInt32LE(0, 14);
+    lfh.writeUInt32LE(innerData.length, 18);
+    lfh.writeUInt32LE(innerData.length, 22);
+    lfh.writeUInt16LE(nameBuf.length, 26);
+    lfh.writeUInt16LE(0, 28);
+    const cdh = Buffer.alloc(46);
+    cdh.writeUInt32LE(0x02014b50, 0);
+    cdh.writeUInt16LE(20, 4);
+    cdh.writeUInt16LE(20, 6);
+    cdh.writeUInt16LE(0, 8);
+    cdh.writeUInt16LE(0, 10);
+    cdh.writeUInt16LE(0, 12);
+    cdh.writeUInt16LE(0, 14);
+    cdh.writeUInt32LE(0, 16);
+    cdh.writeUInt32LE(innerData.length, 20);
+    cdh.writeUInt32LE(innerData.length, 24);
+    cdh.writeUInt16LE(nameBuf.length, 28);
+    cdh.writeUInt16LE(0, 30);
+    cdh.writeUInt16LE(0, 32);
+    cdh.writeUInt16LE(0, 34);
+    cdh.writeUInt16LE(0, 36);
+    cdh.writeUInt32LE(0, 38);
+    cdh.writeUInt32LE(0, 42);
+    const eocd = Buffer.alloc(22);
+    eocd.writeUInt32LE(0x06054b50, 0);
+    eocd.writeUInt16LE(0, 4);
+    eocd.writeUInt16LE(0, 6);
+    eocd.writeUInt16LE(1, 8);
+    eocd.writeUInt16LE(1, 10);
+    eocd.writeUInt32LE(cdh.length + nameBuf.length, 12);
+    eocd.writeUInt32LE(lfh.length + nameBuf.length + innerData.length, 16);
+    eocd.writeUInt16LE(0, 20);
+    const apkPath = path.join(tmp, 'bundle_saved_with_apk_extension.apk');
+    fs.writeFileSync(apkPath, Buffer.concat([lfh, nameBuf, innerData, cdh, nameBuf, eocd, Buffer.alloc(12 * 1024)]));
+    expect(findBundleInDir(tmp)).toBe(apkPath);
+  });
 });
 
 describe('listApkAbis', () => {
