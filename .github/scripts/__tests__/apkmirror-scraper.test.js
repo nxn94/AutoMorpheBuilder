@@ -313,3 +313,69 @@ describe('resolveApkmirrorReleaseSlug', () => {
     expect(page.content).not.toHaveBeenCalled();
   });
 });
+
+describe('resolveApkmirrorReleaseSlugViaChromium', () => {
+  // The chromium fallback is a separate function that gets called from
+  // resolveApkmirrorUrlViaCurl when curl hits 403 on /all-versions/.
+  // The fallback reuses resolveApkmirrorReleaseSlug with a chromium page,
+  // so the contract is identical: Chromium gets the fresh slug, the
+  // function returns the resolved URL.
+  //
+  // We mock playwright at the module level so the function uses a
+  // jest.fn() page instead of launching a real browser.
+  const sofascorePath = 'sofascore/soccer-scores-and-sports-livescore-sofascore';
+  const sofascoreAllVersionsHtml = `
+    <html><body>
+      <a class="fontBlack" href="/apk/${sofascorePath}/sofascore-live-sports-scores-26-07-27-release/">26.07.27</a>
+    </body></html>
+  `;
+
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  test('launches Chromium, navigates to /all-versions/, and returns the resolved slug', async () => {
+    const goto = jest.fn(() => Promise.resolve({ ok: () => true }));
+    const content = jest.fn(() => Promise.resolve(sofascoreAllVersionsHtml));
+    const newPage = jest.fn(() => Promise.resolve({ goto, content }));
+    const close = jest.fn(() => Promise.resolve());
+    const newContext = jest.fn(() => Promise.resolve({ newPage }));
+    const launch = jest.fn(() => Promise.resolve({ newContext, close }));
+
+    jest.doMock('playwright', () => ({ chromium: { launch } }));
+
+    const { resolveApkmirrorReleaseSlugViaChromium } = require('../unified-downloader');
+    const url = await resolveApkmirrorReleaseSlugViaChromium(sofascorePath, '26.07.27');
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/sofascore-live-sports-scores-26-07-27-release/`
+    );
+    expect(launch).toHaveBeenCalledTimes(1);
+    expect(newContext).toHaveBeenCalledTimes(1);
+    expect(newPage).toHaveBeenCalledTimes(1);
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(goto.mock.calls[0][0]).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/all-versions/`
+    );
+    expect(content).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test('returns the path-slug fallback when Chromium also fails on /all-versions/', async () => {
+    const goto = jest.fn(() => Promise.resolve({ ok: () => false, status: () => 403 }));
+    const newPage = jest.fn(() => Promise.resolve({ goto, content: jest.fn() }));
+    const close = jest.fn(() => Promise.resolve());
+    const newContext = jest.fn(() => Promise.resolve({ newPage }));
+    const launch = jest.fn(() => Promise.resolve({ newContext, close }));
+
+    jest.doMock('playwright', () => ({ chromium: { launch } }));
+
+    const { resolveApkmirrorReleaseSlugViaChromium } = require('../unified-downloader');
+    const url = await resolveApkmirrorReleaseSlugViaChromium(sofascorePath, '26.07.27');
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${sofascorePath}/soccer-scores-and-sports-livescore-sofascore-26-07-27-release/`
+    );
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});

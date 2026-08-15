@@ -1399,14 +1399,66 @@ async function downloadWithApkmirror(packageId, version, outputDir) {
 }
 
 /**
+ * Resolve APKMirror's release-page slug via Chromium when curl gets
+ * blocked by Cloudflare. The /all-versions/ page is the only one whose
+ * bot detection bites the GitHub Actions runner; the release/variant/
+ * download pages are usually fine with curl once the slug is known.
+ * Spinning up a fresh browser just for the slug scrape saves the ~10s
+ * of full-Playwright navigation on each call.
+ *
+ * On Cloudflare 403 from the curl path, this is the fallback. On
+ * network/parse errors (e.g. no release link found) it falls back to
+ * the path-derived URL.
+ */
+async function resolveApkmirrorReleaseSlugViaChromium(apkmirrorPath, version) {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+  });
+  try {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+      locale: 'en-US',
+      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9', 'DNT': '1' },
+    });
+    const page = await context.newPage();
+    // Reuse the existing helper — it accepts a `page` option and falls
+    // back to fetch when no page is passed. With the page it goes
+    // through Chromium; on Cloudflare 403 it falls back to the
+    // path-derived URL (which is what we want for the curl path to
+    // bail out).
+    const url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
+    return url;
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
  * Resolve APKMirror direct APK download URL using fetch + cheerio (3-page navigation).
  * Page 1: Release page → find correct arch/DPI/type variant row
  * Page 2: Variant page → find download button
  * Page 3: Download page → find final APK link
+ *
+ * Slug resolution uses Chromium (Cloudflare-resistant) when curl hits
+ * 403 on /all-versions/ — the path-slug fallback in resolveApkmirrorReleaseSlug
+ * would otherwise point Sofascore at the deprecated slug
+ * (soccer-scores-and-sports-livescore-sofascore) instead of the
+ * current 2025+ slug (sofascore-live-sports-scores). The rest of the
+ * flow stays on curl since the release/variant/download pages don't
+ * trip Cloudflare the same way.
  */
 async function resolveApkmirrorUrlViaCurl(apkmirrorPath, version, priorities) {
   // Page 1: Release page (slug resolved via /all-versions/, not path last component).
-  const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
+  // The Chromium fallback is invoked only when curl fails on /all-versions/.
+  let page1Url;
+  try {
+    page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
+  } catch (slugErr) {
+    if (!slugErr.message.includes('403')) throw slugErr;
+    console.error(`[apkmirror-scraper] /all-versions/ blocked by Cloudflare; retrying with Chromium`);
+    page1Url = await resolveApkmirrorReleaseSlugViaChromium(apkmirrorPath, version);
+  }
   console.error(`[apkmirror-scraper] Page 1 (curl): ${page1Url}`);
   const resp1 = await apkmirrorFetch(page1Url);
   let cookies = collectCookies(resp1);
@@ -1684,6 +1736,7 @@ module.exports = {
   selectVariant,
   collectCookies,
   resolveApkmirrorReleaseSlug,
+  resolveApkmirrorReleaseSlugViaChromium,
   resolveApkmirrorUrl,
   resolveApkeep,
   resolveApkeepVariant,
