@@ -9,9 +9,9 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Weekly Monday 06:00 UTC — staggered from morphe-build (05:15)
+    #  Daily 06:00 UTC — staggered from morphe-build (05:15)
     # to avoid runner contention.
-    - cron: '0 6 * * 1'
+    - cron: '0 6 * * *'
 
 jobs:
   analyze:
