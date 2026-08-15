@@ -15,6 +15,7 @@
 | YouTube | `com.google.android.youtube` |
 | YouTube Music | `com.google.android.apps.youtube.music` |
 | Reddit | `com.reddit.frontpage` |
+| Sofascore | `com.sofascore.results` (community patches via `heval99/morphe-patches`) |
 
 ---
 
@@ -48,6 +49,7 @@ Each app gets its own GitHub Release:
 - `youtube v20.44.38-v1.24.0-dev.8`
 - `ytmusic v8.44.54-v1.24.0-dev.8`
 - `reddit v2025.02.17-v1.24.0-dev.8`
+- `sofascore v26.07.27-v1.0.0`
 
 ### Obtainium Setup
 Create **one entry per app** with these settings:
@@ -64,6 +66,7 @@ Create **one entry per app** with these settings:
 | YouTube | `^youtube` |
 | YouTube Music | `^ytmusic` |
 | Reddit | `^reddit` |
+| Sofascore | `^sofascore` |
 
 ---
 
@@ -155,20 +158,24 @@ flowchart TD
     E --> F[apkeep APKPure]
     E --> G[APKMirror API]
     E --> H[APKMirror Scraper]
-    H -->|curl blocked| I[Playwright Chromium]
+    H -->|curl blocked on /all-versions/| I[Chromium slug fallback]
+    H -->|matched variant| J[Download via curl]
+    F -->|XAPK/APKM bundle| K[Skip aapt, merge via APKEditor]
 ```
 
-**APKMirror Scraper:** Navigates 3 pages (release → variant → download) in same session to preserve cookies.
+**APKMirror Scraper:** Navigates 3 pages (release → variant → download) in same session to preserve cookies. The release-page slug is resolved through `/all-versions/` — when curl hits Cloudflare's HTTP 403 on that page, the scraper falls back to Chromium (whose TLS fingerprint passes bot detection) just for the slug scrape, then continues on curl for the rest of the flow. Sofascore 26.07.27 has the deprecated `soccer-scores-and-sports-livescore-sofascore` URL slug in `apkmirror_path` but the current 2025+ slug is `sofascore-live-sports-scores` — the slug-from-`/all-versions/` resolution captures this drift automatically.
+
+**Split packages (XAPK/APKM/APKS):** Saved by the downloader under the `.apk` extension (filename is hardcoded to `${packageId}_${version}.apk`). The downloader uses content-based shape detection (`detectApkShape`) to skip the aapt version check on zip-of-zips and let the post-merge step (`download-supported-apk.js`) verify the inner `base.apk` instead. The same detector powers the post-merge split-package detection, so APKMirror bundles saved with `.apk` filenames still get merged correctly. Sofascore's arm64-v8a variant from APKPure is a XAPK bundle — this path lets the 57MB arm64-v8a variant win instead of the 93MB universal.
 
 ---
 
 ## 🎯 APK Selection Logic
 
 - ✅ Resolves Morphe-supported versions, downloads latest supported
-- ✅ Handles: `.apk`, `.xapk`, `.apkm`, `.apks`
+- ✅ Handles: `.apk`, `.xapk`, `.apkm`, `.apks` (split packages detected by **content** — extension-agnostic — so APKMirror bundles saved with `.apk` filenames still get merged)
 - ✅ For splits: tries APKEditor merge → falls back to dex-bearing APK extraction
 - ✅ Architecture: prefers `preferred_arch` from config
-- ✅ DPI preference: `nodpi` → `120-640dpi` → `240-480dpi`
+- ✅ DPI preference (APKMirror only — apkeep takes whatever APKPure serves): `nodpi` → `120-640dpi` → `480-640dpi` → `120-480dpi` → `240-480dpi`
 - ❌ Rejects dex-less APKs (requires `classes*.dex`)
 
 ---
@@ -207,10 +214,15 @@ flowchart TD
 - Check `apkmirror_path` values in `config.json`
 - Retry workflow (transient Cloudflare blocks are common)
 - APKMirror-API credentials help avoid Playwright fallback
+- Looking at `check-versions` → `Pre-download APKs (parallel)` logs: `[pkg] could not determine version` means `morphe-desktop list-versions` returned no matching version for the per-app `.mpp` — verify the patch repo at `patch_repos[*].repo` actually has your app
 
-### ❌ `Chosen APK has no classes.dex`
-- Selected file is a split config APK, not base APK
-- Check APKMirror manually for APK variant existence
+### ❌ Download succeeds but build fails on `Chosen APK has no classes.dex`
+- The selected file is a split config APK, not the base APK
+- Check APKMirror manually to confirm an APK variant exists
+- For apps that ship only BUNDLE variants (Reddit, YouTube, etc.), the workflow depends on APKEditor for the merge — the post-merge version check in `download-supported-apk.js` re-validates the inner `base.apk`'s versionName
+
+### ❌ Sofascore (or arm64-v8a-only) downloads ship `armeabi-v7a`-only libs
+- The arm64-v8a variant from APKPure for Sofascore is a 57MB XAPK bundle (containing `config.arm64_v8a.apk`); the 93MB universal variant is the wrong-arch fallback. The downloader picks the arm64-v8a variant by size when both exist. If you see `arm64-v8a/libs missing` from APKMirror or apkmirror-api, the upstream bundle is mislabeled — try `pin_version` to lock to a known-good version
 
 ### ❌ `Wrong version of key store`
 Verify:

@@ -19,6 +19,12 @@
       "repo": "MorpheApp/morphe-patches",
       "branch": "main",
       "apkmirror_path": "redditinc/reddit"
+    },
+    "com.sofascore.results": {
+      "name": "sofascore",
+      "repo": "heval99/morphe-patches",
+      "branch": "main",
+      "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore"
     }
   },
   "cli": {

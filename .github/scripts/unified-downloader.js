@@ -19,6 +19,7 @@ const { chromium } = require("playwright");
 const os = require("node:os");
 const cheerio = require('cheerio');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
+const { detectApkShape } = require('./apk-selection');
 
 // APKMirror API credentials (from environment; no defaults — see apkMirrorAuthHeader).
 const APK_MIRROR_API_USER = process.env.APKMIRROR_API_USER;
@@ -81,12 +82,120 @@ function buildReleasePageUrl(apkmirrorPath, version) {
 }
 
 /**
+ * Resolve APKMirror's actual release-page slug for a given (path, version).
+ *
+ * APKMirror's `apkmirror_path` config value points at the package's index
+ * page (e.g. `sofascore/soccer-scores-and-sports-livescore-sofascore`), but
+ * individual release pages use a SEPARATE slug baked into the URL — and
+ * the slug for the same package can drift over time. Sofascore is the
+ * canonical example:
+ *   apkmirror_path → sofascore/soccer-scores-and-sports-livescore-sofascore
+ *   2024 releases   → /apk/.../soccer-scores-and-sports-livescore-sofascore-<ver>-release/
+ *   2025+ releases  → /apk/.../sofascore-live-sports-scores-<ver>-release/
+ *
+ * `buildReleasePageUrl` derives the slug from the last path component
+ * (`soccer-scores-and-sports-livescore-sofascore`), which happens to
+ * match for old releases and YouTube (where `google-inc/youtube`'s last
+ * component is the same `youtube` the release URL uses), but 404s on
+ * Sofascore's 2025+ releases. Without this fix the Playwright fallback
+ * can't reach the variant table for the Morphe-supported 26.07.27.
+ *
+ * We scrape the package's `/all-versions/` page (a single fetch — no
+ * pagination; `show-more` is purely a visual fold that hides nothing
+ * from the HTML source) and match the URL whose tail ends in
+ * `<dashed-version>-release/`. We always return the path observed on
+ * APKMirror's server — never a fabricated one.
+ *
+ * Falls back to `buildReleasePageUrl(apkmirrorPath, version)` on network
+ * / parse errors so the existing path-slug contract still works for
+ * apps whose release slug matches the path slug (YouTube, YT Music,
+ * Reddit, …).
+ *
+ * @param {string} apkmirrorPath - Path from config (e.g. "sofascore/soccer-scores-and-sports-livescore-sofascore")
+ * @param {string} version - Version (e.g. "26.07.27")
+ * @param {object} [opts] - Inject for tests: { fetchImpl, cheerioImpl }
+ * @returns {Promise<string>} Absolute release-page URL
+ */
+async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
+  // Cloudflare's bot edge blocks BOTH Node fetch and curl from the
+  // GitHub Actions runner's outbound IP block on /all-versions/
+  // (HTTP 403). Chromium's TLS fingerprint passes; when Playwright is
+  // already running, reuse its page for this scrape. Curl from a local
+  // dev machine has a different fingerprint and sails through, so the
+  // curl default still works for local runs.
+  const page = opts.page;
+  const fetchImpl = opts.fetchImpl || apkmirrorFetch;
+  const cheerioImpl = opts.cheerioImpl || cheerio;
+
+  const listUrl = `https://www.apkmirror.com/apk/${apkmirrorPath}/all-versions/`;
+  const versionTail = `-${version.replace(/\./g, '-')}-release/`;
+
+  try {
+    let html;
+    if (page) {
+      const resp = await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      if (!resp || !resp.ok()) {
+        throw new Error(`page.goto HTTP ${resp ? resp.status() : 'no response'}`);
+      }
+      html = await page.content();
+    } else {
+      // codeql[js/file-access-to-http] reason: listUrl is APKMirror's
+      // public package index page; only the parsed HTML is read, no
+      // file write.
+      const response = await fetchImpl(listUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      html = await response.text();
+    }
+    const $ = cheerioImpl.load(html);
+
+    // Every release row links to the release page with href ending in
+    // `<dashed-version>-release/`. We capture that href verbatim —
+    // never reconstruct the slug from the version.
+    const href = $(`a[href$="${versionTail}"]`).first().attr('href');
+    if (href) {
+      const abs = href.startsWith('http') ? href : `https://www.apkmirror.com${href}`;
+      console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${abs}`);
+      return abs;
+    }
+    throw new Error(`No release link found ending in ${versionTail}`);
+  } catch (err) {
+    console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
+    return buildReleasePageUrl(apkmirrorPath, version);
+  }
+}
+
+/**
  * Build ordered variant priority list from preferred arch.
- * Priority: preferred APK → preferred BUNDLE → universal APK → universal BUNDLE → noarch APK
+ * Outer loop = DPI tier (outer is more important), inner loop = arch/type.
+ * Within each DPI tier: preferred APK → preferred BUNDLE → universal APK
+ * → universal BUNDLE → noarch APK.
+ *
+ * DPI preference is APKMirror-only. APKMirror exposes a variant table
+ * with explicit DPI columns, so we can pick a precise target. APKPure
+ * (via apkeep) doesn't expose DPI as a selectable axis — the apkeep
+ * path takes whatever APKPure serves, then validates the resulting
+ * .apk against `preferred_arch` post-download and falls back to the
+ * next source if the ABI doesn't match.
+ *
+ * Tiers ordered by band tightness:
+ *   nodpi        → no DPI-specific resources, runs on any density.
+ *   120-640dpi   → assets-up to 640, asset-densities up to 480 — a
+ *                  wide umbrella that covers every shipping device.
+ *   480-640dpi   → upper-density-only, falls back to lower densities
+ *                  visually (smaller assets on a phone but fine).
+ *   120-480dpi   → explicit upper bound of 480 (xxxhdpi excluded).
+ *   240-480dpi   → narrower band than 120-480dpi, last resort.
  */
 function buildVariantPriorities(preferredArch) {
   const archs = [preferredArch, 'universal', 'noarch'];
-  const dpis  = ['nodpi', '120-640dpi', '240-480dpi'];
+  const dpis  = ['nodpi', '120-640dpi', '480-640dpi', '120-480dpi', '240-480dpi'];
   const priorities = [];
   for (const dpi of dpis) {
     for (const arch of archs) {
@@ -363,7 +472,122 @@ async function verifyUrl(url) {
 }
 
 /**
+ * Query APKPure's backend protobuf for every XAPK variant URL of a
+ * given package, returning the arm64-v8a variant URL specifically.
+ *
+ * Background: apkeep's regex on APKPure's protobuf response captures
+ * the FIRST XAPKJ URL — always the universal variant. For apps that
+ * ship arm64-v8a-only xapks (Sofascore, Reddit, etc.), the universal
+ * bundle's splits may only contain armeabi-v7a libs, leading to
+ * post-merge ABI guardrail failures. Quoting the analysis outlined in
+ * the header comment: APKPure's protobuf contains three XAPK URLs per
+ * version (universal, arm64-v8a, armeabi-v7a), ordered by descending
+ * size. The smallest variant is the arm64-v8a-only build.
+ *
+ * The download URL itself isn't parsable for arch — we have only the
+ * size signal. We pick the smallest of the three matching URLs and
+ * trust the size ordering. For Sofascore 26.07.27:
+ *   universal     93_044_062 bytes
+ *   arm64-v8a      57_302_642 bytes  ← smallest
+ *   armeabi-v7a    89_218_647 bytes
+ *
+ * If the size heuristic ever fails (e.g. a future arm64-v8a bundle
+ * bigger than armeabi-v7a), the fallback path through `apkeep` still
+ * returns the universal variant — the build will fail at the ABI
+ * guardrail with a clear "arm64-v8a libs missing" error rather than
+ * silently shipping a wrong-arch APK.
+ *
+ * @param {string} packageId - Package ID (e.g. "com.sofascore.results")
+ * @param {string} version - Version to resolve (e.g. "26.07.27")
+ * @returns {Promise<string>} Direct download URL for the arm64-v8a variant
+ */
+async function resolveApkeepVariant(packageId, version) {
+  const apiUrl = `https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=${packageId}`;
+  // codeql[js/file-access-to-http] reason: apiUrl is the public APKPure
+  // protobuf endpoint; only the JSON-parsed bytes are returned, never
+  // written to disk.
+  const response = await fetch(apiUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'x-cv': '3172501',
+      'x-sv': '29',
+      'x-gp': '1',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`APKPure API returned ${response.status}`);
+  }
+
+  const body = await response.text();
+
+  // Extract every XAPK download URL APKPure returned for this package.
+  // The protobuf body is ~400KB of mixed metadata; the URLs are
+  // embedded inline (verified by greping the actual response bytes).
+  const allUrls = body.match(/https?:\/\/download\.pureapk\.com\/b\/XAPK\/[^"\s\\]+/g) || [];
+
+  // APKPure's URLs encode the version INSIDE the `c` query param as
+  // pipe-separated base64-encoded URL-encoded params. The outer param
+  // shape is `c=<counter>|<category>|<base64(rest)>` where the base64
+  // decodes to `dev=<name>&t=<type>&s=<size>&vn=<version>&vc=<version_code>`.
+  // Example inner payload:
+  //   c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXhhcGsmcz01NzcwMzk2MyZ2bj0yNi4wOC4wMyZ2Yz0yNjA4MDMwMDI
+  //   → base64 decode → "dev=Sofascore&t=xxapk&s=57703963&vn=26.08.03&vc=260803002"
+  //
+  // The matcher strips any non-printable bytes that leak past the URL
+  // boundary (the protobuf response is binary — the URL is followed by
+  // framing bytes like `d2 01 f8 01 0a` that the regex preserves).
+  const cleanedUrls = allUrls.map((u) => u.replace(/[^\x20-\x7e]/g, ''));
+  const matching = cleanedUrls.filter((u) => {
+    try {
+      const parsed = new URL(u);
+      const c = parsed.searchParams.get('c');
+      if (!c) return false;
+      const parts = c.split('|');
+      // parts[0] = counter, parts[1] = category, parts[2] = base64 rest
+      if (parts.length < 3) return false;
+      const decoded = Buffer.from(parts[2], 'base64').toString('utf8');
+      const innerParams = new URLSearchParams(decoded);
+      return innerParams.get('vn') === version;
+    } catch {
+      return false;
+    }
+  });
+
+  if (matching.length === 0) {
+    throw new Error(`No APKPure XAPK URLs found for ${packageId}@${version}`);
+  }
+
+  // Sort by declared size (smallest first). The arm64-v8a variant is
+  // consistently the smallest of the three per-app variants.
+  const withSize = matching.map((u) => {
+    try {
+      const parsed = new URL(u);
+      const c = parsed.searchParams.get('c');
+      const innerParams = new URLSearchParams(Buffer.from(c.split('|')[2], 'base64').toString('utf8'));
+      return {
+        url: u,
+        size: parseInt(innerParams.get('s') || '0', 10),
+      };
+    } catch {
+      return { url: u, size: 0 };
+    }
+  });
+  withSize.sort((a, b) => a.size - b.size);
+
+  const chosen = withSize[0];
+  console.error(`[apkeep-resolve] APKPure arm64-v8a variant for ${packageId}@${version}: ${chosen.size} bytes`);
+  return chosen.url;
+}
+
+/**
  * Resolve URL using apkeep (APKPure) - returns URL only, no download
+ *
+ * The default path hits APKPure's protobuf endpoint directly to pick
+ * the arm64-v8a-only variant (see resolveApkeepVariant). The apkeep
+ * binary is kept as a fallback — useful when APKPure's protobuf
+ * response shape changes or the API is unavailable.
+ *
  * @param {string} packageId - Package ID
  * @param {string} version - Version to resolve
  * @returns {Promise<object>} { url, source }
@@ -378,7 +602,22 @@ async function resolveApkeep(packageId, version) {
 
   console.error(`[apkeep-resolve] Resolving ${packageId} v${version}`);
 
-  // apkeep doesn't support --print-url, so we download to temp and return the URL
+  // Primary path: custom APKPure resolver that picks the arm64-v8a
+  // variant. apkeep's regex would always pick the universal variant
+  // (first URL by non-greedy match), which for apps like Sofascore
+  // only ships armeabi-v7a libs and fails the post-merge ABI guardrail.
+  try {
+    const arm64Url = await resolveApkeepVariant(packageId, version);
+    return { url: arm64Url, source: 'apkeep' };
+  } catch (variantErr) {
+    console.error(`[apkeep-resolve] Custom resolver failed (${variantErr.message}), falling back to apkeep binary`);
+  }
+
+  // Fallback: run apkeep with the preferred_arch hinted via the
+  // x-abis header. apkeep 1.0.0 doesn't pick the arm64-v8a variant
+  // from the response (its regex only captures the first URL), but the
+  // future versions may. The sequential downloadWithApkeep will pick
+  // up the actual download when the constructed URL fails.
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apkeep-'));
   const tempFile = path.join(tempDir, `${packageId}_${version}.apk`);
 
@@ -386,7 +625,6 @@ async function resolveApkeep(packageId, version) {
     const args = ['-a', `${packageId}@${version}`, '-d', 'apk-pure', tempFile];
 
     execFile('apkeep', args, { timeout: TIMEOUTS.apkeepResolve }, (error, stdout, stderr) => {
-      // Clean up temp file
       try { fs.unlinkSync(tempFile); fs.rmdirSync(tempDir); } catch (_e) { /* ignore */ }
 
       if (error) {
@@ -395,7 +633,6 @@ async function resolveApkeep(packageId, version) {
         return;
       }
 
-      // Construct URL from package info (apkeep doesn't return the URL directly)
       const url = `https://apkpure.com/${packageId.replace(/\./g, '/')}/${version}`;
       console.error(`[apkeep-resolve] Got APK via apkeep`);
       resolve({ url, source: 'apkeep' });
@@ -540,34 +777,34 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
             return;
           }
 
-          // Validate APK version
-          const validation = validateApkVersion(outputPath, version);
-          if (!validation.valid) {
-            // Cleanup-on-failure: delete the partial file so a later
-            // fallback source's output isn't pre-empted by this stale
-            // file in findPackageCandidate's first-encountered tiebreak
-            // (filesystem-dependent readdir order; not guaranteed
-            // alphabetical on ext4). Best-effort; never mask the
-            // original error.
-            try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
-            reject(new Error(`VERSION MISMATCH: expected ${version}, got ${validation.version}`));
-            return;
+          // Validate APK version. Skip the aapt check for split packages
+          // (zip-of-zips — aapt can't parse them). The post-merge verifier
+          // in download-supported-apk.js re-checks the inner base.apk.
+          // Content-based detection is required: the downloader hardcodes
+          // the saved filename to `${packageId}_${version}.apk`,
+          // extension-based detection would miss every split-package URL.
+          const isSplitPackage = detectApkShape(outputPath) === 'bundle';
+          let validation = { valid: true, actualVersion: version };
+          if (!isSplitPackage) {
+            validation = validateApkVersion(outputPath, version);
+            if (!validation.valid) {
+              // Cleanup-on-failure: same TOCTOU rationale as the
+              // unlinkSync below.
+              try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
+              reject(new Error(`VERSION MISMATCH: expected ${version}, got ${validation.version}`));
+              return;
+            }
+          } else {
+            console.error(`[download-url] Split package detected — skipping aapt version check (caller validates inner base.apk)`);
           }
 
-          // Validate ABI composition. If the upstream returned a file
-          // that doesn't actually ship the preferred architecture's .so
-          // libs, reject the download — the caller's fallback chain
-          // (apkmirror-api → apkeep → apkmirror-pw) will try the next
-          // source. Without this, a 32-bit-only "universal" APK would
-          // get cached and only fail much later inside
-          // download-supported-apk.js's ABI guardrail.
+          // Validate ABI composition. The validator is bundle-aware
+          // (apk-abi-validator.js): it extracts inner .apk files for
+          // XAPK/APKM/APKS and checks each one for lib/<arch>/*.so.
           try {
             validateDownloadedApkAbi(outputPath, preferredArchForUrl);
           } catch (e) {
-            // Cleanup-on-failure: same rationale as VERSION MISMATCH
-            // above. The throw from validateDownloadedApkAbi tells us
-            // upstream mislabelled the file; we must not let the
-            // partial APK survive to contaminate the next source.
+            // Cleanup-on-failure: same rationale as VERSION MISMATCH.
             try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
             reject(e);
             return;
@@ -578,7 +815,7 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
             success: true,
             path: outputPath,
             filename,
-            version: validation.version,
+            version: validation.actualVersion,
             source: 'direct-url',
             url
           });
@@ -884,17 +1121,30 @@ async function downloadWithApkeep(packageId, version, outputDir) {
       if (stats.size > 1000) {
         console.error(`[apkeep] Downloaded: ${apkPath} (${stats.size} bytes)`);
 
-        // ALWAYS validate the downloaded APK matches requested version
-        const validation = validateApkVersion(apkPath, version);
-        if (!validation.valid) {
-          // Cleanup-on-failure: APKPure just served a partial / wrong-
-          // version download. Delete it so the next source
-          // (apkmirror-api → apkmirror-pw) isn't contaminated by a
-          // stale .xapk/.apkm that findPackageCandidate's
-          // first-encountered tiebreak would pick over the working
-          // bundle. Best-effort.
-          try { fs.unlinkSync(apkPath); } catch { /* best-effort */ }
-          throw new Error(`VERSION MISMATCH: Downloaded APK v${validation.actualVersion} but wanted v${version}. ${validation.error || "The requested version is not available from APKPure."}`);
+        // Split packages (.xapk / .apkm / .apks) are zip-of-zips — aapt
+        // can't parse them, so version validation on the outer archive
+        // always returns false. The caller in download-supported-apk.js
+        // already extracts base.apk and validates its versionName
+        // (which aapt can read), so duplicating the check here would
+        // spuriously reject every split package. Sofascore is the
+        // prime example: apkeep ships a xapk bundle with a no-libs
+        // base.apk + config.armeabi_v7a.apk + config.mdpi.apk.
+        const isSplitPackage = /\.(xapk|apkm|apks)$/i.test(apkPath);
+
+        if (!isSplitPackage) {
+          // ALWAYS validate the downloaded APK matches requested version
+          const validation = validateApkVersion(apkPath, version);
+          if (!validation.valid) {
+            // Cleanup-on-failure: APKPure just served a partial / wrong-
+            // version download. Delete it so the next source
+            // (apkmirror-api → apkmirror-pw) isn't contaminated by a
+            // stale .apk that findPackageCandidate's first-encountered
+            // tiebreak would pick over the working bundle. Best-effort.
+            try { fs.unlinkSync(apkPath); } catch { /* best-effort */ }
+            throw new Error(`VERSION MISMATCH: Downloaded APK v${validation.actualVersion} but wanted v${version}. ${validation.error || "The requested version is not available from APKPure."}`);
+          }
+        } else {
+          console.error(`[apkeep] Split package detected — skipping aapt version check (aapt can't parse zip-of-zips; caller validates inner base.apk)`);
         }
 
         // Validate ABI composition. APKPure commonly serves a single-
@@ -902,6 +1152,13 @@ async function downloadWithApkeep(packageId, version, outputDir) {
         // that doesn't match the operator's preferred_arch, reject the
         // download so the fallback chain (apkmirror-api → apkmirror-pw)
         // can try a source that ships the right ABI.
+        //
+        // The validator (apk-abi-validator.js) is bundle-aware: it
+        // detects the zip-of-zips shape, extracts inner .apk files to
+        // a temp dir, and checks each one for lib/<arch>/*.so. So a
+        // Sofascore xapk with only config.armeabi_v7a.apk is correctly
+        // rejected for an arm64-v8a preference; the next source (APKMirror)
+        // gets a chance to serve a multi-arch APK.
         let preferredArchForApkeep = '';
         try {
           preferredArchForApkeep = loadConfig().preferred_arch || '';
@@ -1011,8 +1268,8 @@ async function downloadViaPlaywright(apkmirrorPath, version, outputDir) {
     });
     const page = await context.newPage();
 
-    // Page 1: Release page → select variant using priority list
-    const page1Url = buildReleasePageUrl(apkmirrorPath, version);
+    // Page 1: Release page (slug resolved via /all-versions/, not path last component).
+    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     console.error(`[apkmirror-pw] Page 1: ${page1Url}`);
     await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const $1 = cheerio.load(await page.content());
@@ -1142,14 +1399,66 @@ async function downloadWithApkmirror(packageId, version, outputDir) {
 }
 
 /**
+ * Resolve APKMirror's release-page slug via Chromium when curl gets
+ * blocked by Cloudflare. The /all-versions/ page is the only one whose
+ * bot detection bites the GitHub Actions runner; the release/variant/
+ * download pages are usually fine with curl once the slug is known.
+ * Spinning up a fresh browser just for the slug scrape saves the ~10s
+ * of full-Playwright navigation on each call.
+ *
+ * On Cloudflare 403 from the curl path, this is the fallback. On
+ * network/parse errors (e.g. no release link found) it falls back to
+ * the path-derived URL.
+ */
+async function resolveApkmirrorReleaseSlugViaChromium(apkmirrorPath, version) {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+  });
+  try {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+      locale: 'en-US',
+      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9', 'DNT': '1' },
+    });
+    const page = await context.newPage();
+    // Reuse the existing helper — it accepts a `page` option and falls
+    // back to fetch when no page is passed. With the page it goes
+    // through Chromium; on Cloudflare 403 it falls back to the
+    // path-derived URL (which is what we want for the curl path to
+    // bail out).
+    const url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
+    return url;
+  } finally {
+    await browser.close();
+  }
+}
+
+/**
  * Resolve APKMirror direct APK download URL using fetch + cheerio (3-page navigation).
  * Page 1: Release page → find correct arch/DPI/type variant row
  * Page 2: Variant page → find download button
  * Page 3: Download page → find final APK link
+ *
+ * Slug resolution uses Chromium (Cloudflare-resistant) when curl hits
+ * 403 on /all-versions/ — the path-slug fallback in resolveApkmirrorReleaseSlug
+ * would otherwise point Sofascore at the deprecated slug
+ * (soccer-scores-and-sports-livescore-sofascore) instead of the
+ * current 2025+ slug (sofascore-live-sports-scores). The rest of the
+ * flow stays on curl since the release/variant/download pages don't
+ * trip Cloudflare the same way.
  */
 async function resolveApkmirrorUrlViaCurl(apkmirrorPath, version, priorities) {
-  // Page 1: Release page
-  const page1Url = buildReleasePageUrl(apkmirrorPath, version);
+  // Page 1: Release page (slug resolved via /all-versions/, not path last component).
+  // The Chromium fallback is invoked only when curl fails on /all-versions/.
+  let page1Url;
+  try {
+    page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version);
+  } catch (slugErr) {
+    if (!slugErr.message.includes('403')) throw slugErr;
+    console.error(`[apkmirror-scraper] /all-versions/ blocked by Cloudflare; retrying with Chromium`);
+    page1Url = await resolveApkmirrorReleaseSlugViaChromium(apkmirrorPath, version);
+  }
   console.error(`[apkmirror-scraper] Page 1 (curl): ${page1Url}`);
   const resp1 = await apkmirrorFetch(page1Url);
   let cookies = collectCookies(resp1);
@@ -1216,8 +1525,8 @@ async function resolveApkmirrorUrlViaPlaywright(apkmirrorPath, version, prioriti
     });
     const page = await context.newPage();
 
-    // Page 1: Release page
-    const page1Url = buildReleasePageUrl(apkmirrorPath, version);
+    // Page 1: Release page (slug resolved via /all-versions/, not path last component).
+    const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     console.error(`[apkmirror-scraper] Page 1 (PW): ${page1Url}`);
     await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const html1 = await page.content();
@@ -1426,7 +1735,11 @@ module.exports = {
   buildVariantPriorities,
   selectVariant,
   collectCookies,
+  resolveApkmirrorReleaseSlug,
+  resolveApkmirrorReleaseSlugViaChromium,
   resolveApkmirrorUrl,
+  resolveApkeep,
+  resolveApkeepVariant,
   cleanupOldUrls,
   parallelResolveSources,
   download,

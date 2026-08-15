@@ -58,6 +58,7 @@ const {
   apkHasNativeLibsForArch,
   findBundleInDir,
   listApkAbis,
+  detectApkShape,
 } = require('./apk-selection');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 
@@ -562,7 +563,20 @@ if (
 // 7. If the candidate is an APK without classes.dex, try to swap to a
 //    dex-bearing APK from the same directory; failing that, fall back
 //    to the first split package (which will be merged next).
-if (apkCandidate.endsWith('.apk') && !apkHasDex(apkCandidate)) {
+//
+//    CRITICAL: the dex check is content-based too. A bundle saved as
+//    `.apk` (the unified-downloader hardcodes the saved filename to
+//    `${packageId}_${version}.apk` regardless of the URL path) reports
+//    "no classes.dex" because the outer zip-of-zips doesn't have a
+//    `classes.dex` at the top level. Without the content check, the
+//    loop would skip such a bundle and step 8's merge would never
+//    fire (the extension check is `.xapk|.apkm|.apks` only).
+function isSplitPackageFile(filePath) {
+  if (/\.(xapk|apkm|apks)$/i.test(filePath)) return true;
+  if (filePath.endsWith('.apk')) return detectApkShape(filePath) === 'bundle';
+  return false;
+}
+if (apkCandidate.endsWith('.apk') && !apkHasDex(apkCandidate) && !isSplitPackageFile(apkCandidate)) {
   console.log('Selected APK does not contain classes.dex; trying another APK candidate.');
   const ranked = bestRankedApkInDir(APKS_DIR);
   for (const c of ranked) {
@@ -574,7 +588,7 @@ if (apkCandidate.endsWith('.apk') && !apkHasDex(apkCandidate)) {
   }
 }
 if (apkCandidate.endsWith('.apk') && !apkHasDex(apkCandidate)) {
-  const splitFound = fs.readdirSync(APKS_DIR).find(f => /\.(xapk|apkm|apks)$/.test(f));
+  const splitFound = fs.readdirSync(APKS_DIR).find(f => isSplitPackageFile(path.join(APKS_DIR, f)));
   if (splitFound) {
     console.log(`Switching to split package for merge: ${splitFound}`);
     apkCandidate = path.join(APKS_DIR, splitFound);
@@ -583,7 +597,7 @@ if (apkCandidate.endsWith('.apk') && !apkHasDex(apkCandidate)) {
 
 // 8. Merge split packages into a standalone APK if necessary.
 let finalApk = apkCandidate;
-if (/\.(xapk|apkm|apks)$/.test(apkCandidate)) {
+if (isSplitPackageFile(apkCandidate)) {
   console.log(`Split package detected (${apkCandidate}); attempting APKEditor merge...`);
   const outApk = path.join(APKS_DIR, `${APP_ID}.apk`);
   if (mergeSplitPackageWithApkeditor(apkCandidate, outApk)) {

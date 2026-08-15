@@ -72,10 +72,17 @@ resolve_version_for() {
     log_warn "  [$pkg] no .mpp or morphe-desktop.jar; cannot resolve version"
     return 1
   fi
-  cp "$mpp" "$TOOLS_DIR/patches.mpp"
 
+  # Pass the per-app .mpp directly to morphe-desktop. The previous code
+  # copied all per-app .mpp files to a single shared $TOOLS_DIR/patches.mpp
+  # and ran the java call against that — but `download_for()` runs in
+  # parallel for every app, so a copy from a later app would overwrite
+  # the .mpp an earlier app's java call was still reading. Sofascore was
+  # failing "could not determine version" because the in-flight copy had
+  # been replaced with MorpheApp-morphe-patches.mpp (which doesn't list
+  # com.sofascore.results) by the time its java call ran.
   local versions version
-  versions="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null || true)"
+  versions="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$mpp" 2>/dev/null || true)"
   version="$(printf '%s\n' "$versions" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
   if [ -z "$version" ]; then
     log_warn "  [$pkg] could not determine version"

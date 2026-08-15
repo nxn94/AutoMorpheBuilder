@@ -6,7 +6,7 @@ GitHub Actions CI/CD project that builds patched Android APKs with [Morphe](http
 - **Node.js helpers** (top-level `.github/scripts/*.js` and `__tests__/`) — orchestration, downloaders, validators, tests.
 - **Shell pipeline** under `.github/scripts/pipeline/` — each top-level `<step>.sh` corresponds to one workflow step, with shared helpers in `pipeline/lib/`.
 
-Supported apps (defined in `config.json` `patch_repos`): `com.google.android.youtube`, `com.google.android.apps.youtube.music`, `com.reddit.frontpage`. Add a new app = add a single entry to `config.json` `patch_repos` (includes `apkmirror_path`), no workflow edits.
+Supported apps (defined in `config.json` `patch_repos`): `com.google.android.youtube`, `com.google.android.apps.youtube.music`, `com.reddit.frontpage`, `com.sofascore.results` (community patches via `heval99/morphe-patches`). Add a new app = add a single entry to `config.json` `patch_repos` (includes `apkmirror_path`), no workflow edits.
 
 ## Key files
 
@@ -30,10 +30,10 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 
 | File | Purpose |
 |------|---------|
-| `unified-downloader.js` | APK downloader with multi-source fallback (config cache → URL cache → parallel apkeep/APKMirror-API/Playwright resolution → sequential fallback). |
-| `download-supported-apk.js` | Per-app download orchestration with version + ABI validation. |
-| `apk-selection.js` | Pure scoring/ranking helpers (apkHasNativeLibsForArch, listApkAbis, findBundleInDir, etc.). |
-| `apk-abi-validator.js` | Post-download ABI validation for the downloader. |
+| `unified-downloader.js` | APK downloader with multi-source fallback (config cache → URL cache → parallel apkeep/APKMirror-API/Playwright resolution → sequential fallback). Skips aapt version check for split packages (XAPK/APKM/APKS detected via `detectApkShape` from `apk-selection.js`). |
+| `download-supported-apk.js` | Per-app download orchestration with version + ABI validation. Re-runs the post-merge version check on the inner `base.apk` of split packages and uses `isSplitPackageFile` (extension + content) to pick the merge candidate. |
+| `apk-selection.js` | Pure scoring/ranking helpers (apkHasNativeLibsForArch, listApkAbis, findBundleInDir, detectApkShape, …). `findBundleInDir` and `detectApkShape` are content-based (zip contents, not extension) so APKMirror bundles saved with `.apk` filenames are still recognised. |
+| `apk-abi-validator.js` | Post-download ABI validation for the downloader. Re-exports `detectApkShape` from `apk-selection.js` for callers that already depend on the validator module. |
 | `resolve-supported-version.js` | Morphe-supported version resolver. |
 | `check-existing-releases.js` | Per-app release-tag comparison: for each matrix entry, resolve the APK version (pinned or via `morphe-desktop list-versions`) and drop entries whose `<name>-v<apk>-<patches>` release already exists. Pure `decide(matrix, apkVersions, releaseExists)` is unit-tested; the env-dependent `main()` shell-outs are integration-tested by the workflow. |
 | `patch-apk-manifest.js` | APK manifest patching primitives. |
@@ -68,13 +68,13 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 
 | File | Purpose |
 |------|---------|
-| `apk-selection.test.js` | Pure helpers — scoring, ABI matching, bundle discovery. |
+| `apk-selection.test.js` | Pure helpers — scoring, ABI matching, bundle discovery (content-based). |
 | `apk-abi-validator.test.js` | Post-download ABI validation. |
-| `apkmirror-scraper.test.js` | URL/variant helpers in `unified-downloader.js`. |
+| `apkmirror-scraper.test.js` | URL/variant helpers in `unified-downloader.js`, including the Chromium slug fallback. |
 | `cleanup-caches.test.js` | Cache-pruning script. |
 | `fallback-chain.test.js` | Multi-source download fallback ordering. |
 | `patch-apk-manifest.test.js` | Manifest patching. |
-| `unified-downloader-cleanup.test.js` | Cleanup-on-failure contract for the downloader. |
+| `unified-downloader-cleanup.test.js` | Cleanup-on-failure contract for the downloader, including split-package (XAPK) save path. |
 | `check-existing-releases.test.js` | Pure `decide()` + `buildMatrix()` helpers — release-tag comparison, fail-open on unresolved versions, mixed keep/skip matrices. |
 
 ## Workflow job graph (morphe-build.yml)
@@ -171,17 +171,22 @@ No `morphe-build.yml` edits needed; the matrix is derived from `config.json`.
 - `auto_update_urls` in `config.json` gates whether `pre_download_apks.sh` writes back resolved URLs to `config.json` after a pre-download. Default `true`. When `false`, the resolved URL is logged but `config.json` is left untouched (useful if you want to pin downloads to specific URLs or avoid noisy diffs). Set to `true`/`false`/`1`/`0`/`yes`/`no`; anything else is treated as `false`.
 - An older version of this project shipped a `state.json` file (introduced in the original `feat: add CI/CD workflow` commit, removed by `chore: remove state.json and the update-state job`). If you see references to it in old docs, PRs, or commit messages, that's historical — do not re-introduce it.
 - BouncyCastle is cached via `actions/cache@v5` (bcprov-jdk18on 1.77) and only downloaded when the cache misses.
-- APKMirror scraper uses Playwright when curl is blocked by Cloudflare; all 3 pages (release → variant → download) navigate in the same browser session to preserve cookies. The custom `install-playwright-browsers.js` is required — `npx playwright install` is broken on Playwright 1.58 (yauzl extraction hang).
+- APKMirror scraper uses Playwright when curl is blocked by Cloudflare; all 3 pages (release → variant → download) navigate in the same browser session to preserve cookies. The custom `install-playwright-browsers.js` is required — `npx playwright install` is broken on Playwright 1.58 (yauzl extraction hang). The slug-resolve step (`/all-versions/`) also uses Chromium when curl hits 403; the rest of the curl flow stays on curl.
 - `npm ci` + `npx playwright install chromium` runs on every CI build (not cached at the npm level).
+- The downloader hardcodes the saved filename to `${packageId}_${version}.apk` regardless of the URL path, so a downloaded XAPK/APKM/APKS bundle arrives as `.apk` on disk. Content-based shape detection (`detectApkShape` in `apk-selection.js`, re-exported from `apk-abi-validator.js`) inspects the zip contents (not the extension) to recognise these as bundles — the aapt check is skipped on the outer zip-of-zips and the post-merge step in `download-supported-apk.js` verifies the inner `base.apk` instead. `findBundleInDir` falls back to content-based detection too, so APKMirror bundles saved with `.apk` filenames still get merged.
+- Split packages (XAPK/APKM/APKS) prefer-arm64-v8a logic is content-based: the size-based arm64-v8a variant selection (e.g., the 57MB Sofascore bundle vs. the 93MB universal) uses APKPure's protobuf response to pick the smallest URL and trusts the size ordering. If a future bundle's arm64-v8a build is bigger than armeabi-v7a, the fallback chain will catch the mislabeled-ABI case and skip the file at the validator.
+- The `pre_download_apks.sh` step runs apps in parallel via `&` + `wait`. Each app's `.mpp` is now passed directly to `morphe-desktop list-versions` (no shared `patches.mpp` copy), eliminating the race condition where a later app's copy could overwrite the `.mpp` an earlier app's java call was still reading.
 
 ## Common failures
 
-- **`Chosen APK has no classes.dex`** — the scraper picked a split/config APK. The target version likely only has a BUNDLE variant on APKMirror. Check APKMirror manually; pin to an earlier version with `pin_version` if needed.
+- **`Chosen APK has no classes.dex`** — the scraper picked a split/config APK. The target version likely only has a BUNDLE variant on APKMirror. Check APKMirror manually; pin to an earlier version with `pin_version` if needed. The downloader now uses content-based split-package detection (`detectApkShape`) so a `.xapk`/`.apkm`/`.apks` bundle saved with `.apk` filename is still recognised and merged.
 - **`Wrong version of key store`** — keystore password wrong, or key password differs from keystore password (set `KEY_PASSWORD`).
-- **`Could not resolve a Morphe-supported version`** — `patches-list.json` format changed. Old key-indexed syntax: `.compatiblePackages[$pkg]`. New array-of-objects syntax requires `select(.packageName == $pkg)`. `targetver` step and both workflows now handle both forms.
-- **APK download fails / `No APK could be downloaded`** — Cloudflare rate-limit on APKMirror. Re-run; transient. Verify `apkmirror_path` slugs in `config.json` `patch_repos` are still valid.
+- **`Could not resolve a Morphe-supported version`** — `patches-list.json` format changed. Old key-indexed syntax: `.compatiblePackages[$pkg]`. New array-of-objects syntax requires `select(.packageName == $pkg)`. `targetver` step and both workflows now handle both forms. The pre-download step also passes the per-app `.mpp` directly to `morphe-desktop list-versions` (no shared `patches.mpp` copy) so parallel apps don't trample each other's read.
+- **APK download fails / `No APK could be downloaded`** — Cloudflare rate-limit on APKMirror. Re-run; transient. Verify `apkmirror_path` slugs in `config.json` `patch_repos` are still valid. The `resolveApkmirrorReleaseSlugViaChromium` helper covers the `/all-versions/` 403 case for Sofascore (deprecated package slug `soccer-scores-and-sports-livescore-sofascore` → current `sofascore-live-sports-scores`).
+- **`[pkg] could not determine version` in `Pre-download APKs (parallel)` log** — `morphe-desktop list-versions` returned no matching version for the per-app `.mpp`. Verify the patch repo at `patch_repos[*].repo` actually publishes a `.mpp` for your app.
 - **Obtainium not finding updates** — confirm both filters are set (Release Tag Filter + APK Filter) and the APK filter includes the `-v` infix.
 - **Untracked `.xapk`/`.apkm` from a failed source pre-empts the good one** — the downloader's cleanup-on-failure contract (delete partial APK on validation throw) ensures that when the apkeep / direct-URL curl / Playwright fallback fails ABI or version validation, the file goes away. Without this, the `APKS_DIR` ends up with a stale file that gets picked by `findPackageCandidate` (first-encountered tiebreak on equal scores, via filesystem-dependent readdir order — not guaranteed alphabetical on ext4) over the working bundle from a later source. Symptom: the merged APK is missing the preferred arch even though the downloader reported success via a later source. The new tests in `__tests__/unified-downloader-cleanup.test.js` pin this contract.
+- **`VERSION MISMATCH: expected <ver>, got undefined` from `downloadWithUrl`** — aapt can't parse a split-package URL (the downloader hardcodes the saved filename to `.apk` regardless of the URL path). The downloader now skips the aapt check on bundles (`detectApkShape(outputPath) === 'bundle'`) and lets the post-merge step verify the inner `base.apk`'s versionName. Sofascore's arm64-v8a variant from APKPure is a `.xapk` URL — this path lets the 57MB arm64-v8a variant win instead of the 93MB universal.
 - **Workflow skipping apps that should be rebuilt** — `check_existing_releases.sh` is fail-open, so the only way it can skip an app that genuinely needs a rebuild is if `morphe-desktop list-versions` returns a *different* version than what `releaseExists` matches against (e.g. experimental versions filtered out by the CLI). If you need to force a rebuild, manually delete the offending release tag (`gh release delete <app>-v<apk>-<patches>`) and re-run. The next scheduled run will rebuild it.
 
 ## Local environment
