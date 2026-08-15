@@ -143,5 +143,15 @@
     "com.sofascore.results": {
       "Disable ads": true
     }
+  },
+  "RookieEnough/De-Vanced": {
+    "tv.twitch.android.app": {
+      "Auto claim channel points": true,
+      "Block audio ads": true,
+      "Block embedded ads": true,
+      "Block video ads": true,
+      "Debug mode": true,
+      "Show deleted messages": true
+    }
   }
 }
