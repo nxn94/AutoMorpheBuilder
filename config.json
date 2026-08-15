@@ -25,6 +25,12 @@
       "repo": "heval99/morphe-patches",
       "branch": "main",
       "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore"
+    },
+    "tv.twitch.android.app": {
+      "name": "twitch",
+      "repo": "RookieEnough/De-Vanced",
+      "branch": "main",
+      "apkmirror_path": "twitch-interactive-inc/twitch"
     }
   },
   "cli": {
