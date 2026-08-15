@@ -282,8 +282,11 @@ describe('FORCE_BUILD branch', () => {
   });
 
   test('main() with FORCE_BUILD emits full matrix + should-build=true + empty skip-list', () => {
-    const tmpFile = path.join(os.tmpdir(), `force-build-out-${Date.now()}-${Math.random()}.txt`);
-    const cfgFile = path.join(os.tmpdir(), `force-build-cfg-${Date.now()}-${Math.random()}.json`);
+    // mkdtempSync creates a 0700 directory unique to this test, so the
+    // helper files inside are not world-readable (fixes js/insecure-temporary-file).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-existing-releases-'));
+    const tmpFile = path.join(tmpDir, 'github-output.txt');
+    const cfgFile = path.join(tmpDir, 'config.json');
     fs.writeFileSync(cfgFile, JSON.stringify({
       patch_repos: {
         'com.google.android.youtube': { name: 'youtube', repo: 'MorpheApp/morphe-patches', branch: 'main' },
@@ -318,8 +321,7 @@ describe('FORCE_BUILD branch', () => {
       ]);
       expect(matrix.every((e) => e.patchTag === 'v1.39.1')).toBe(true);
     } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
-      try { fs.unlinkSync(cfgFile); } catch {}
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     }
   });
 
@@ -328,8 +330,11 @@ describe('FORCE_BUILD branch', () => {
     // and the fail-open path emits should-build=true. This proves the
     // FORCE_BUILD guard is a real toggle: with it absent, main() does
     // not short-circuit and the same setup still produces a build.
-    const tmpFile = path.join(os.tmpdir(), `noforce-out-${Date.now()}-${Math.random()}.txt`);
-    const cfgFile = path.join(os.tmpdir(), `noforce-cfg-${Date.now()}-${Math.random()}.json`);
+    // mkdtempSync creates a 0700 directory unique to this test, so the
+    // helper files inside are not world-readable (fixes js/insecure-temporary-file).
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'check-existing-releases-'));
+    const tmpFile = path.join(tmpDir, 'github-output.txt');
+    const cfgFile = path.join(tmpDir, 'config.json');
     fs.writeFileSync(cfgFile, JSON.stringify({
       patch_repos: {
         'com.google.android.youtube': { name: 'youtube', repo: 'MorpheApp/morphe-patches', branch: 'main' },
@@ -350,8 +355,7 @@ describe('FORCE_BUILD branch', () => {
       const line = (key) => out.split('\n').find((l) => l.startsWith(`${key}=`));
       expect(line('should-build')).toBe('should-build=true');
     } finally {
-      try { fs.unlinkSync(tmpFile); } catch {}
-      try { fs.unlinkSync(cfgFile); } catch {}
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
     }
   });
 });
