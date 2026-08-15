@@ -82,8 +82,11 @@ resolve_version_for() {
   # been replaced with MorpheApp-morphe-patches.mpp (which doesn't list
   # com.sofascore.results) by the time its java call ran.
   local versions version
+  # Sort the version list descending (numeric-aware) before picking head —
+  # the CLI does not guarantee "latest first" (e.g. Twitch's RookieEnough/
+  # De-Vanced mpp prints 16.9.1 before 25.3.0).
   versions="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$mpp" 2>/dev/null || true)"
-  version="$(printf '%s\n' "$versions" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+  version="$(printf '%s\n' "$versions" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -Vr | head -n1 || true)"
   if [ -z "$version" ]; then
     log_warn "  [$pkg] could not determine version"
     return 1
@@ -153,7 +156,7 @@ download_for() {
   fi
   local fallback
   fallback="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null \
-    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -Vr | head -n1 || true)"
   if [ -z "$fallback" ]; then
     echo "FAILED:no-fallback-version" > "$RESULTS_DIR/${pkg}.failed"
     return 0
