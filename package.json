@@ -14,8 +14,9 @@
     "playwright": "1.58.2"
   },
   "devDependencies": {
-    "eslint": "^9.0.0",
-    "jest": "^29.0.0"
+    "eslint": "^10.8.1",
+    "@eslint/js": "^10.8.0",
+    "jest": "^30.4.2"
   },
   "overrides": {
     "brace-expansion": "^5.0.8",
