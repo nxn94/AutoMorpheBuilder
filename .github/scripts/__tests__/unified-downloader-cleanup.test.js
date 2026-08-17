@@ -35,24 +35,32 @@ const os = require('node:os');
 // --- Module-level mocks. Must be in place before the downloader is
 //     require()'d. Mirrors fallback-chain.test.js. ----------------------------
 
-jest.mock('child_process', () => {
-  const actual = jest.requireActual('child_process');
-  return {
-    ...actual,
-    execFile: jest.fn(),
-    // execFileSync is used by apkmirrorFetch for curl subprocess
-    // probes. Make it throw with "403" so resolveApkmirror's fallback
-    // to Playwright triggers (Playwright is also mocked below to
-    // reject). Without this, any code path that inadvertently touches
-    // resolveApkmirror will hit the real network.
-    execFileSync: jest.fn(() => {
-      const err = new Error('HTTP 403 — Cloudflare block (mocked)');
-      throw err;
-    }),
-    spawn: jest.fn(),
-  };
+// Names MUST start with `mock` so babel-jest's jest.mock hoisting
+// permits the factory to close over them (Jest 30 enforces this —
+// see https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options).
+const mockChildProcessExecFile = jest.fn();
+const mockChildProcessExecFileSync = jest.fn().mockImplementation(() => {
+  // execFileSync is used by apkmirrorFetch for curl subprocess
+  // probes. Make it throw with "403" so resolveApkmirror's fallback
+  // to Playwright triggers (Playwright is also mocked below to
+  // reject). Without this, any code path that inadvertently touches
+  // resolveApkmirror will hit the real network.
+  const err = new Error('HTTP 403 — Cloudflare block (mocked)');
+  throw err;
 });
-jest.mock('node:child_process', () => jest.requireMock('child_process'));
+const mockChildProcessSpawn = jest.fn();
+jest.mock('child_process', () => ({
+  ...jest.requireActual('child_process'),
+  execFile: mockChildProcessExecFile,
+  execFileSync: mockChildProcessExecFileSync,
+  spawn: mockChildProcessSpawn,
+}));
+jest.mock('node:child_process', () => ({
+  ...jest.requireActual('node:child_process'),
+  execFile: mockChildProcessExecFile,
+  execFileSync: mockChildProcessExecFileSync,
+  spawn: mockChildProcessSpawn,
+}));
 
 jest.mock('playwright', () => ({
   chromium: {
