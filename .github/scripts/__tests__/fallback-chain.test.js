@@ -26,24 +26,35 @@ const os = require('node:os');
 // for symmetry, since test code uses the `node:` form when capturing
 // handles — both names are the same module internally, but Jest's
 // mock registry keys on the require string, so we register both.
-jest.mock('child_process', () => {
-  const actual = jest.requireActual('child_process');
-  return {
-    ...actual,
-    execFile: jest.fn(),
-    // execFileSync is used by apkmirrorFetch (curl subprocess for the
-    // APKMirror-scraper release/variant/download pages). Make it throw
-    // an error containing "403" so resolveApkmirror's
-    // `if (e.message.includes('403'))` triggers the Playwright
-    // fallback — which the playwright mock then rejects.
-    execFileSync: jest.fn(() => {
-      const err = new Error('HTTP 403 — Cloudflare block (mocked)');
-      throw err;
-    }),
-    spawn: jest.fn(),
-  };
+// Jest 30's `requireMock` no longer recurses through cross-specifier
+// aliases (it would stack-overflow here), so we share the same
+// jest.fn() references across both mock factories instead.
+// Names MUST start with `mock` so babel-jest's jest.mock hoisting
+// permits the factory to close over them (Jest 30 enforces this —
+// see https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options).
+const mockChildProcessExecFile = jest.fn();
+const mockChildProcessExecFileSync = jest.fn().mockImplementation(() => {
+  // execFileSync is used by apkmirrorFetch (curl subprocess for the
+  // APKMirror-scraper release/variant/download pages). Throwing an
+  // error containing "403" lets resolveApkmirror's
+  // `if (e.message.includes('403'))` trigger the Playwright fallback —
+  // which the playwright mock then rejects.
+  const err = new Error('HTTP 403 — Cloudflare block (mocked)');
+  throw err;
 });
-jest.mock('node:child_process', () => jest.requireMock('child_process'));
+const mockChildProcessSpawn = jest.fn();
+jest.mock('child_process', () => ({
+  ...jest.requireActual('child_process'),
+  execFile: mockChildProcessExecFile,
+  execFileSync: mockChildProcessExecFileSync,
+  spawn: mockChildProcessSpawn,
+}));
+jest.mock('node:child_process', () => ({
+  ...jest.requireActual('node:child_process'),
+  execFile: mockChildProcessExecFile,
+  execFileSync: mockChildProcessExecFileSync,
+  spawn: mockChildProcessSpawn,
+}));
 
 jest.mock('playwright', () => ({
   chromium: {

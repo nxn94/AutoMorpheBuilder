@@ -82,7 +82,7 @@ function unzip(zipPath, destDir) {
   } catch (e) {
     // unzip to stderr — surface the last 1KB to keep error messages sane
     const stderr = (e.stderr || Buffer.alloc(0)).toString().slice(-1024);
-    throw new Error(`unzip failed for ${zipPath}: ${stderr || e.message}`);
+    throw new Error(`unzip failed for ${zipPath}: ${stderr || e.message}`, { cause: e });
   }
   // The chromium / headless-shell zips contain a single top-level directory
   // (chrome-linux64 / chrome-headless-shell-linux64). Find it.
@@ -159,7 +159,7 @@ function install(name) {
     fs.chmodSync(expectedExec, 0o755);
   } catch (e) {
     if (e.code === 'ENOENT') {
-      throw new Error(`Expected ${expectedExec} after extraction, but it's missing`);
+      throw new Error(`Expected ${expectedExec} after extraction, but it's missing`, { cause: e });
     }
     throw e;
   }
