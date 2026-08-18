@@ -153,5 +153,10 @@
       "Debug mode": true,
       "Show deleted messages": true
     }
+  },
+  "rushiranpise/morphe-patches": {
+    "com.kevinforeman.nzb360": {
+      "Unlock All Access": true
+    }
   }
 }
