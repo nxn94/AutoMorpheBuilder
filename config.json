@@ -31,6 +31,12 @@
       "repo": "RookieEnough/De-Vanced",
       "branch": "main",
       "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming"
+    },
+    "com.kevinforeman.nzb360": {
+      "name": "nzb360",
+      "repo": "rushiranpise/morphe-patches",
+      "branch": "main",
+      "apkmirror_path": "kevin-foreman/nzb360"
     }
   },
   "cli": {
