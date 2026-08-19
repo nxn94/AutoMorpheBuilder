@@ -37,6 +37,12 @@
       "repo": "rushiranpise/morphe-patches",
       "branch": "main",
       "apkmirror_path": "kevin-foreman/nzb360"
+    },
+    "com.finalwire.aida64": {
+      "name": "aida64",
+      "repo": "rushiranpise/morphe-patches",
+      "branch": "main",
+      "apkmirror_path": "finalwire-ltd/aida64"
     }
   },
   "cli": {
