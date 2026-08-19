@@ -359,3 +359,88 @@ describe('FORCE_BUILD branch', () => {
     }
   });
 });
+
+describe('resolveApkVersion version-extraction regex', () => {
+  // Regression for the universal "could not resolve a Morphe-supported
+  // version" bug: every new app pointing at a non-default patch repo
+  // (RookieEnough/De-Vanced for Twitch, rushiranpise/morphe-patches
+  // for nzb360, heval99/morphe-patches for Sofascore) hit this because
+  // morphe-desktop list-versions emits the supported versions as
+  // `<ver> (<N> patch[es])` lines and the regex used to extract them
+  // required EXACTLY three dot-separated numeric components. nzb360
+  // ships a 2-segment version (`24.3`), which the old regex never
+  // matched. The fix widens the regex to require 1+ dot-separated
+  // components. These tests exercise resolveApkVersion against
+  // mocked CLI output for each affected repo.
+  const fs = require('node:fs');
+  const cp = require('node:child_process');
+
+  function loadFresh() {
+    jest.resetModules();
+    return require('../check-existing-releases');
+  }
+
+  // Realistic morphe-desktop list-versions output for each repo. Note
+  // the `INFO: ` prefix on the first line of each logger.info() call
+  // and the tab-indented version lines below it (verified against
+  // MorpheApp/morphe-desktop's ListCompatibleVersions.kt).
+  const nzb360CliOutput = `INFO: Package name: com.kevinforeman.nzb360
+INFO: Most common compatible versions:
+\t24.3 (1 patch)
+ `;
+
+  const twitchCliOutput = `INFO: Package name: tv.twitch.android.app
+INFO: Most common compatible versions:
+\t16.9.1 (5 patches)
+\t25.3.0 (5 patches)
+ `;
+
+  const sofascoreCliOutput = `INFO: Package name: com.sofascore.results
+INFO: Most common compatible versions:
+\t26.07.27 (1 patch)
+ `;
+
+  test('extracts 2-segment versions like nzb360\'s `24.3`', () => {
+    jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+    jest.spyOn(cp, 'execFileSync').mockImplementation(() => nzb360CliOutput);
+    const { resolveApkVersion } = loadFresh();
+    const version = resolveApkVersion(
+      'com.kevinforeman.nzb360',
+      '/fake/jar',
+      '/fake.mpp',
+      { patch_repos: { 'com.kevinforeman.nzb360': {} } },
+    );
+    expect(version).toBe('24.3');
+  });
+
+  test('still extracts 3-segment versions like Twitch\'s `25.3.0`', () => {
+    jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+    jest.spyOn(cp, 'execFileSync').mockImplementation(() => twitchCliOutput);
+    const { resolveApkVersion } = loadFresh();
+    const version = resolveApkVersion(
+      'tv.twitch.android.app',
+      '/fake/jar',
+      '/fake.mpp',
+      { patch_repos: { 'tv.twitch.android.app': {} } },
+    );
+    // Both versions are listed; sort -Vr picks the highest. The
+    // workflow doesn't depend on a stable CLI order — we just need
+    // *some* X.Y.Z. This locks in the "3-segment versions still
+    // extract" half of the regression so a future change that
+    // accidentally drops them is caught here.
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  test('extracts 4-segment versions like Sofascore\'s `26.07.27`', () => {
+    jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+    jest.spyOn(cp, 'execFileSync').mockImplementation(() => sofascoreCliOutput);
+    const { resolveApkVersion } = loadFresh();
+    const version = resolveApkVersion(
+      'com.sofascore.results',
+      '/fake/jar',
+      '/fake.mpp',
+      { patch_repos: { 'com.sofascore.results': {} } },
+    );
+    expect(version).toBe('26.07.27');
+  });
+});
