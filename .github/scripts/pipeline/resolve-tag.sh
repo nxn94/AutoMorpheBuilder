@@ -12,7 +12,19 @@ resolve_release_tag() {
   local branch="$2"
   local stable_tag selected_tag
 
-  stable_tag="$(gh release view --repo "$repo" --json tagName -q .tagName || true)"
+  # Prefer the latest non-prerelease release (gh release view's default).
+  # Fall back to the latest release of any kind if the repo only ships
+  # pre-releases/drafts (e.g. an in-progress dev tag) so the build can
+  # still proceed. Redirect 2>/dev/null so "release not found" can't
+  # leak into the captured stdout on older gh versions.
+  stable_tag="$(gh release view --repo "$repo" --json tagName -q .tagName 2>/dev/null || true)"
+  if [ -z "$stable_tag" ]; then
+    log_warn "No stable release found for ${repo}; falling back to latest release (pre-release/draft)."
+    stable_tag="$(gh release list --repo "$repo" --limit 1 --exclude-drafts --exclude-pre-releases --json tagName -q '.[0].tagName // empty' 2>/dev/null || true)"
+    if [ -z "$stable_tag" ]; then
+      stable_tag="$(gh release list --repo "$repo" --limit 1 --exclude-drafts --json tagName -q '.[0].tagName // empty' 2>/dev/null || true)"
+    fi
+  fi
 
   if [ "$branch" = "main" ]; then
     selected_tag="$stable_tag"
