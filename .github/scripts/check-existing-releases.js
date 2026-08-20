@@ -117,7 +117,7 @@ function resolveApkVersion(appId, jarPath, mppPath, config) {
       ['-jar', jarPath, 'list-versions', '-f', appId, `--patches=${mppPath}`],
       { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] },
     );
-    const m = out.match(/\d+\.\d+\.\d+/g);
+    const m = out.match(/\d+(?:\.\d+)+/g);
     if (!m) return '';
     // Sort descending (numeric-aware) so the head picks the recommended
     // version, not whatever order the CLI happens to print — e.g. Twitch's
@@ -236,5 +236,5 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { decide, buildMatrix, main, isTruthyEnv };
+module.exports = { decide, buildMatrix, resolveApkVersion, main, isTruthyEnv };
 

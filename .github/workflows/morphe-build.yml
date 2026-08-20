@@ -380,9 +380,12 @@ jobs:
             # Sort the version list descending before picking head — the CLI
             # does not guarantee "latest first" (e.g. Twitch's RookieEnough/
             # De-Vanced mpp prints 16.9.1 before 25.3.0, which would otherwise
-            # pick the wrong version).
+            # pick the wrong version). The regex requires 1+ dot-separated
+            # numeric segments so 2-segment versions (nzb360's `24.3` from
+            # rushiranpise/morphe-patches), 3-segment ones (Twitch, YouTube),
+            # and 4-segment ones (Sofascore's `26.07.27`) all match.
             version="$(java -jar "$jar" list-versions -f "$APP_ID" --patches="$mpp" \
-              | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | sort -Vr | head -n1 || true)"
+              | grep -oE '[0-9]+(\.[0-9]+)+' | sort -Vr | head -n1 || true)"
           fi
           if [ -z "$version" ]; then
             echo "::error::Could not resolve a Morphe-supported version for $APP_ID"
