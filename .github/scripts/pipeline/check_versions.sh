@@ -59,10 +59,19 @@ REPO_PAIRS="$(list_repo_branches)"
 [ -z "$REPO_PAIRS" ] && { log_error "No valid patch_repos entries found in $CONFIG_FILE."; exit 1; }
 
 declare -A REPO_TAGS=()
-while IFS='|' read -r repo branch; do
-  log "Resolving tag for ${repo} (branch=${branch})..."
-  tag="$(resolve_release_tag "$repo" "$branch")"
-  log "  ${repo} -> ${tag}"
+while IFS='|' read -r repo branch pin_tag; do
+  if [ -n "$pin_tag" ]; then
+    # Per-app pin (config.json's pin_patch_tag) overrides the resolved tag.
+    # Use this when an upstream patch release is broken (e.g. references a
+    # class that morphe-desktop doesn't expose at runtime) and you need to
+    # hold the matrix on a known-good tag until upstream ships a fix.
+    log "Pinned tag for ${repo}: ${pin_tag} (config.json pin_patch_tag)"
+    tag="$pin_tag"
+  else
+    log "Resolving tag for ${repo} (branch=${branch})..."
+    tag="$(resolve_release_tag "$repo" "$branch")"
+    log "  ${repo} -> ${tag}"
+  fi
   REPO_TAGS["$repo"]="$tag"
 done <<< "$REPO_PAIRS"
 

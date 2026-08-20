@@ -29,14 +29,17 @@ list_app_ids() {
 }
 
 # list_repo_branches
-#   Emits "<repo>|<branch>" pairs (one per unique repo). Used by
-#   check-versions and sync-patches to fetch the right tag.
+#   Emits "<repo>|<branch>|<pin_tag>" triples (one per unique repo). The
+#   third column is the optional pin_patch_tag from config.json (empty
+#   when not set). Used by check-versions and download_morphe_tools.
+#   Consumers that only need repo+branch can keep using `read -r repo _`
+#   since bash silently discards the third field.
 list_repo_branches() {
   require_file "$CONFIG_FILE" >/dev/null || return 1
   jq -r '
     .patch_repos
     | to_entries
-    | map(.value | "\(.repo)|\(.branch | ascii_downcase)")
+    | map(.value | "\(.repo)|\(.branch | ascii_downcase)|\(.pin_patch_tag // "")")
     | unique[]
   ' "$CONFIG_FILE"
 }
