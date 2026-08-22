@@ -36,6 +36,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `apk-abi-validator.js` | Post-download ABI validation for the downloader. Re-exports `detectApkShape` from `apk-selection.js` for callers that already depend on the validator module. |
 | `resolve-supported-version.js` | Morphe-supported version resolver. |
 | `check-existing-releases.js` | Per-app release-tag comparison: for each matrix entry, resolve the APK version (pinned or via `morphe-desktop list-versions`) and drop entries whose `<name>-v<apk>-<patches>` release already exists. Pure `decide(matrix, apkVersions, releaseExists)` is unit-tested; the env-dependent `main()` shell-outs are integration-tested by the workflow. |
+| `prune-old-releases.js` | Post-publish cleanup: caps each app's release history at `KEEP_COUNT` (default 2) by `gh release delete --cleanup-tag` on the oldest beyond the window. Pure `selectTagsToDelete(releases, appName, keepCount)` is unit-tested; the env-dependent `gh release list` / `gh release delete` calls are integration-tested by the workflow. |
 | `patch-apk-manifest.js` | APK manifest patching primitives. |
 | `patch-playwright-cft-path.js` | Patches Playwright's chromium-for-testing download path on disk. |
 | `update-download-urls.js` | Writes resolved URLs back to `config.json` `download_urls`. CLI: `node update-download-urls.js <pkg> <version> <url>`. Honoured only when `auto_update_urls` is true. |
@@ -58,6 +59,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `prepare_keystore.sh` | Decodes `KEYSTORE_BASE64`, detects type, produces BKS (morphe-desktop) + PKCS12 (apksigner) keystores. Uses `keytool -storepass:env / -keypass:env` so passwords never appear on the cmdline. |
 | `patch_apk.sh` | Runs `morphe-desktop.jar patch` and writes the patched APK to `out/`. |
 | `create_release.sh` | Publishes per-app GitHub Releases. |
+| `prune_old_releases.sh` | Thin shell wrapper around `.github/scripts/prune-old-releases.js`. Runs after `create_release.sh` to cap each app's release history at the keep-count. |
 | `install_aapt.sh` | Idempotent `aapt` install. |
 | `install_apkeep.sh` | Downloads apkeep binary; pins SHA-256 against `APKEEP_VERSION`. |
 | `install_bouncycastle.sh` | Downloads BouncyCastle provider jar from Maven Central; verifies SHA-256 from the companion `.sha256` file. |
@@ -76,6 +78,7 @@ Supported apps (defined in `config.json` `patch_repos`): `com.google.android.you
 | `patch-apk-manifest.test.js` | Manifest patching. |
 | `unified-downloader-cleanup.test.js` | Cleanup-on-failure contract for the downloader, including split-package (XAPK) save path. |
 | `check-existing-releases.test.js` | Pure `decide()` + `buildMatrix()` helpers — release-tag comparison, fail-open on unresolved versions, mixed keep/skip matrices. |
+| `prune-old-releases.test.js` | Pure `selectTagsToDelete()` — oldest-first ordering, prefix-boundary (no cross-app matches), tagName tiebreak, regex-metachar escape in app names, keepCount=0 boundary. |
 
 ## Workflow job graph (morphe-build.yml)
 
@@ -90,7 +93,7 @@ check-versions → build (matrix per app) → create-release
   - Failure policy is **fail-open**: if the APK version can't be resolved (missing jar/.mpp) or `gh release view` errors, the app is kept in the matrix and a `::warning::` is logged. The build never silently skips an app we couldn't version-check.
   - Hard-fails if `patch_repos` is empty or `cli.repo`/`cli.branch` is missing.
 - `build` — per-app parallel matrix (already filtered to apps that need re-building). Downloads APK, patches with morphe-desktop, signs (signing is **enforced** — no unsigned output). Uses `pin_version` from `config.json` if set, otherwise picks the latest Morphe-supported version.
-- `create-release` — one GitHub Release per app, tag `<name>-v<apk-version>-<patches-version>` (e.g. `youtube-v20.44.38-v1.24.0-dev.8`), contains only that app's APK.
+- `create-release` — one GitHub Release per app, tag `<name>-v<apk-version>-<patches-version>` (e.g. `youtube-v20.44.38-v1.24.0-dev.8`), contains only that app's APK. Runs `prune_old_releases.sh` after publish so each app keeps only the 2 most recent releases (configurable via `KEEP_COUNT`); older releases + their tags are deleted via `gh release delete --cleanup-tag`.
 
 ## Developer commands
 

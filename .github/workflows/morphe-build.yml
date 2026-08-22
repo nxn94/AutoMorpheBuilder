@@ -490,3 +490,14 @@ jobs:
           CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
           REPO_VERSIONS: ${{ needs.check-versions.outputs.repo-versions }}
         run: bash .github/scripts/pipeline/create_release.sh
+
+      - name: Prune old releases per app
+        # Caps each app's release history at KEEP_COUNT (default 2) by
+        # deleting the oldest beyond that window. Runs after publish so
+        # the freshly-created/-updated release is always the newest of
+        # its app's set. Failures on a single tag (race / already gone)
+        # are warnings only; the list call is a hard gate so we never
+        # silently skip the cleanup.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pipeline/prune_old_releases.sh
