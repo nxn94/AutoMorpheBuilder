@@ -45,6 +45,12 @@
       "branch": "main",
       "apkmirror_path": "finalwire-ltd/aida64",
       "pin_patch_tag": "v1.18.3"
+    },
+    "com.getmimo": {
+      "name": "mimo",
+      "repo": "hoo-dles/morphe-patches",
+      "branch": "main",
+      "apkmirror_path": "mimohello-gmbh/mimo-learn-to-code"
     }
   },
   "cli": {
