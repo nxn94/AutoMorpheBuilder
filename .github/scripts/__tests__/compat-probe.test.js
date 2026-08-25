@@ -105,6 +105,32 @@ describe('renderTable', () => {
     expect(md).toContain('_config_');
     expect(md).toContain('broken config');
   });
+
+  test('error strings escape backslashes AND pipes (no stray backslash survives)', () => {
+    // CodeQL js/incomplete-string-escaping — both `\` and `|` need to be
+    // escaped for the GFM table to render the literal characters instead
+    // of treating them as table syntax or markdown escape sequences.
+    const md = renderTable([
+      { appId: 'com.x', repo: 'a/b', tag: 'v1', status: 'ERROR', error: 'path\\to\\file | with|pipe' },
+    ]);
+    // The literal `\`, `|` from the input must appear escaped in the
+    // rendered table (the backslashes doubled, the pipes escaped).
+    expect(md).toContain('path\\\\to\\\\file \\| with\\|pipe');
+    // And the raw, unescaped input sequence (`\\|file | with|`) must NOT
+    // survive — only its escaped form should be present in the body.
+    const dataRow = md.split('\n').slice(-1)[0];
+    expect(dataRow).not.toContain('file | with|');
+  });
+
+  test('newlines in error strings are flattened to spaces (one row, one line)', () => {
+    const md = renderTable([
+      { appId: 'com.x', repo: 'a/b', tag: 'v1', status: 'ERROR', error: 'line1\nline2' },
+    ]);
+    expect(md).toContain('line1 line2');
+    expect(md).not.toContain('line1\nline2');
+    // Header (1 line, contains \n internally) + body = 3 physical lines.
+    expect(md.split('\n')).toHaveLength(3); // header, separator, body
+  });
 });
 
 // --- probe (integration) -------------------------------------------------

@@ -155,6 +155,25 @@ describe('renderTable', () => {
     expect(md).toContain('NO');
     expect(md).toContain('oops \\| bad');
   });
+
+  test('error strings escape backslashes AND pipes (CodeQL js/incomplete-string-escaping)', () => {
+    const md = renderTable([
+      { appId: 'com.x', name: 'x', repo: 'a/b', tag: 'v1', pkgListed: 'NO', fetchOk: 'NO', error: 'path\\to\\file | with|pipe' },
+    ]);
+    expect(md).toContain('path\\\\to\\\\file \\| with\\|pipe');
+    const dataRow = md.split('\n').slice(-1)[0];
+    expect(dataRow).not.toContain('file | with|');
+  });
+
+  test('newlines in error strings are flattened to spaces', () => {
+    const md = renderTable([
+      { appId: 'com.x', name: 'x', repo: 'a/b', tag: 'v1', pkgListed: 'NO', fetchOk: 'NO', error: 'line1\nline2' },
+    ]);
+    expect(md).toContain('line1 line2');
+    expect(md).not.toContain('line1\nline2');
+    // Header (1 line, contains \n internally) + body = 3 physical lines.
+    expect(md.split('\n')).toHaveLength(3); // header, separator, body
+  });
 });
 
 // --- preflight (integration) ---------------------------------------------

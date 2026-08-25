@@ -218,9 +218,14 @@ function renderTable(rows) {
   if (rows.length === 0) return '_(no apps configured)_';
   const header = '| app | name | repo | pkg listed | upstream fetch |\n'
     + '|---|---|---|---|---|';
+  const escapeMd = (s) => String(s || '')
+    // Backslashes first so the pipe-escape below doesn't re-escape them.
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\n/g, ' ');
   const body = rows.map((r) =>
     `| ${r.appId} | ${r.name} | ${r.repo}@${r.tag} | ${r.pkgListed} | ${r.fetchOk}`
-    + `${r.error ? `<br/>:warning: ${r.error.replace(/\|/g, '\\|')}` : ''} |`,
+    + `${r.error ? `<br/>:warning: ${escapeMd(r.error)}` : ''} |`,
   ).join('\n');
   return `${header}\n${body}`;
 }

@@ -203,11 +203,16 @@ async function probe({ config, repoVersions, toolsDir = './tools', execImpl = ex
 function renderTable(rows) {
   if (rows.length === 0) return '_(no apps)_';
   const header = '| app | repo | status | detail |\n|---|---|---|---|';
+  const escapeMd = (s) => String(s || '')
+    // Backslashes first so the pipe-escape below doesn't re-escape them.
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\n/g, ' ');
   const body = rows.map((r) => {
     if (r.appId === null) {
-      return `| _config_ | _-_ | _ERROR_ | ${(r.error || '').replace(/\|/g, '\\|')} |`;
+      return `| _config_ | _-_ | _ERROR_ | ${escapeMd(r.error)} |`;
     }
-    const detail = (r.symbol ? `missing \`${r.symbol}\` ` : '') + (r.error || '').replace(/\|/g, '\\|');
+    const detail = (r.symbol ? `missing \`${r.symbol}\` ` : '') + escapeMd(r.error);
     return `| ${r.appId} | ${r.repo}@${r.tag || '?'} | ${r.status} | ${detail} |`;
   }).join('\n');
   return `${header}\n${body}`;
