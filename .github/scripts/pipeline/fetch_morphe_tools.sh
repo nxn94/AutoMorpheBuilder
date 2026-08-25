@@ -73,19 +73,36 @@ with_retry 3 5 curl -fsSL \
 
 # --- morphe-desktop.jar --------------------------------------------------
 
-if [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
-  # Releases <= v1.10.x shipped as morphe-cli-X.Y.Z-all.jar under the old
-  # MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
-  # either name so legacy pins still resolve.
-  gh_release_download "$CLI_REPO" "$CLI_VERSION" "morphe-desktop-*-all.jar" "$TOOLS_DIR" >/dev/null || true
-  for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
-    [ -f "$f" ] || continue
-    if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
-      mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
-      log "  moved $(basename "$f") -> morphe-desktop.jar"
-    fi
-    break
-  done
+# Always re-download the CLI jar (see download_morphe_tools.sh for the
+# full rationale: actions/cache@v5 only saves on miss, so a stale jar
+# cached from a previous cli-version persists across runs even when
+# cli-version resolves to a newer release). The check-versions job
+# already populates tools/; this re-downloads fresh inside each
+# build matrix entry so they all see exactly the jar for the
+# resolved CLI_VERSION.
+rm -f "$TOOLS_DIR/morphe-desktop.jar"
+# Releases <= v1.10.x shipped as morphe-cli-X.Y.Z-all.jar under the old
+# MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
+# either name so legacy pins still resolve.
+gh_release_download "$CLI_REPO" "$CLI_VERSION" "morphe-desktop-*-all.jar" "$TOOLS_DIR" >/dev/null || true
+for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
+  [ -f "$f" ] || continue
+  if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
+    mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
+    log "  moved $(basename "$f") -> morphe-desktop.jar"
+  fi
+  break
+done
+
+# Paranoia: confirm the downloaded jar matches CLI_VERSION before
+# downstream steps (which call list-versions / patch) try to use it.
+if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
+  actual_version="$(unzip -p "$TOOLS_DIR/morphe-desktop.jar" META-INF/MANIFEST.MF 2>/dev/null \
+    | grep '^Implementation-Version:' | sed 's/^Implementation-Version:[[:space:]]*//' | head -n1 || true)"
+  expected_version="${CLI_VERSION#v}"
+  if [ -n "$actual_version" ] && [ "$actual_version" != "$expected_version" ]; then
+    log_warn "morphe-desktop.jar version mismatch: expected ${expected_version}, got ${actual_version}."
+  fi
 fi
 
 # --- APKEditor ----------------------------------------------------------
