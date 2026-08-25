@@ -59,6 +59,21 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Preflight per-app patch availability
+        # Layer B of "adding a new app must just work". Before
+        # downloading any tools or spinning up the build matrix, hit
+        # each patch repo's patches-list.json at the resolved tag and
+        # confirm the app's package id is in compatiblePackages. Fails
+        # fast with a per-app table (in the step summary) so an
+        # upstream rename or a typo'd package id surfaces here
+        # instead of as a cryptic mid-build "Could not resolve a
+        # Morphe-supported version" error 30 minutes later.
+        id: preflight
+        env:
+          CONFIG_FILE: ${{ github.workspace }}/config.json
+          REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+        run: node .github/scripts/preflight-apps.js
+
       - name: Download morphe-desktop + patches .mpp
         # Provides the jar + per-repo .mpp files the filter step needs
         # to resolve each app's APK version. Runs unconditionally so the
