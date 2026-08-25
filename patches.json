@@ -141,7 +141,12 @@
   },
   "heval99/morphe-patches": {
     "com.sofascore.results": {
-      "Disable ads": true
+      "Block marketing notifications": true,
+      "Disable Facebook SDK": true,
+      "Disable Play Integrity": true,
+      "Disable ads": true,
+      "Disable telemetry": true,
+      "Enable Premium": true
     }
   },
   "RookieEnough/De-Vanced": {
@@ -155,8 +160,16 @@
     }
   },
   "rushiranpise/morphe-patches": {
+    "com.finalwire.aida64": {
+      "Remove ads": true
+    },
     "com.kevinforeman.nzb360": {
       "Unlock All Access": true
+    }
+  },
+  "hoo-dles/morphe-patches": {
+    "com.getmimo": {
+      "Enable Pro": true
     }
   }
 }
