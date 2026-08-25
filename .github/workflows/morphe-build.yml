@@ -59,6 +59,21 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Preflight per-app patch availability
+        # Layer B of "adding a new app must just work". Before
+        # downloading any tools or spinning up the build matrix, hit
+        # each patch repo's patches-list.json at the resolved tag and
+        # confirm the app's package id is in compatiblePackages. Fails
+        # fast with a per-app table (in the step summary) so an
+        # upstream rename or a typo'd package id surfaces here
+        # instead of as a cryptic mid-build "Could not resolve a
+        # Morphe-supported version" error 30 minutes later.
+        id: preflight
+        env:
+          CONFIG_FILE: ${{ github.workspace }}/config.json
+          REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+        run: node .github/scripts/preflight-apps.js
+
       - name: Download morphe-desktop + patches .mpp
         # Provides the jar + per-repo .mpp files the filter step needs
         # to resolve each app's APK version. Runs unconditionally so the
@@ -70,16 +85,38 @@ jobs:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
         run: bash .github/scripts/pipeline/download_morphe_tools.sh
 
-      - name: Cache morphe-desktop and patches
+      - name: Cache patches .mpp
+        # NOTE: morphe-desktop.jar is intentionally NOT cached. The CLI
+        # jar is small (~40MB) and download_morphe_tools.sh re-downloads
+        # it on every run because `actions/cache@v5` only saves on a
+        # cache miss by default — so a restore would silently put a
+        # stale jar back into tools/. Caching the per-repo `.mpp`
+        # files is worth it (they're reused across apps on the same
+        # repo), but the CLI jar is always fresh.
         uses: actions/cache@v5
         with:
           path: |
-            tools/morphe-desktop.jar
             tools/*.mpp
-          key: morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
-          restore-keys: |
-            morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-
-            morphe-tools-
+          key: morphe-patches-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
+
+      - name: Compat probe (per-app runtime check)
+        # Layer D of "adding a new app must just work". The earlier
+        # `Preflight per-app patch availability` step only checks
+        # patches-list.json (static metadata). This step actually
+        # invokes `java -jar morphe-desktop.jar list-versions -f <pkg>
+        # --patches=<mpp>` per app and catches runtime API mismatches
+        # that the static check can't see — e.g. hoo-dles/morphe-patches
+        # uses `BytecodePatchBuilder.extendWithAll(Supplier)` (added to
+        # morphe-patcher 2026-07-27) which only morphe-desktop v1.13.2+
+        # carries. An older cached CLI jar would crash every patch
+        # with NoSuchMethodError 30 minutes into the matrix instead of
+        # surfacing here.
+        id: compat
+        env:
+          CONFIG_FILE: ${{ github.workspace }}/config.json
+          REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+          TOOLS_DIR: ${{ env.TOOLS_DIR }}
+        run: node .github/scripts/compat-probe.js
 
       - name: Filter matrix by existing releases
         # For every matrix entry, resolve the APK version (pinned or via
@@ -324,21 +361,12 @@ jobs:
           restore-keys: |
             morphe-patches-${{ matrix.patchSlug }}-
 
-      - name: Cache morphe-desktop
-        # Uses the SAME composite key as check-versions' "Cache morphe-desktop
-        # and patches" step so check-versions populates the cache and this
-        # step restores it. Path is just the jar — actions/cache extracts only
-        # the matching files when restoring, even though the cache archive
-        # also contains the .mpp files written by check-versions.
-        # Save-always defaults to false → on hit, no save → no race among
-        # the 3 parallel matrix entries.
-        uses: actions/cache@v5
-        with:
-          path: ${{ env.TOOLS_DIR }}/morphe-desktop.jar
-          key: morphe-tools-desktop-${{ needs.check-versions.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
-          restore-keys: |
-            morphe-tools-desktop-${{ needs.check-versions.outputs.cli-version }}-
-            morphe-tools-desktop-
+      # NOTE: morphe-desktop.jar is intentionally NOT cached at the
+      # build-job level either. The download_morphe_tools.sh /
+      # fetch_morphe_tools.sh steps always re-download the jar from
+      # the cli-version tag, so every matrix entry sees the exact jar
+      # for the resolved cli-version. See AGENTS.md "Common failures"
+      # → "java.lang.NoSuchMethodError" for the full rationale.
 
       - name: Get latest Morphe patches + CLI + APKEditor
         id: morphe

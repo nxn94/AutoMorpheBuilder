@@ -1,6 +1,17 @@
 name: Update patches.json from upstream repos
 
 on:
+  # Auto-run when config.json adds a patch repo not yet present in
+  # patches.json (Layer C of "adding a new app must just work"). The
+  # `detect-new-repos` step early-exits when there's nothing to sync, so
+  # this push trigger is cheap on no-op commits. Manual dispatch still
+  # available below for a full re-sync.
+  push:
+    branches: [main]
+    paths:
+      - 'config.json'
+      - '.github/scripts/pipeline/sync-patches.sh'
+      - '.github/scripts/pipeline/resolve-tag.sh'
   workflow_dispatch:
 
 permissions:
@@ -23,7 +34,38 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Sync patches.json
+      - name: Detect new patch repos in config.json
+        # When triggered by `push` (auto-seed), early-exit if
+        # config.json doesn't add a patch repo that isn't already in
+        # patches.json. Saves a full sync on no-op commits and makes
+        # the auto-seed path visible in the workflow summary.
+        id: detect
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+
+          new_repos="$(comm -23 \
+            <(jq -r '.patch_repos | to_entries[] | .value.repo' config.json | sort -u) \
+            <(jq -r 'keys[]' patches.json | sort -u))"
+
+          if [ -z "$new_repos" ]; then
+            echo "has_new_repos=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No new patch repos in config.json; skipping sync."
+            exit 0
+          fi
+
+          echo "has_new_repos=true" >> "$GITHUB_OUTPUT"
+          echo "New patch repos to seed:"
+          # Use a here-string + while-read so multi-repo additions
+          # render one bullet per repo instead of one bullet per
+          # whitespace-separated word (which `printf '  - %s\n'
+          # $new_repos` would do without quoting).
+          while IFS= read -r repo; do
+            echo "  - ${repo}"
+          done <<< "$new_repos"
+
+      - name: Sync patches.json (skip if no new repos on auto-trigger)
+        if: github.event_name == 'workflow_dispatch' || steps.detect.outputs.has_new_repos == 'true'
         run: |
           set -euo pipefail
 

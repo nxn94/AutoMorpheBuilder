@@ -48,26 +48,47 @@ mkdir -p "$TOOLS_DIR"
 
 # --- CLI jar --------------------------------------------------------------
 
-if [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
-  log "Downloading morphe-desktop ${CLI_TAG}..."
-  # Releases <= v1.10.x shipped as morphe-cli-X.Y.Z-all.jar under the old
-  # MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
-  # either name so legacy pins still resolve.
-  gh_release_download "$CLI_REPO" "$CLI_TAG" "morphe-desktop-*-all.jar" "$TOOLS_DIR" || true
-  for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
-    [ -f "$f" ] || continue
-    if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
-      mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
-      log "  moved $(basename "$f") -> morphe-desktop.jar"
-    fi
-    break
-  done
-else
-  log "Using cached $TOOLS_DIR/morphe-desktop.jar"
-fi
+# Always re-download the CLI jar. We do NOT trust any cached copy:
+# `actions/cache@v5` only saves on a cache miss by default, so if a
+# restore happens (via exact key or a restore-key) the freshly
+# downloaded jar gets REPLACED by the cached one and the cache is
+# NOT re-saved. A stale jar cached from a previous cli-version or a
+# manual upload would persist forever otherwise. The jar is small
+# (~40MB) and the network cost is negligible. (The .mpp files below
+# ARE cached — they're per (repo, tag), reused across apps, and
+# each download emits its own actions/cache key.)
+rm -f "$TOOLS_DIR/morphe-desktop.jar"
+log "Downloading morphe-desktop ${CLI_TAG} (forced, not cached)..."
+# Releases <= v1.10.x shipped as morphe-cli-X.Y.Z-all.jar under the old
+# MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
+# either name so legacy pins still resolve.
+gh_release_download "$CLI_REPO" "$CLI_TAG" "morphe-desktop-*-all.jar" "$TOOLS_DIR" || true
+for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
+  [ -f "$f" ] || continue
+  if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
+    mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
+    log "  moved $(basename "$f") -> morphe-desktop.jar"
+  fi
+  break
+done
 
 if [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
   log_warn "morphe-desktop.jar not found; downstream APK version resolution will be skipped."
+fi
+
+# Sanity-check the downloaded jar matches the requested tag. gh_release_download
+# pins the asset name to '<cli>-<version>-all.jar', but a corrupted/partial
+# download or a wrong tag would still produce a file — this grep surfaces that
+# before morphe-desktop is invoked downstream.
+if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
+  actual_version="$(unzip -p "$TOOLS_DIR/morphe-desktop.jar" META-INF/MANIFEST.MF 2>/dev/null \
+    | grep '^Implementation-Version:' | sed 's/^Implementation-Version:[[:space:]]*//' | head -n1 || true)"
+  expected_version="${CLI_TAG#v}"  # strip leading 'v' (e.g. v1.13.2 -> 1.13.2)
+  if [ -n "$actual_version" ] && [ "$actual_version" != "$expected_version" ]; then
+    log_warn "morphe-desktop.jar version mismatch: expected ${expected_version}, got ${actual_version}."
+  elif [ -n "$actual_version" ]; then
+    log "morphe-desktop.jar version confirmed: ${actual_version}"
+  fi
 fi
 
 # --- patches .mpp files ---------------------------------------------------
