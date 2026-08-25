@@ -92,9 +92,35 @@ jobs:
             tools/morphe-desktop.jar
             tools/*.mpp
           key: morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
+          # IMPORTANT: restore-keys is scoped to the CURRENT cli-version
+          # only. The previous `morphe-tools-` fallback was a bug: when
+          # config.json changed (e.g. adding a new app) the exact key
+          # would miss, the broad prefix would match an older cached jar
+          # from a previous cli-version (e.g. v1.13.0/1 instead of the
+          # current v1.13.2), and patches built against a newer
+          # morphe-patcher would throw NoSuchMethodError. Always
+          # download the exact cli-version jar; never borrow an older one.
           restore-keys: |
             morphe-tools-desktop-${{ steps.check.outputs.cli-version }}-
-            morphe-tools-
+
+      - name: Compat probe (per-app runtime check)
+        # Layer D of "adding a new app must just work". The earlier
+        # `Preflight per-app patch availability` step only checks
+        # patches-list.json (static metadata). This step actually
+        # invokes `java -jar morphe-desktop.jar list-versions -f <pkg>
+        # --patches=<mpp>` per app and catches runtime API mismatches
+        # that the static check can't see — e.g. hoo-dles/morphe-patches
+        # uses `BytecodePatchBuilder.extendWithAll(Supplier)` (added to
+        # morphe-patcher 2026-07-27) which only morphe-desktop v1.13.2+
+        # carries. An older cached CLI jar would crash every patch
+        # with NoSuchMethodError 30 minutes into the matrix instead of
+        # surfacing here.
+        id: compat
+        env:
+          CONFIG_FILE: ${{ github.workspace }}/config.json
+          REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+          TOOLS_DIR: ${{ env.TOOLS_DIR }}
+        run: node .github/scripts/compat-probe.js
 
       - name: Filter matrix by existing releases
         # For every matrix entry, resolve the APK version (pinned or via
