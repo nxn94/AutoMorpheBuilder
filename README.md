@@ -6,7 +6,7 @@ Forking for personal use is encouraged. To add or remove an app, edit `config.js
 
 ---
 
-## Supported apps
+## Tested apps
 
 | App | Package | Patch repo |
 |-----|---------|------------|
