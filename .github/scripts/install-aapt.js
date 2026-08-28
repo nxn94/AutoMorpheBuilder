@@ -46,7 +46,24 @@ function alreadyInstalled() {
 
 function download(url, dest) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
-  execFileSync('curl', ['-fsSL', '-o', dest, url], { stdio: 'inherit' });
+  // Retry transient network/protocol errors (HTTP/2 stream errors in
+  // particular — curl 92 — are surfaced as non-zero by libcurl even
+  // though the upstream server is fine on the next attempt). The shell
+  // pipeline uses a `with_retry` helper for the same purpose; mirror
+  // that here so the JS installer is equally resilient. `--retry-all-errors`
+  // is required because HTTP/2 stream errors are not in curl's default
+  // transient-error set. Mirrors the flags used by
+  // install-playwright-browsers.js.
+  execFileSync('curl', [
+    '-fSL',
+    '--retry', '3',
+    '--retry-delay', '2',
+    '--retry-all-errors',
+    '--connect-timeout', '30',
+    '--max-time', '300',
+    '-o', dest,
+    url,
+  ], { stdio: 'inherit' });
   const size = fs.statSync(dest).size;
   if (size < 1_000_000) throw new Error(`Downloaded ${url} is suspiciously small (${size} bytes)`);
   return dest;
