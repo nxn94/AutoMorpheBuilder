@@ -68,10 +68,7 @@ describe('errors', () => {
     test('PackageMismatchError is instanceof InvalidApkError/AutoMorpheError', () => {
       const error = new PackageMismatchError('pkg mismatch');
 
-      // NOTE: The verbatim source's spread+override in InvalidApkError
-      // causes PackageMismatchError.code to resolve to 'INVALID_APK' (not
-      // 'PACKAGE_MISMATCH'). This documents that bug; see PR-5a report.
-      expect(error.code).toBe('INVALID_APK');
+      expect(error.code).toBe('PACKAGE_MISMATCH');
       expect(error.retryable).toBe(false);
       expect(error).toBeInstanceOf(InvalidApkError);
       expect(error).toBeInstanceOf(AutoMorpheError);
@@ -80,9 +77,17 @@ describe('errors', () => {
     test('VersionMismatchError is instanceof InvalidApkError/AutoMorpheError', () => {
       const error = new VersionMismatchError('version mismatch');
 
-      // See note on PackageMismatchError above: source currently collapses
-      // code back to 'INVALID_APK'.
+      expect(error.code).toBe('VERSION_MISMATCH');
+      expect(error.retryable).toBe(false);
+      expect(error).toBeInstanceOf(InvalidApkError);
+      expect(error).toBeInstanceOf(AutoMorpheError);
+    });
+
+    test('InvalidApkError instantiated directly defaults code to INVALID_APK', () => {
+      const error = new InvalidApkError('bad');
+
       expect(error.code).toBe('INVALID_APK');
+      expect(error.message).toBe('bad');
       expect(error.retryable).toBe(false);
       expect(error).toBeInstanceOf(InvalidApkError);
       expect(error).toBeInstanceOf(AutoMorpheError);
