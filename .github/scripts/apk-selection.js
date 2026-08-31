@@ -15,6 +15,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
+// Canonical candidate-based ranking API (from src/apk/rank-candidates.js).
+// New code paths that work with structured candidate objects (see
+// `src/apk/candidate.js`) should prefer this API. The path-based
+// `scoreApk` below is preserved for backward compatibility with
+// `findPackageCandidate` / `bestRankedApkInDir` and the existing test
+// suite in __tests__/apk-selection.test.js, which pins its weights.
+const rankCandidates = require('../../src/apk/rank-candidates');
+
 /**
  * Inspect the zip at `filePath` and decide whether it's a single APK
  * or a bundle (zip-of-zips with inner .apk entries). Returns:
@@ -72,6 +80,18 @@ function extractVersionFromString(s) {
  * The bonus/penalty weights are the same numbers the inline awk used;
  * changing them changes APK selection behavior, which the workflow
  * relies on (rejects dex-less split configs, prefers arm64-v8a APKs, etc.).
+ *
+ * NOTE: this function is intentionally NOT delegated to
+ * `rankCandidates.scoreCandidate` from `src/apk/rank-candidates.js`.
+ * The new module scores structured fields (architecture/dpi/format
+ * lookup tables on a candidate object) and uses different weights
+ * optimized for ranking resolver output. `scoreApk` here is the
+ * legacy path-string scorer used by `findPackageCandidate` (which
+ * scans a directory for APK filenames). New code should use
+ * `rankCandidates.selectCandidate` with candidate objects built by
+ * `createCandidate` instead. The weight divergence is preserved so
+ * the 7 existing tests in `__tests__/apk-selection.test.js` keep
+ * passing unchanged — this is a no-behavior-change refactor.
  *
  * @param {string} apkPath Absolute path to an APK file.
  * @returns {number} Score (higher is better).
@@ -283,4 +303,16 @@ module.exports = {
   findBundleInDir,
   listApkAbis,
   detectApkShape,
+  // Re-export the canonical candidate-based ranking API so existing
+  // callers can opt in to the new selection model without changing
+  // their import path. The legacy path-based helpers above remain
+  // exported unchanged for backward compatibility.
+  selectCandidate: rankCandidates.selectCandidate,
+  compareCandidates: rankCandidates.compareCandidates,
+  scoreCandidate: rankCandidates.scoreCandidate,
+  isCompatible: rankCandidates.isCompatible,
+  createCandidate: rankCandidates.createCandidate,
+  ARCHITECTURE_SCORE: rankCandidates.ARCHITECTURE_SCORE,
+  DPI_SCORE: rankCandidates.DPI_SCORE,
+  FORMAT_SCORE: rankCandidates.FORMAT_SCORE,
 };
