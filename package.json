@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "jest",
+    "test": "jest --forceExit",
     "lint": "eslint .github/scripts"
   },
   "dependencies": {
