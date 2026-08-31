@@ -28,6 +28,31 @@ const APK_MIRROR_API_PASS = process.env.APKMIRROR_API_PASS;
 // URL cache directory - stores resolved URLs as JSON
 const URL_CACHE_DIR = path.join(os.homedir(), ".cache", "auto-morphe-builder", "urls");
 
+// Source priority for the resolver fallback chain. Higher = preferred.
+// This is the single source of truth for the order in which APK sources
+// are tried — both the parallel resolver (parallelResolveSources) and
+// the sequential fallback (download) consult it. The numeric gaps are
+// intentional so future sources can be inserted between tiers without
+// renumbering (e.g. a new "f-droid" tier could land at 175 between
+// apkmirrorApi and apkmirrorHtml).
+//
+// Mapping between priority keys and the legacy inline names:
+//   apkeep        ↔ 'apkeep'        (used by parallelResolveSources sources[])
+//   apkmirrorApi  ↔ 'apkmirror-api' (the wp-json API path)
+//   apkmirrorHtml ↔ 'apkmirror'     (the Playwright HTML-scraper fallback)
+//
+// local / cache / configured are not yet wired into parallelResolveSources
+// (they short-circuit before the resolver runs); they are reserved here so
+// the priority table is a complete picture of the resolver pipeline.
+const SOURCE_PRIORITY = {
+  local: 500,
+  cache: 400,
+  configured: 300,
+  apkeep: 200,
+  apkmirrorApi: 150,
+  apkmirrorHtml: 100,
+};
+
 // Centralized timeout knobs (ms). Each one is named after the call site
 // where it applies, so a "why is apkeep hanging" question lands on the
 // right line in a single place. Tune these in one spot rather than
@@ -1652,6 +1677,13 @@ async function download(packageId, version, outputDir) {
   // Step 4: Fallback to sequential (existing behavior)
   console.error(`[download] Falling back to sequential resolution`);
 
+  // Sequential order mirrors SOURCE_PRIORITY (see top of file): the
+  // highest-priority source that hasn't already been tried by the
+  // parallel pass wins. Currently: apkeep (200) → apkmirrorApi (150)
+  // → apkmirrorHtml (100). If you add or reorder a tier in
+  // SOURCE_PRIORITY, update this block to match — there's no shared
+  // driver loop yet (the parallel pass already finished, so this is a
+  // pure tail of the pipeline).
   // Try apkeep
   console.error(`[apkeep] Attempting download for ${packageId} v${version}`);
   try {
@@ -1749,4 +1781,8 @@ module.exports = {
   // them through the full download() fallback chain.
   downloadWithUrl,
   downloadWithApkeep,
+  // Source priority table for the resolver fallback chain (see top of
+  // file). Exported so test code and external tooling can introspect
+  // the order without re-reading the inline sources[] array.
+  SOURCE_PRIORITY,
 };
