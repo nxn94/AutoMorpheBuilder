@@ -53,7 +53,7 @@ class InvalidApkError extends AutoMorpheError {
   constructor(message, options = {}) {
     super(message, {
       ...options,
-      code: 'INVALID_APK',
+      code: options.code ?? 'INVALID_APK',
       retryable: false,
     });
   }
