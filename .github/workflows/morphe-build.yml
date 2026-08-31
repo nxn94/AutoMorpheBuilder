@@ -5,8 +5,15 @@ on:
   schedule:
     - cron: "15 5 * * *" # daily at 05:15 UTC
 
-# Permissions are scoped per-job below. Only create-release actually
-# pushes back to the repo; check-versions and build only read.
+# Belt-and-braces guard: the `on:` block above does not include
+# `pull_request`, but if someone adds it later the explicit `if` makes
+# the intent (no PR runs) self-documenting and self-enforcing.
+if: github.event_name != 'pull_request'
+
+# Workflow-level default. Per-job `permissions:` blocks below override
+# this where a job needs more (e.g. create-release needs `contents: write`).
+permissions:
+  contents: read
 
 # Allow only one in-flight build for this workflow. Concurrent runs would
 # race on patches.json / config.json updates; this lets the runner cancel
@@ -18,6 +25,7 @@ concurrency:
 jobs:
   check-versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -38,6 +46,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Resolve latest Morphe + CLI versions
         # Emits the optimistic defaults: should-build=true and the FULL
@@ -218,6 +228,7 @@ jobs:
     needs: check-versions
     if: needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
 
@@ -242,6 +253,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Java (for morphe-desktop)
         uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6
@@ -473,11 +486,14 @@ jobs:
     needs: [check-versions, build]
     if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Download all patched APKs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8

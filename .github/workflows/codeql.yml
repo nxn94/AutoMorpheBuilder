@@ -13,10 +13,23 @@ on:
     # to avoid runner contention.
     - cron: '0 6 * * *'
 
+# Workflow-level default. The `analyze` job below declares a
+# wider set (`actions: read`, `security-events: write`) per-job.
+permissions:
+  contents: read
+
+# Cancel any in-flight run for the same ref when a new commit lands.
+# CodeQL is heavier than CI (DB build + analysis per language matrix
+# entry) so cancelling superseded runs keeps the queue moving.
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
@@ -31,6 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938  # v4.37.9
