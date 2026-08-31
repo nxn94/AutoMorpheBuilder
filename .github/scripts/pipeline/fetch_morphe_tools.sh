@@ -24,12 +24,21 @@
 #   CLI_VERSION   required  e.g. v1.11.0
 #   TOOLS_DIR     optional  default ./tools
 #   GITHUB_OUTPUT required  workflow output file
+#
+# SHA-256 verification (see checksums/tools.sha256 + docs/checksums.md):
+#   When the manifest contains a real SHA for `morphe-desktop.jar` or
+#   `APKEditor.jar`, the downloaded artifact is also checked against
+#   that digest. A mismatch hard-fails the build. The `<slug>.mpp` is
+#   NOT pinned in the global manifest (its SHA changes per release
+#   tag); the existing `gh release download <tag>` + tag check is the
+#   primary gate.
 
 set -Eeuo pipefail
 
 . "$(dirname "$0")/lib/common.sh"
 . "$(dirname "$0")/lib/json.sh"
 . "$(dirname "$0")/lib/github.sh"
+. "$(dirname "$0")/lib/checksums.sh"
 
 PATCH_REPO="${PATCH_REPO:-}"
 PATCH_TAG="${PATCH_TAG:-}"
@@ -116,6 +125,20 @@ if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
   if [ -n "$actual_version" ] && [ "$actual_version" != "$expected_version" ]; then
     log_warn "morphe-desktop.jar version mismatch: expected ${expected_version}, got ${actual_version}."
   fi
+
+  # SHA-256 verification when checksums/tools.sha256 pins this artifact.
+  # tools_sha_pinned returns false for TODO placeholders, so the existing
+  # MANIFEST.MF Implementation-Version check above remains the primary
+  # gate until a real SHA is committed to the manifest.
+  if tools_sha_pinned "morphe-desktop.jar"; then
+    expected_sha="$(tools_sha_lookup "morphe-desktop.jar")"
+    actual_sha="$(sha256sum "$TOOLS_DIR/morphe-desktop.jar" | awk '{print $1}')"
+    if [ "$actual_sha" != "$expected_sha" ]; then
+      log_error "morphe-desktop.jar SHA-256 mismatch: expected ${expected_sha}, got ${actual_sha}."
+      exit 1
+    fi
+    log "morphe-desktop.jar SHA-256 verified"
+  fi
 fi
 
 # --- APKEditor ----------------------------------------------------------
@@ -152,5 +175,21 @@ if [ ! -f "$APKEDITOR_JAR_PATH" ]; then
   log_error "APKEditor download failed: $APKEDITOR_JAR_PATH"
   exit 1
 fi
+
+# SHA-256 verification when checksums/tools.sha256 pins APKEditor.jar.
+# tools_sha_pinned returns false for TODO placeholders. When pinned, a
+# mismatch hard-fails the build — APKEditor is the merge step for split
+# packages, and silently shipping the wrong jar would silently produce
+# single-architecture APKs that fail to install on 64-bit-only devices.
+if tools_sha_pinned "APKEditor.jar"; then
+  expected_sha="$(tools_sha_lookup "APKEditor.jar")"
+  actual_sha="$(sha256sum "$APKEDITOR_JAR_PATH" | awk '{print $1}')"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    log_error "APKEditor.jar SHA-256 mismatch: expected ${expected_sha}, got ${actual_sha}."
+    exit 1
+  fi
+  log "APKEditor.jar SHA-256 verified"
+fi
+
 json_set_output apkeditor_jar "$APKEDITOR_JAR_PATH"
 log "Downloaded APKEditor ${APKEDITOR_TAG}: ${APKEDITOR_ASSET}"

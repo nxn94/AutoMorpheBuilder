@@ -22,6 +22,14 @@
 # The previous workflow exited 0 when the CLI .jar was missing; this
 # preserves that behaviour because the subsequent APK-resolution step
 # also depends on it. We log a warning so the absence is visible.
+#
+# SHA-256 verification (see checksums/tools.sha256 + docs/checksums.md):
+#   When the manifest contains a real SHA for `morphe-desktop.jar`, the
+#   downloaded jar is also checked against that digest. A mismatch hard-
+#   fails the build. Per-repo `.mpp` files are NOT pinned in the global
+#   manifest (their SHAs change per release tag); the existing
+#   `gh release download <tag>` + tag check is the primary gate for
+#   those — see `fetch_morphe_tools.sh` for the per-matrix path.
 
 set -Eeuo pipefail
 
@@ -29,6 +37,7 @@ set -Eeuo pipefail
 . "$(dirname "$0")/lib/json.sh"
 . "$(dirname "$0")/lib/config.sh"
 . "$(dirname "$0")/lib/github.sh"
+. "$(dirname "$0")/lib/checksums.sh"
 
 TOOLS_DIR="${TOOLS_DIR:-./tools}"
 REPO_VERSIONS="${REPO_VERSIONS:-}"
@@ -88,6 +97,21 @@ if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
     log_warn "morphe-desktop.jar version mismatch: expected ${expected_version}, got ${actual_version}."
   elif [ -n "$actual_version" ]; then
     log "morphe-desktop.jar version confirmed: ${actual_version}"
+  fi
+
+  # SHA-256 verification when checksums/tools.sha256 pins this artifact.
+  # `tools_sha_pinned` is true only when the manifest contains a valid
+  # 64-hex entry — placeholder/TODO rows return false. Until pinned, we
+  # rely on the MANIFEST.MF Implementation-Version check above as the
+  # primary gate.
+  if tools_sha_pinned "morphe-desktop.jar"; then
+    expected_sha="$(tools_sha_lookup "morphe-desktop.jar")"
+    actual_sha="$(sha256sum "$TOOLS_DIR/morphe-desktop.jar" | awk '{print $1}')"
+    if [ "$actual_sha" != "$expected_sha" ]; then
+      log_error "morphe-desktop.jar SHA-256 mismatch: expected ${expected_sha}, got ${actual_sha}."
+      exit 1
+    fi
+    log "morphe-desktop.jar SHA-256 verified"
   fi
 fi
 
