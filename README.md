@@ -111,4 +111,4 @@ Split packages (XAPK/APKM/APKS) are saved as `.apk` on disk and detected by **co
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE).
