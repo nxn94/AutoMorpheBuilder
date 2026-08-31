@@ -8,8 +8,8 @@
   "scripts": {
     "test": "jest",
     "lint": "eslint .github/scripts",
+    "validate:config": "node scripts/validate-config.js",
     "validate:agent-docs": "node scripts/check-agents-doc.js",
-    "validate:config": "node .github/scripts/validate-config.js",
     "check": "npm run lint && npm test && npm run validate:config && npm run validate:agent-docs"
   },
   "dependencies": {

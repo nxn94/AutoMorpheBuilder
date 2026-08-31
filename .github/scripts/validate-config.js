@@ -16,9 +16,9 @@
  *
  * Pure logic (validateConfig) is exported so the jest test suite can
  * exercise every rule without spinning up Node child processes or
- * touching disk. The CLI wrapper at the bottom of this file just
- * shells out to the pure function and formats the result for the
- * workflow log.
+ * touching disk. The CLI entry point lives in scripts/validate-config.js
+ * (PR 3), which uses ajv for structural validation and calls
+ * validateConfig for the semantic rules on top.
  *
  * What this validates:
  *   - Top-level shape: patch_repos (object, non-empty), cli.repo /
@@ -39,8 +39,6 @@
  *
  * Exit code: 0 on success, 1 on any error (warnings don't fail).
  */
-
-const fs = require('node:fs');
 
 /** Known Android ABIs that AGENTS.md / unified-downloader.js accept. */
 const KNOWN_ABIS = new Set([
@@ -353,44 +351,6 @@ function validateConfig(config) {
   }
 
   return issues;
-}
-
-// --- CLI wrapper ----------------------------------------------------------
-
-function formatIssue(issue) {
-  const where = issue.appId ? `${issue.appId}` : '<top-level>';
-  const tag = issue.level === 'error' ? '::error::' : '::warning::';
-  return `${tag}[${where}] ${issue.message}`;
-}
-
-if (require.main === module) {
-  const configPath = process.argv[2] || './config.json';
-  if (!fs.existsSync(configPath)) {
-    console.error(`::error::config file not found: ${configPath}`);
-    process.exit(1);
-  }
-  let config;
-  try {
-    config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (e) {
-    console.error(`::error::${configPath} is not valid JSON: ${e.message}`);
-    process.exit(1);
-  }
-  const issues = validateConfig(config);
-  let errors = 0;
-  let warnings = 0;
-  for (const issue of issues) {
-    if (issue.level === 'error') errors++; else warnings++;
-    console.error(formatIssue(issue));
-  }
-  if (errors > 0) {
-    console.error(`\n::error::${errors} error(s), ${warnings} warning(s) in ${configPath}`);
-    process.exit(1);
-  }
-  if (warnings > 0) {
-    console.error(`\n::notice::${warnings} warning(s) in ${configPath}`);
-  }
-  process.exit(0);
 }
 
 module.exports = {

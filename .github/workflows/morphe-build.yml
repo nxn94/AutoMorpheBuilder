@@ -39,6 +39,33 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup Node.js
+        # PR 3: scripts/validate-config.js is ajv-based (devDep), so we
+        # need node + npm available before the validate step. Pinned
+        # to the same node-version as the matrix build for consistency.
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        # PR 3: npm ci installs ajv (devDep) used by the validate
+        # step below. Gated nowhere — a bad config must fail here
+        # before any morphe-desktop or APK download. The later
+        # `should-build`-gated npm ci (and node_modules artifact
+        # upload) downstream remain for the build matrix; this
+        # install is local-only for validation.
+        run: npm ci
+
+      - name: Validate configuration
+        # PR 3: gates the whole job on a valid config.json + patches.json
+        # BEFORE any setup/download cost. ajv validates the structural
+        # shape against schemas/*.schema.json; the hand-rolled
+        # validateConfig (semantic rules) runs on top. A bad config
+        # here fails the workflow in seconds, not 30 minutes into a
+        # matrix. Mirrors the same step in ci.yml so PR-time and
+        # dispatch-time validation stay in lockstep.
+        run: npm run validate:config
+
       - name: Resolve latest Morphe + CLI versions
         # Emits the optimistic defaults: should-build=true and the FULL
         # matrix. The downstream `filter` step overrides both based on
