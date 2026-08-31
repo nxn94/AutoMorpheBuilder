@@ -8,7 +8,6 @@ on:
 # Belt-and-braces guard: the `on:` block above does not include
 # `pull_request`, but if someone adds it later the explicit `if` makes
 # the intent (no PR runs) self-documenting and self-enforcing.
-if: github.event_name != 'pull_request'
 
 # Workflow-level default. Per-job `permissions:` blocks below override
 # this where a job needs more (e.g. create-release needs `contents: write`).
