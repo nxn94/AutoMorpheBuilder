@@ -615,9 +615,10 @@ async function resolveApkeepVariant(packageId, version) {
  *
  * @param {string} packageId - Package ID
  * @param {string} version - Version to resolve
+ * @param {object} [opts] - Optional command/source dependency overrides for tests
  * @returns {Promise<object>} { url, source }
  */
-async function resolveApkeep(packageId, version) {
+async function resolveApkeep(packageId, version, opts = {}) {
   if (!packageId || !packageId.includes('.')) {
     throw new Error('Invalid packageId format');
   }
@@ -649,7 +650,8 @@ async function resolveApkeep(packageId, version) {
   return new Promise((resolve, reject) => {
     const args = ['-a', `${packageId}@${version}`, '-d', 'apk-pure', tempFile];
 
-    execFile('apkeep', args, { timeout: TIMEOUTS.apkeepResolve }, (error, stdout, stderr) => {
+    const execFileImpl = opts.execFileImpl || execFile;
+    execFileImpl('apkeep', args, { timeout: TIMEOUTS.apkeepResolve }, (error, stdout, stderr) => {
       try { fs.unlinkSync(tempFile); fs.rmdirSync(tempDir); } catch (_e) { /* ignore */ }
 
       if (error) {
@@ -741,9 +743,11 @@ async function resolveApkmirror(packageId, version) {
  * @param {string} outputDir - Output directory
  * @param {string} packageId - Package ID
  * @param {string} version - Expected version
+ * @param {object} [opts] - Optional process dependency overrides for tests
  * @returns {Promise<object>} Download result
  */
-async function downloadWithUrl(url, outputDir, packageId, version) {
+async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
+  const spawnImpl = opts.spawnImpl || spawn;
   // Read preferred_arch so we can validate the downloaded file's ABI
   // composition. A 32-bit-only APK from upstream (e.g. APKMirror's
   // "universal" row that's actually armeabi-v7a-only, or APKPure's
@@ -760,7 +764,7 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
   const filename = `${packageId}_${version}.apk`;
   const outputPath = path.join(outputDir, filename);
 
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const sleep = opts.sleepImpl || ((ms) => new Promise((r) => setTimeout(r, ms)));
 
   const MAX_RETRIES = 3;
 
@@ -776,7 +780,7 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
       const result = await new Promise((resolve, reject) => {
         // codeql[js/file-access-to-http] reason: same as above; the curl
         // invocation is the unified-downloader's intended download path.
-        const curl = spawn('curl', ['-L', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
+        const curl = spawnImpl('curl', ['-L', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
 
         let stderr = '';
 
@@ -811,7 +815,7 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
           const isSplitPackage = detectApkShape(outputPath) === 'bundle';
           let validation = { valid: true, actualVersion: version };
           if (!isSplitPackage) {
-            validation = validateApkVersion(outputPath, version);
+            validation = validateApkVersion(outputPath, version, { execFileSyncImpl: opts.execFileSyncImpl });
             if (!validation.valid) {
               // Cleanup-on-failure: same TOCTOU rationale as the
               // unlinkSync below.
@@ -865,13 +869,30 @@ async function downloadWithUrl(url, outputDir, packageId, version) {
  * Resolve URLs from all sources in parallel, first valid wins
  * @param {string} packageId - Package ID
  * @param {string} version - Version to resolve
+ * @param {object} [opts] - Optional source resolver overrides for tests
  * @returns {Promise<object>} { url, source }
  */
-async function parallelResolveSources(packageId, version) {
+async function parallelResolveSources(packageId, version, opts = {}) {
+  const sourceResolvers = opts.sourceResolvers || {};
   const sources = [
-    { name: 'apkeep', fn: () => resolveApkeep(packageId, version) },
-    { name: 'apkmirror-api', fn: () => resolveApkmirrorApi(packageId, version) },
-    { name: 'apkmirror', fn: () => resolveApkmirror(packageId, version) },
+    {
+      name: 'apkeep',
+      fn: () => sourceResolvers.apkeep
+        ? sourceResolvers.apkeep(packageId, version)
+        : resolveApkeep(packageId, version, opts),
+    },
+    {
+      name: 'apkmirror-api',
+      fn: () => sourceResolvers.apkmirrorApi
+        ? sourceResolvers.apkmirrorApi(packageId, version)
+        : resolveApkmirrorApi(packageId, version),
+    },
+    {
+      name: 'apkmirror',
+      fn: () => sourceResolvers.apkmirror
+        ? sourceResolvers.apkmirror(packageId, version)
+        : resolveApkmirror(packageId, version),
+    },
   ];
 
   const SOURCE_TIMEOUT = TIMEOUTS.sourceResolve;
@@ -975,13 +996,14 @@ function loadExistingUrl(packageId, version) {
  * Run command with execFile and timeout
  */
 function runCommand(cmd, args, options = {}) {
-  const timeout = options.timeout || TIMEOUTS.commandDefault;
+  const { execFileImpl = execFile, ...commandOptions } = options;
+  const timeout = commandOptions.timeout || TIMEOUTS.commandDefault;
 
   return new Promise((resolve, reject) => {
-    const proc = execFile(cmd, args, {
+    const proc = execFileImpl(cmd, args, {
       timeout,
-      stdio: options.stdio || ["pipe", "pipe", "pipe"],
-      ...options
+      stdio: commandOptions.stdio || ["pipe", "pipe", "pipe"],
+      ...commandOptions
     });
 
     let stdout = "";
@@ -1034,9 +1056,10 @@ function runCommand(cmd, args, options = {}) {
  * Validate APK version matches expected version using aapt
  * Returns { valid: boolean, actualVersion: string }
  */
-function validateApkVersion(apkPath, expectedVersion) {
+function validateApkVersion(apkPath, expectedVersion, opts = {}) {
   try {
     const { execFileSync } = require("child_process");
+    const execFileSyncImpl = opts.execFileSyncImpl || execFileSync;
 
     // Try using aapt or aapt2. Use execFileSync with argv arrays
     // (matching the pattern already used in download-supported-apk.js
@@ -1046,11 +1069,11 @@ function validateApkVersion(apkPath, expectedVersion) {
     const aaptCmd = "aapt";
     let output;
     try {
-      output = execFileSync(aaptCmd, ["dump", "badging", apkPath], { encoding: "utf8" });
+      output = execFileSyncImpl(aaptCmd, ["dump", "badging", apkPath], { encoding: "utf8" });
     } catch (_e) {
       // Try aapt2
       try {
-        output = execFileSync("aapt2", ["dump", "badging", apkPath], { encoding: "utf8" });
+        output = execFileSyncImpl("aapt2", ["dump", "badging", apkPath], { encoding: "utf8" });
       } catch (e2) {
         console.error(`[validate] No aapt available: ${e2.message}`);
         return { valid: false, actualVersion: "unknown", error: "aapt not available - cannot validate version" };
@@ -1104,7 +1127,7 @@ function findApkFile(outputDir) {
 /**
  * Download using apkeep (APKPure)
  */
-async function downloadWithApkeep(packageId, version, outputDir) {
+async function downloadWithApkeep(packageId, version, outputDir, opts = {}) {
   console.error(`[apkeep] Attempting download for ${packageId} v${version}`);
 
   // Ensure output directory exists
@@ -1137,7 +1160,8 @@ async function downloadWithApkeep(packageId, version, outputDir) {
   let apkPath = null;
   try {
     await runCommand("apkeep", ["-a", `${packageId}@${versionArg}`, "-d", "apk-pure", outputDir], {
-      timeout: TIMEOUTS.apkeepDownload
+      timeout: TIMEOUTS.apkeepDownload,
+      execFileImpl: opts.execFileImpl,
     });
 
     apkPath = findApkFile(outputDir);
@@ -1158,7 +1182,7 @@ async function downloadWithApkeep(packageId, version, outputDir) {
 
         if (!isSplitPackage) {
           // ALWAYS validate the downloaded APK matches requested version
-          const validation = validateApkVersion(apkPath, version);
+          const validation = validateApkVersion(apkPath, version, { execFileSyncImpl: opts.execFileSyncImpl });
           if (!validation.valid) {
             // Cleanup-on-failure: APKPure just served a partial / wrong-
             // version download. Delete it so the next source
@@ -1621,8 +1645,9 @@ async function resolveApkmirrorUrl(apkmirrorPath, version) {
  * 4. Download from URL
  * 5. Save to cache on success
  * 6. Fallback to sequential on all parallel fail
+ * @param {object} [opts] - Optional process dependency overrides for tests
  */
-async function download(packageId, version, outputDir) {
+async function download(packageId, version, outputDir, opts = {}) {
   // Ensure output directory exists
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
@@ -1635,7 +1660,7 @@ async function download(packageId, version, outputDir) {
     try {
       const isValid = await verifyUrl(cachedUrl.url);
       if (isValid) {
-        const result = await downloadWithUrl(cachedUrl.url, outputDir, packageId, version);
+        const result = await downloadWithUrl(cachedUrl.url, outputDir, packageId, version, opts);
         // Update cache with incremented download count
         saveCachedUrl(packageId, version, cachedUrl.url, cachedUrl.source);
         return result;
@@ -1652,7 +1677,7 @@ async function download(packageId, version, outputDir) {
     try {
       const isValid = await verifyUrl(existingUrl);
       if (isValid) {
-        const result = await downloadWithUrl(existingUrl, outputDir, packageId, version);
+        const result = await downloadWithUrl(existingUrl, outputDir, packageId, version, opts);
         // Save to our URL cache
         saveCachedUrl(packageId, version, existingUrl, 'patches.json');
         return result;
@@ -1665,8 +1690,8 @@ async function download(packageId, version, outputDir) {
   // Step 3: Try parallel resolution
   console.error(`[download] Starting parallel resolution for ${packageId} v${version}`);
   try {
-    const resolved = await parallelResolveSources(packageId, version);
-    const result = await downloadWithUrl(resolved.url, outputDir, packageId, version);
+    const resolved = await parallelResolveSources(packageId, version, opts);
+    const result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
     // Save to URL cache
     saveCachedUrl(packageId, version, resolved.url, resolved.source);
     return result;

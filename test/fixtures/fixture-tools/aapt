@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Synthetic aapt-compatible fixture command for downloader tests.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+AAPT_FIXTURE="${AAPT_FIXTURE:-${SCRIPT_DIR}/../apk-metadata/valid-badging.txt}"
+cat "$AAPT_FIXTURE"
