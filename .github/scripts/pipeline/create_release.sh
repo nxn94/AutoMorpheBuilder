@@ -140,11 +140,13 @@ for app_name in "${APPS[@]}"; do
   # doesn't match the actual binaries).
   if [ "${#apk_files[@]}" -gt 0 ]; then
     sha256_dir="$(dirname "${apk_files[0]}")"
-    sha256_file="$sha256_dir/SHA256SUMS"
-    log "Writing per-release SHA256SUMS to ${sha256_file}..."
+    log "Writing per-release SHA256SUMS to $sha256_dir/SHA256SUMS..."
     (
       cd "$sha256_dir"
-      sha256sum -- "${apk_files[@]#$sha256_dir/}" > "$sha256_file"
+      # Note: redirect target is relative to cwd (which is now $sha256_dir),
+      # so use the bare filename "SHA256SUMS" — not "$sha256_dir/SHA256SUMS"
+      # (which would resolve to $sha256_dir/$sha256_dir/SHA256SUMS and fail).
+      sha256sum -- "${apk_files[@]#$sha256_dir/}" > SHA256SUMS
     )
     # Self-test: re-hash and compare. Any mismatch means a file in the
     # manifest no longer matches the bytes on disk — surface as an
