@@ -43,7 +43,24 @@ fi
 # GH runners the runner user can already write /usr/local/bin).
 TMP_INSTALL="$(mktemp)"
 log "Downloading apkeep ${APKEEP_VERSION}..."
-with_retry 3 5 curl -fsSL -o "$TMP_INSTALL" "$APKEEP_URL"
+# Hardened curl: --fail exits non-zero on 4xx/5xx so a 404 aborts
+# immediately (no point retrying a missing artifact); --retry-all-errors
+# also covers connection-level failures; --max-time / --connect-timeout
+# prevent a hung TCP handshake from blocking the whole pipeline. The
+# outer with_retry is layered on top of curl's --retry for one more
+# backoff cycle.
+with_retry 3 5 curl \
+  --fail \
+  --location \
+  --show-error \
+  --silent \
+  --connect-timeout 15 \
+  --max-time 300 \
+  --retry 3 \
+  --retry-delay 5 \
+  --retry-all-errors \
+  --output "$TMP_INSTALL" \
+  "$APKEEP_URL"
 chmod +x "$TMP_INSTALL"
 
 # Verify the download matches the pinned hash before installing.

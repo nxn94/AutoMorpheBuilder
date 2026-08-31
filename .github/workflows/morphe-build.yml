@@ -5,8 +5,15 @@ on:
   schedule:
     - cron: "15 5 * * *" # daily at 05:15 UTC
 
-# Permissions are scoped per-job below. Only create-release actually
-# pushes back to the repo; check-versions and build only read.
+# Belt-and-braces guard: the `on:` block above does not include
+# `pull_request`, but if someone adds it later the explicit `if` makes
+# the intent (no PR runs) self-documenting and self-enforcing.
+if: github.event_name != 'pull_request'
+
+# Workflow-level default. Per-job `permissions:` blocks below override
+# this where a job needs more (e.g. create-release needs `contents: write`).
+permissions:
+  contents: read
 
 # Allow only one in-flight build for this workflow. Concurrent runs would
 # race on patches.json / config.json updates; this lets the runner cancel
@@ -18,6 +25,7 @@ concurrency:
 jobs:
   check-versions:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -37,7 +45,9 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         # PR 3: scripts/validate-config.js is ajv-based (devDep), so we
@@ -81,7 +91,7 @@ jobs:
         # Java 21 separately. Runs unconditionally so the filter step
         # can compare against existing releases before any of the
         # expensive Playwright / apkeep / APK pre-download steps fire.
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6
         with:
           distribution: temurin
           java-version: "21"
@@ -114,7 +124,7 @@ jobs:
 
       - name: Cache patches .mpp
         # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: |
             tools/*.mpp
@@ -148,7 +158,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
         with:
           node-version: '24'
 
@@ -161,7 +171,7 @@ jobs:
         # lockfile content is identical for every matrix entry so this
         # is a safe shortcut.
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: node-modules
           path: node_modules
@@ -170,7 +180,7 @@ jobs:
 
       - name: Cache Playwright browsers
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-chromium-${{ hashFiles('package.json', 'package-lock.json') }}
@@ -185,7 +195,7 @@ jobs:
 
       - name: Upload Playwright browsers for build jobs
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: playwright-browsers
           path: ~/.cache/ms-playwright
@@ -194,7 +204,7 @@ jobs:
       - name: Cache apkeep
         id: cache-apkeep
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: /usr/local/bin/apkeep
           key: apkeep-${{ runner.os }}-v1
@@ -205,7 +215,7 @@ jobs:
 
       - name: Upload apkeep for build jobs
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: apkeep-binary
           path: /usr/local/bin/apkeep
@@ -230,7 +240,7 @@ jobs:
 
       - name: Upload pre-downloaded APKs
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: pre-downloaded-apks
           path: |
@@ -245,6 +255,7 @@ jobs:
     needs: check-versions
     if: needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
 
@@ -268,10 +279,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Java (for morphe-desktop)
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6
         with:
           distribution: temurin
           java-version: "21"
@@ -293,20 +306,20 @@ jobs:
 
       - name: Cache BouncyCastle
         id: cache-bc
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: /usr/share/java/bcprov.jar
           key: bouncycastle-bcprov-1.77
 
       - name: Restore apkeep + Playwright from check-versions
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: apkeep-binary
           path: /usr/local/bin
         continue-on-error: true
 
       - name: Restore pre-downloaded APKs from check-versions
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: pre-downloaded-apks
           # The artifact zip has a `tools/apks/` path prefix (uploaded as
@@ -320,7 +333,7 @@ jobs:
         continue-on-error: true
 
       - name: Restore Playwright browsers from check-versions
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: playwright-browsers
           path: ~/.cache/ms-playwright
@@ -330,12 +343,12 @@ jobs:
         run: mkdir -p "$TOOLS_DIR" "$APKS_DIR" "$OUT_DIR"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
         with:
           node-version: '24'
 
       - name: Restore node_modules from check-versions
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: node-modules
           path: node_modules
@@ -365,7 +378,7 @@ jobs:
           apkeep --version
 
       - name: Cache patches .mpp
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: ${{ env.TOOLS_DIR }}/${{ matrix.patchSlug }}.mpp
           key: morphe-patches-${{ matrix.patchSlug }}-${{ matrix.patchTag }}
@@ -431,7 +444,7 @@ jobs:
 
       - name: Cache APK for ${{ matrix.appId }}
         id: cache-apk
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: ${{ env.APKS_DIR }}
           key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}
@@ -491,7 +504,7 @@ jobs:
         run: bash .github/scripts/pipeline/patch_apk.sh
 
       - name: Upload patched ${{ matrix.name }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
           path: out/${{ steps.patch.outputs.output }}
@@ -500,14 +513,17 @@ jobs:
     needs: [check-versions, build]
     if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Download all patched APKs
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: "*-v*"
           path: apks

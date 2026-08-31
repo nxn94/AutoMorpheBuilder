@@ -84,7 +84,23 @@ while IFS='|' read -r repo branch; do
     continue
   fi
   url="https://raw.githubusercontent.com/${repo}/${tag}/patches-list.json"
-  if ! curl -fsSL "$url" -o "$WORK_DIR/lists/${slug}.json"; then
+  # Hardened curl: --fail exits non-zero on 4xx/5xx; --max-time /
+  # --connect-timeout cap handshake stalls; --retry-all-errors covers
+  # connection-level failures. No outer with_retry here — sync-patches
+  # is best-effort per repo (warns + continues on failure) so a
+  # transient network blip on one upstream shouldn't block the others.
+  if ! curl \
+       --fail \
+       --location \
+       --show-error \
+       --silent \
+       --connect-timeout 15 \
+       --max-time 300 \
+       --retry 3 \
+       --retry-delay 5 \
+       --retry-all-errors \
+       --output "$WORK_DIR/lists/${slug}.json" \
+       "$url"; then
     echo "::warning::Failed to fetch patches-list.json for ${repo}; skipping."
   fi
 done <<< "$REPO_PAIRS"

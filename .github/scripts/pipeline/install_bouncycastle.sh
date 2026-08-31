@@ -41,8 +41,35 @@ TARGET="$TMP_DIR/bcprov.jar"
 SHA_FILE="$TMP_DIR/bcprov.jar.sha256"
 
 log "Downloading BouncyCastle ${BCOPS_VERSION} from Maven Central..."
-with_retry 3 5 curl -fsSL -o "$TARGET" "$BCOPS_URL"
-with_retry 3 5 curl -fsSL -o "$SHA_FILE" "$BCOPS_SHA256_URL"
+# Hardened curl: --fail exits non-zero on 4xx/5xx; --max-time /
+# --connect-timeout prevent a hung TCP handshake from blocking the
+# pipeline; --retry-all-errors covers connection-level failures.
+# Outer with_retry layers one more exponential-backoff cycle on top
+# of curl's --retry.
+with_retry 3 5 curl \
+  --fail \
+  --location \
+  --show-error \
+  --silent \
+  --connect-timeout 15 \
+  --max-time 300 \
+  --retry 3 \
+  --retry-delay 5 \
+  --retry-all-errors \
+  --output "$TARGET" \
+  "$BCOPS_URL"
+with_retry 3 5 curl \
+  --fail \
+  --location \
+  --show-error \
+  --silent \
+  --connect-timeout 15 \
+  --max-time 300 \
+  --retry 3 \
+  --retry-delay 5 \
+  --retry-all-errors \
+  --output "$SHA_FILE" \
+  "$BCOPS_SHA256_URL"
 
 # The Maven .sha256 file is the bare hash on a single line. Read it,
 # compare against the downloaded jar, refuse to install on mismatch.
