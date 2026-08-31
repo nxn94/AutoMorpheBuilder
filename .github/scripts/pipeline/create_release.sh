@@ -151,7 +151,7 @@ for app_name in "${APPS[@]}"; do
     # Self-test: re-hash and compare. Any mismatch means a file in the
     # manifest no longer matches the bytes on disk — surface as an
     # ::error:: rather than shipping a broken manifest.
-    if ! ( cd "$sha256_dir" && sha256sum --check "$sha256_file" ); then
+    if ! ( cd "$sha256_dir" && sha256sum --check SHA256SUMS ); then
       log_error "SHA256SUMS self-test failed for $TAG"
       exit 1
     fi
@@ -161,7 +161,7 @@ for app_name in "${APPS[@]}"; do
     else
       uploaded=false
       for try in 1 2 3 4 5; do
-        if gh release upload "$TAG" "$sha256_file" --clobber; then
+        if gh release upload "$TAG" "$sha256_dir/SHA256SUMS" --clobber; then
           uploaded=true
           break
         fi
