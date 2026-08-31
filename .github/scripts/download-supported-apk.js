@@ -465,9 +465,13 @@ for (const f of fs.readdirSync(APKS_DIR)) {
   const lower = f.toLowerCase();
   if (!/\.(apk|xapk|apkm|apks)$/.test(lower)) continue;
   try {
-    if (/\.(xapk|apkm|apks)$/.test(lower)) {
+    if (isSplitPackageFile(full)) {
       // Split package (bundle). Outer zip-of-zips has no top-level
       // classes.dex; the inner APKs are validated after merge.
+      // The unified-downloader hardcodes the saved filename to
+      // `${packageId}_${version}.apk` regardless of source shape,
+      // so extension matching alone misses bundles served as `.apk`.
+      // isSplitPackageFile() checks both extension AND zip contents.
       validateArchiveSafe(full);
     } else {
       validateApkBoundary(full);
