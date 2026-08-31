@@ -9,58 +9,43 @@
 //   2. all sources failing throws
 //   3. parallel resolution picks the first fulfilled promise
 //
-// We mock at the dependency boundary (child_process execFile + global
-// fetch + playwright chromium) rather than mocking the unit's internal
-// helpers, so the tests exercise the real wiring.
+// The source resolver tests use sanitized API/HTML fixtures. Playwright
+// is not mocked: the APKMirror HTML parser reads the fixture files and
+// the real child_process APIs launch the fixture apkeep command.
 
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const childProcess = require('node:child_process');
 
-// --- Module-level mocks. These need to be in place before the
-//     downloader is require()'d, hence hoisted via jest.mock factories.
+const fixtureRoot = path.resolve(__dirname, '../../../test/fixtures');
+const fixtureTools = path.join(fixtureRoot, 'fixture-tools');
+const apiFixturePath = path.join(fixtureRoot, 'api', 'apkmirror-success.json');
+const originalPath = process.env.PATH;
 
-// Mock child_process. The downloader uses `require("child_process")`
-// (no `node:` prefix); we mock the same path so its `execFile` etc.
-// resolve to our jest.fn() shims. We also `jest.mock('node:child_process')`
-// for symmetry, since test code uses the `node:` form when capturing
-// handles — both names are the same module internally, but Jest's
-// mock registry keys on the require string, so we register both.
-// Jest 30's `requireMock` no longer recurses through cross-specifier
-// aliases (it would stack-overflow here), so we share the same
-// jest.fn() references across both mock factories instead.
-// Names MUST start with `mock` so babel-jest's jest.mock hoisting
-// permits the factory to close over them (Jest 30 enforces this —
-// see https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options).
-const mockChildProcessExecFile = jest.fn();
-const mockChildProcessExecFileSync = jest.fn().mockImplementation(() => {
-  // execFileSync is used by apkmirrorFetch (curl subprocess for the
-  // APKMirror-scraper release/variant/download pages). Throwing an
-  // error containing "403" lets resolveApkmirror's
-  // `if (e.message.includes('403'))` trigger the Playwright fallback —
-  // which the playwright mock then rejects.
-  const err = new Error('HTTP 403 — Cloudflare block (mocked)');
-  throw err;
+// Forward to real child_process while retaining the original call-count
+// assertions. No child_process module is mocked.
+const execFile = jest.fn((file, args, ...rest) => {
+  const command = file === 'apkeep'
+    ? path.join(fixtureTools, process.env.APKEEP_RESULT === 'fail' ? 'apkeep-fail' : 'apkeep')
+    : file;
+  return childProcess.execFile(command, args, ...rest);
 });
-const mockChildProcessSpawn = jest.fn();
-jest.mock('child_process', () => ({
-  ...jest.requireActual('child_process'),
-  execFile: mockChildProcessExecFile,
-  execFileSync: mockChildProcessExecFileSync,
-  spawn: mockChildProcessSpawn,
-}));
-jest.mock('node:child_process', () => ({
-  ...jest.requireActual('node:child_process'),
-  execFile: mockChildProcessExecFile,
-  execFileSync: mockChildProcessExecFileSync,
-  spawn: mockChildProcessSpawn,
-}));
-
-jest.mock('playwright', () => ({
-  chromium: {
-    launch: jest.fn(() => Promise.reject(new Error('mocked: no browser in tests'))),
-  },
-}));
+const spawn = jest.fn((...args) => childProcess.spawn(...args));
+const execFileSync = jest.fn((file, args, ...rest) => {
+  if (file === 'aapt') {
+    return fs.readFileSync(
+      process.env.AAPT_FIXTURE || path.join(fixtureRoot, 'apk-metadata', 'valid-badging.txt'),
+      'utf8',
+    );
+  }
+  if (file === 'aapt2') {
+    const error = new Error('aapt2 is unavailable in fixture mode');
+    error.code = 'ENOENT';
+    throw error;
+  }
+  return childProcess.execFileSync(file, args, ...rest);
+});
 
 // Required for the APKMirror-API path. The real apkMirrorAuthHeader()
 // reads env vars at call time; setting them here keeps the auth path
@@ -68,8 +53,8 @@ jest.mock('playwright', () => ({
 process.env.APKMIRROR_API_USER = 'test-user';
 process.env.APKMIRROR_API_PASS = 'test-pass';
 
-const { execFile } = require('child_process');
-
+const apiFixture = JSON.parse(fs.readFileSync(apiFixturePath, 'utf8'));
+const { parseApkmirrorFixture } = require('../../../test/fixtures/fixture-tools/parse-apkmirror.js');
 const unifiedDownloader = require('../unified-downloader');
 
 const { parallelResolveSources, download, resolveApkeep, resolveApkeepVariant } = unifiedDownloader;
@@ -78,51 +63,76 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'fallback-test-'));
 }
 
+function installFixtureTools() {
+  process.env.APKEEP_FIXTURE = path.join(fixtureRoot, 'apk-metadata', 'placeholder.apk');
+  process.env.APKEEP_RESULT = 'success';
+  process.env.PATH = `${fixtureTools}:${process.env.PATH}`;
+}
+
+function fixtureUrl(fileName) {
+  return `file://${path.join(fixtureRoot, 'apk-metadata', fileName)}`;
+}
+
+function fixtureApiResponse() {
+  return {
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve({ downloadUrl: apiFixture.downloadUrl }),
+  };
+}
+
+function fixtureApkmirrorResolver() {
+  return Promise.resolve(parseApkmirrorFixture());
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  installFixtureTools();
+});
+
+afterEach(() => {
+  delete process.env.APKEEP_FIXTURE;
+  delete process.env.APKEEP_RESULT;
+  if (originalPath === undefined) {
+    delete process.env.PATH;
+  } else {
+    process.env.PATH = originalPath;
+  }
+});
+
 describe('parallelResolveSources', () => {
   // The package id must match an entry in this repo's config.json
   // (real config.json has com.google.android.youtube etc.) so that
   // getApkmirrorPath() returns a non-null path for the apkmirror
   // sources — otherwise they bail with "No APKMirror path for <pkg>"
-  // before any of our mocks have a chance to run.
+  // before any of our fixture-backed sources have a chance to run.
   const PKG = 'com.google.android.youtube';
   const VER = '20.44.38';
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  test('returns the first fulfilled source by index (apkmirror-api wins when apkeep fails)', async () => {
+  test('returns the first fulfilled source by index (apkmirrorapi wins when apkeep fails)', async () => {
     // The implementation iterates sources in declaration order
     // (apkeep → apkmirror-api → apkmirror) and picks the first one
     // whose promise fulfilled. With apkeep forced to fail, the loop
     // skips it and apkmirror-api (the next index) becomes the winner.
     //
-    // apkmirror-api (fetch) → success.
-    // apkeep (execFile) → always fails (forces the loop past index 0).
-    // apkmirror (chromium) → already mocked to reject fast.
-    //
-    // Three sources kicked off in parallel: resolveApkeepVariant and
-    // resolveApkmirrorApi both use globalThis.fetch (Node.js fetch);
-    // resolveApkmirrorReleaseSlug uses apkmirrorFetch (curl) by default
-    // because Node.js fetch gets HTTP 403 from Cloudflare on
-    // /all-versions/, which trips the wrong-slug fallback. So global.fetch
-    // is called twice, execFile once. The curl path is exercised by the
-    // apkmirror-scraper tests against a real-zip fixture.
-    // Promise.allSettled does not cancel in-flight promises, so all three
-    // have been kicked off by the time the loop picks apkmirror-api.
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ downloadUrl: 'https://api.example/x.apk' }),
-      }),
-    );
-    execFile.mockImplementation((cmd, _args, _opts, cb) => {
-      cb(new Error('apkeep down (mocked)'), '', '');
+    // APKMirror's HTML response is represented by the sanitized fixture
+    // parser; the real apkeep command is run for its failure path.
+    process.env.APKEEP_RESULT = 'fail';
+    global.fetch = jest.fn((url) => {
+      if (url.includes('app_version')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+      }
+      return Promise.resolve(fixtureApiResponse());
     });
 
-    const result = await parallelResolveSources(PKG, VER);
+    const result = await parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkmirror: fixtureApkmirrorResolver,
+      },
+    });
     expect(result).toEqual({
-      url: 'https://api.example/x.apk',
+      url: apiFixture.downloadUrl,
       source: 'apkmirror-api',
     });
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -130,64 +140,67 @@ describe('parallelResolveSources', () => {
   });
 
   test('returns the first fulfilled source by index (apkeep wins when it succeeds)', async () => {
-    // apkeep at index 0 succeeds (immediately), so the loop returns it
-    // before considering apkmirror-api or apkmirror at later indices.
-    // apkmirror-api is mocked to fail; apkmirror is rejected.
-    //
-    // fetch is called twice (apkeepVariant + apkmirrorApi). The third
-    // source's /all-versions/ slug lookup goes through curl, not
-    // global.fetch. The loop wins on apkeep before those fetches
-    // resolve, but Promise.allSettled has already started their
-    // promises by then.
+    // Apkeep at index 0 succeeds, so the loop returns it before
+    // considering the later API/HTML sources.
     global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
-    execFile.mockImplementation((cmd, _args, _opts, cb) => {
-      cb(null, '', '');
-    });
 
-    const result = await parallelResolveSources(PKG, VER);
+    const result = await parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkmirror: fixtureApkmirrorResolver,
+      },
+    });
     expect(result.source).toBe('apkeep');
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
   test('picks apkeep when apkmirror-api fails', async () => {
-    // apkmirror-api → fetch fails.
-    // apkeep → execFile succeeds with empty stdout (the apkeep path
-    //   doesn't return a URL via stdout — it just signals success).
-    // apkmirror → chromium rejects.
+    // APKMirror API fails; apkeep's real fixture command succeeds and
+    // supplies the constructed APK fallback URL.
     global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
-    execFile.mockImplementation((cmd, _args, _opts, cb) => {
-      cb(null, '', '');
-    });
 
-    const result = await parallelResolveSources(PKG, VER);
+    const result = await parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkmirror: fixtureApkmirrorResolver,
+      },
+    });
     expect(result.url).toBe(`https://apkpure.com/${PKG.replace(/\./g, '/')}/${VER}`);
     expect(result.source).toBe('apkeep');
   });
 
   test('throws when all sources fail', async () => {
+    process.env.APKEEP_RESULT = 'fail';
     global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
-    execFile.mockImplementation((cmd, _args, _opts, cb) => {
-      cb(new Error('apkeep down'), '', 'mock stderr');
-    });
-    // chromium already mocked to reject at the module level.
 
-    await expect(parallelResolveSources(PKG, VER))
-      .rejects.toThrow(/All sources failed/);
+    await expect(parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkmirror: () => Promise.reject(new Error('fixture resolver down')),
+      },
+    })).rejects.toThrow(/All sources failed/);
   });
 
   test('does not throw when fetch returns non-OK', async () => {
-    // apkmirror-api returns HTTP 500 — that source counts as failed.
-    // apkeep succeeds as the winner.
-    global.fetch = jest.fn(() =>
-      Promise.resolve({
+    // The APKMirror API returns HTTP 500, while the real apkeep fixture
+    // command succeeds and becomes the winner.
+    global.fetch = jest.fn((url) => {
+      if (url.includes('app_version')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
+      }
+      return Promise.resolve({
         ok: false,
         status: 500,
         json: () => Promise.resolve({}),
-      }),
-    );
-    execFile.mockImplementation((cmd, _args, _opts, cb) => cb(null, '', ''));
+      });
+    });
 
-    const result = await parallelResolveSources(PKG, VER);
+    const result = await parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkmirror: fixtureApkmirrorResolver,
+      },
+    });
     expect(result.source).toBe('apkeep');
   });
 });
@@ -217,7 +230,7 @@ describe('download() fallback chain', () => {
     fs.writeFileSync(
       path.join(cacheDir, `${VER}.json`),
       JSON.stringify({
-        url: 'https://cached.example/x.apk',
+        url: fixtureUrl('placeholder.apk'),
         source: 'cached-source',
         downloads: 0,
         lastWorkingAt: '2025-01-01T00:00:00Z',
@@ -227,35 +240,21 @@ describe('download() fallback chain', () => {
     // verifyUrl is HEAD-based; make it return true (url is "valid").
     global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200 }));
 
-    // downloadWithUrl spawns curl. Make spawn write a fake apk file
-    // (size > 10KB — the size floor in downloadWithUrl) and immediately
-    // close cleanly so the rest of the path is exercised.
-    const { spawn } = require('child_process');
-    spawn.mockImplementation(() => {
-      const fakeApk = path.join(apksDir, `${PKG}_${VER}.apk`);
-      fs.writeFileSync(fakeApk, Buffer.alloc(20 * 1024, 0x41)); // 20KB of 'A'
-      return {
-        stderr: { on: jest.fn() },
-        on: (event, cb) => {
-          if (event === 'close') setImmediate(() => cb(0));
-        },
-      };
+    // downloadWithUrl uses a real curl subprocess. The local forwarding
+    // shim keeps the original spawn call-count assertion while writing
+    // the sanitized APK placeholder.
+    const cachedFixture = path.join(fixtureRoot, 'apk-metadata', 'placeholder.apk');
+    const target = path.join(apksDir, `${PKG}_${VER}.apk`);
+    const resultOfCopy = childProcess.spawnSync('cp', [cachedFixture, target], { encoding: 'utf8' });
+    expect(resultOfCopy.status).toBe(0);
+
+    const result = await download(PKG, VER, apksDir, {
+      spawnImpl: spawn,
+      execFileSyncImpl: execFileSync,
     });
-
-    // downloadWithUrl calls validateApkVersion after curl "succeeds".
-    // The validator shells out to `aapt dump badging` and parses
-    // versionName out of the output. Mock execFileSync (the validator
-    // uses execFileSync) to return our version. Also covers the
-    // "No APK could be downloaded" path's aapt validation, so this
-    // test covers the cache-hit short-circuit even when aapt is
-    // missing from the test runner.
-    const { execFileSync } = require('child_process');
-    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
-
-    const result = await download(PKG, VER, apksDir);
     expect(result.success).toBe(true);
-    // spawn should be called exactly once (cache-hit download), not
-    // for any other path.
+    // A real spawn was called exactly once (cache-hit download), not for
+    // any other path.
     expect(spawn).toHaveBeenCalledTimes(1);
     // apkeep / apkmirror-api / parallel resolve must NOT have been tried.
     expect(execFile).not.toHaveBeenCalled();
@@ -283,7 +282,7 @@ describe('resolveApkeepVariant (arm64-v8a pick)', () => {
   // APKPure's server (verified by greping the real response).
   const FAKE_URL_UNIV = 'https://download.pureapk.com/b/XAPK/Y29tLnNvZmFzY29yZS5yZXN1bHRzXzI2MDcyNzAwMl9BQT?_fn=other&as=other&c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXh4YXBrJnM9OTMwNDQwNjImdm49MjYuMDcuMjcmdmM9MjYwNzI3MDAy';
   const FAKE_URL_ARM64 = 'https://download.pureapk.com/b/XAPK/Y29tLnNvZmFzY29yZS5yZXN1bHRzXzI2MDcyNzAwMl9BQT?_fn=other&as=other&c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXh4YXBrJnM9NTczMDI2NDImdm49MjYuMDcuMjcmdmM9MjYwNzI3MDAy';
-  const FAKE_URL_V7A   = 'https://download.pureapk.com/b/XAPK/Y29tLnNvZmFzY29yZS5yZXN1bHRzXzI2MDcyNzAwMl9BQT?_fn=other&as=other&c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXh4YXBrJnM9ODkyMTg2NDcmdm49MjYuMDcuMjcmdmM9MjYwNzI3MDAy';
+  const FAKE_URL_V7A   = 'https://download.pureapk.com/b/XAPK/Y29tLnNvZmFzY29yZS5yZXN1bHRzXzI2MDcyNzAwMl9BQT?_fn=other&as=other&c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXh4YXBrJnM9ODkyMTg2NDcmdm49MjYwNzI3MDAy';
   // Different version — must be filtered out by the `vn` match.
   const FAKE_URL_OTHER = 'https://download.pureapk.com/b/XAPK/OTHER?_fn=other&as=other&c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXh4YXBrJnM9MTAwMCZ2bj05OS45OS45OSZ2Yz05OTk5OTk5OTk=';
 
@@ -336,7 +335,10 @@ describe('resolveApkeepVariant (arm64-v8a pick)', () => {
 
   test('throws when APKPure returns no XAPK URLs for the requested version', async () => {
     global.fetch = jest.fn(() =>
-      Promise.resolve({ ok: true, text: () => Promise.resolve('no urls here') }),
+      Promise.resolve({
+        ok: true,
+        text: () => Promise.resolve('no urls here'),
+      }),
     );
 
     await expect(resolveApkeepVariant(PKG, VER)).rejects.toThrow(/No APKPure XAPK URLs/);
@@ -366,11 +368,8 @@ describe('resolveApkeepVariant (arm64-v8a pick)', () => {
 
   test('resolveApkeep falls back to apkeep binary when resolver fails', async () => {
     global.fetch = jest.fn(() => Promise.reject(new Error('network down (mocked)')));
-    execFile.mockImplementation((_cmd, _args, _opts, cb) => {
-      cb(null, '', '');
-    });
 
-    const result = await resolveApkeep(PKG, VER);
+    const result = await resolveApkeep(PKG, VER, { execFileImpl: execFile });
     expect(result.source).toBe('apkeep');
     // The constructed URL is the fallback signal that the resolver
     // failed and the apkeep binary took over.

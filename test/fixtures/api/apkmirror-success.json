@@ -1,0 +1,6 @@
+{
+  "source": "https://www.apkmirror.com/wp-json/apkm/v1/google-inc/youtube/20.44.38",
+  "captured": "2026-08-31",
+  "exercise": "Return one sanitized download URL for the APKMirror API source.",
+  "downloadUrl": "https://api.example/x.apk"
+}
