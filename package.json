@@ -12,6 +12,28 @@
     "validate:agent-docs": "node scripts/check-agents-doc.js",
     "check": "npm run lint && npm test && npm run validate:config && npm run validate:agent-docs"
   },
+  "jest": {
+    "coverageThreshold": {
+      "./src/errors/": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "./src/apk/candidate.js": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "./src/archive/": {
+        "branches": 85,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
+  },
   "dependencies": {
     "cheerio": "^1.0.0",
     "playwright": "1.58.2"
