@@ -1,0 +1,105 @@
+name: Download resolver failure
+description: Report a failure in the APK download fallback chain (apkeep / APKMirror-API / Playwright / direct URL).
+title: "[download-resolver] "
+labels: ["bug", "downloader", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This template is for downloader-specific failures. If the build fails **after** the APK is downloaded (signing, patching, post-merge), use `bug-report.yml` instead.
+        Before filing: strip secrets (`KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `KEYSTORE_BASE64`, `KEY_ALIAS`, GitHub tokens) from any log content.
+
+  - type: input
+    id: package_name
+    attributes:
+      label: Package name (applicationId)
+      placeholder: com.example.app
+
+  - type: input
+    id: target_version
+    attributes:
+      label: Target APK version
+      description: The versionName the build was attempting to download.
+      placeholder: 1.2.3
+
+  - type: dropdown
+    id: selected_source
+    attributes:
+      label: Source that the downloader ended up using
+      description: >
+        From the downloader's log line of the form
+        `[<pkg>] selected source: <source>`.
+        If no source was selected (download failed entirely), pick "none".
+      options:
+        - cached tools/*.apk
+        - URL cache (~/.cache/auto-morphe-builder/urls/)
+        - config.json download_urls
+        - apkeep (APKPure)
+        - APKMirror-API
+        - APKMirror scraper (curl)
+        - APKMirror scraper (Chromium fallback)
+        - none (download failed)
+
+  - type: textarea
+    id: attempted_sources
+    attributes:
+      label: Attempted sources and per-source errors
+      description: For each source attempted, the error message or HTTP status. If the log has this, paste it verbatim (with secrets redacted).
+
+  - type: dropdown
+    id: arch
+    attributes:
+      label: preferred_arch
+    options:
+      - arm64-v8a
+      - armeabi-v7a
+      - x86
+      - x86_64
+      - universal
+
+  - type: input
+    id: dpi
+    attributes:
+      label: DPI variant (APKMirror only)
+      description: The DPI bucket the downloader resolved (e.g. `nodpi`, `120-640dpi`, `480-640dpi`). Leave blank if not from APKMirror.
+
+  - type: dropdown
+    id: artifact_format
+    attributes:
+      label: Artifact format
+    options:
+      - Monolithic APK
+      - XAPK bundle
+      - APKM bundle
+      - APKS bundle
+      - Unknown
+
+  - type: input
+    id: error_code
+    attributes:
+      label: Stable error code / line
+      description: The exact error string from the log (e.g. `No APK could be downloaded`, `Could not resolve a Morphe-supported version`, `chosen APK has no classes.dex`, HTTP 403, HTTP 429).
+      placeholder: No APK could be downloaded
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Sanitized log excerpt
+      description: Paste the downloader log lines. **Strip secrets first.** Prefer the `--- unified-downloader log ---` block if the workflow emitted one.
+
+  - type: dropdown
+    id: pin_version
+    attributes:
+      label: Is `pin_version` set in config.json for this app?
+    options:
+      - "No"
+      - "Yes"
+
+  - type: dropdown
+    id: download_urls_cache
+    attributes:
+      label: Is a `download_urls` cache entry in use for this app/version?
+    options:
+      - "No"
+      - "Yes"

@@ -1,0 +1,63 @@
+name: App request
+description: Request support for a new app in AutoMorpheBuilder.
+title: "[app-request] "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adding a new app is a **config-only** change — no workflow edits needed. Once these fields are filled in, the maintainer adds an entry to `config.json` `patch_repos` and (optionally) runs `update-patches.yml` to populate `patches.json`.
+
+  - type: input
+    id: app_name
+    attributes:
+      label: App name
+      description: Display name (will become the release tag prefix and Obtainium filter).
+      placeholder: ExampleApp
+
+  - type: input
+    id: package_id
+    attributes:
+      label: Android package id (applicationId)
+      description: The exact `applicationId` as it appears on APKMirror and in the patch repo's `compatiblePackages`.
+      placeholder: com.example.app
+
+  - type: input
+    id: patch_repo
+    attributes:
+      label: Patch repository
+      description: GitHub `owner/repo` slug of the Morphe-compatible patches repository. Must publish `.mpp` artifacts on its releases.
+      placeholder: owner/morphe-patches
+
+  - type: input
+    id: patch_branch
+    attributes:
+      label: Patch repository branch
+      description: Branch to resolve the latest patches release tag from. Almost always `main`.
+      placeholder: main
+    default: main
+
+  - type: input
+    id: apkmirror_path
+    attributes:
+      label: APKMirror URL slug
+      description: Path segment after `https://www.apkmirror.com/apk/`. Open the app's APKMirror page and copy the slug from the URL.
+      placeholder: vendor/example-app
+
+  - type: textarea
+    id: apk_source_info
+    attributes:
+      label: APK source notes
+      description: Any quirks the maintainer should know about — split packages (XAPK/APKM/APKS), required architecture, version pinning needs, anti-tamper measures that block `aapt dump badging`, etc.
+
+  - type: checkboxes
+    id: legal
+    attributes:
+      label: Legal checklist
+      description: Confirm the following before submitting.
+      options:
+        - label: I have **not** uploaded any copyrighted APK file or binary to this issue. The patch repo must download its own APK from a public source (APKMirror / APKPure / official app store).
+          required: true
+        - label: I understand the maintainer may decline the request if the patches repo does not publish a compatible `.mpp` artifact or if the app's licensing prohibits redistribution.
+          required: true
