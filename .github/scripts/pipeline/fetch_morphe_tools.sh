@@ -67,9 +67,22 @@ json_set_output patches_tag "$PATCH_TAG"
 
 # --- patches-list.json (always fresh) -----------------------------------
 
-with_retry 3 5 curl -fsSL \
-  "https://raw.githubusercontent.com/${PATCH_REPO}/${PATCH_TAG}/patches-list.json" \
-  -o "$TOOLS_DIR/patches-list.json"
+# Hardened curl: --fail exits non-zero on 4xx/5xx; --max-time /
+# --connect-timeout cap handshake stalls; --retry-all-errors covers
+# connection-level failures. Outer with_retry layers one more
+# exponential-backoff cycle on top of curl's --retry.
+with_retry 3 5 curl \
+  --fail \
+  --location \
+  --show-error \
+  --silent \
+  --connect-timeout 15 \
+  --max-time 300 \
+  --retry 3 \
+  --retry-delay 5 \
+  --retry-all-errors \
+  --output "$TOOLS_DIR/patches-list.json" \
+  "https://raw.githubusercontent.com/${PATCH_REPO}/${PATCH_TAG}/patches-list.json"
 
 # --- morphe-desktop.jar --------------------------------------------------
 
