@@ -44,7 +44,10 @@ jobs:
         # Catches typos and missing required keys in patch_repos entries
         # BEFORE merge. Layer A of the "adding a new app must just work"
         # robustness fix — see AGENTS.md / PR #32.
-        run: node .github/scripts/validate-config.js
+        # PR 3: routes through npm so the ajv-based structural layer
+        # (schemas/*.schema.json) runs alongside the hand-rolled
+        # semantic rules from .github/scripts/validate-config.js.
+        run: npm run validate:config
 
       - name: Test
         run: npm test

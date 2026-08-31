@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nxn94/AutoMorpheBuilder/schemas/patches.schema.json",
+  "title": "AutoMorpheBuilder patches.json",
+  "description": "Structural schema for the patch toggle map. Top level is keyed by repo (owner/repo). Each repo-level value is keyed by Android package id with a propertyNames regex constraint, and each package-level value is an object of {patch-name: boolean} toggles. See update-patches.yml for how this file is regenerated.",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "description": "A patch repo, keyed by Android package id.",
+    "propertyNames": {
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "description": "Android package id (matches the keys under config.json patch_repos)."
+    },
+    "additionalProperties": {
+      "type": "object",
+      "description": "A package's patch toggles.",
+      "additionalProperties": {
+        "type": "boolean",
+        "description": "true = patch enabled, false = disabled."
+      }
+    }
+  }
+}
