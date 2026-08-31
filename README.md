@@ -1,8 +1,19 @@
 # AutoMorpheBuilder
 
+[![CI](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/ci.yml?branch=dev&label=CI)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/ci.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/codeql.yml?branch=dev&label=CodeQL)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/codeql.yml)
+[![Build](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/morphe-build.yml?branch=dev&label=Build)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/morphe-build.yml)
+[![License: GPL-3.0](https://img.shields.io/github/license/nxn94/AutoMorpheBuilder?color=blue)](https://github.com/nxn94/AutoMorpheBuilder/blob/dev/LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/nxn94/AutoMorpheBuilder?include_prereleases&sort=semver)](https://github.com/nxn94/AutoMorpheBuilder/releases)
+
 GitHub Actions pipeline that builds patched Android APKs with [Morphe patches](https://github.com/MorpheApp/morphe-patches), [morphe-desktop](https://github.com/MorpheApp/morphe-desktop), and [APKEditor](https://github.com/REAndroid/APKEditor). Outputs are signed, per-app versioned, and ready for Obtainium.
 
 Forking for personal use is encouraged. To add or remove an app, edit `config.json` `patch_repos` — no workflow changes needed.
+
+> [!IMPORTANT]
+> **Legal and security notice.** This project downloads and modifies third-party Android applications (via APKMirror, APKPure, and upstream patch repositories). You are responsible for ensuring that your use of the resulting patched APKs complies with each app's license, terms of service, and the laws of your jurisdiction. The maintainers do not host, mirror, or redistribute any copyrighted APK — every APK is fetched at build time from the upstream source you configure.
+>
+> The build signs patched APKs with **your** keystore (`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`). Treat those secrets as production credentials: do not paste them into issues or PRs, do not reuse a personal keystore across experiments, and review the upstream patch repo before trusting it with your signing material. See [`SECURITY.md`](SECURITY.md) for the disclosure policy and how to report a vulnerability privately.
 
 ---
 

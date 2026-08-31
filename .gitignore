@@ -43,7 +43,6 @@ build/
 
 # AI
 .claude/
-docs/
 CLAUDE.md
 
 # OpenCode state

@@ -86,13 +86,7 @@ jobs:
         run: bash .github/scripts/pipeline/download_morphe_tools.sh
 
       - name: Cache patches .mpp
-        # NOTE: morphe-desktop.jar is intentionally NOT cached. The CLI
-        # jar is small (~40MB) and download_morphe_tools.sh re-downloads
-        # it on every run because `actions/cache@v5` only saves on a
-        # cache miss by default — so a restore would silently put a
-        # stale jar back into tools/. Caching the per-repo `.mpp`
-        # files is worth it (they're reused across apps on the same
-        # repo), but the CLI jar is always fresh.
+        # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
         uses: actions/cache@v5
         with:
           path: |
@@ -100,17 +94,7 @@ jobs:
           key: morphe-patches-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
 
       - name: Compat probe (per-app runtime check)
-        # Layer D of "adding a new app must just work". The earlier
-        # `Preflight per-app patch availability` step only checks
-        # patches-list.json (static metadata). This step actually
-        # invokes `java -jar morphe-desktop.jar list-versions -f <pkg>
-        # --patches=<mpp>` per app and catches runtime API mismatches
-        # that the static check can't see — e.g. hoo-dles/morphe-patches
-        # uses `BytecodePatchBuilder.extendWithAll(Supplier)` (added to
-        # morphe-patcher 2026-07-27) which only morphe-desktop v1.13.2+
-        # carries. An older cached CLI jar would crash every patch
-        # with NoSuchMethodError 30 minutes into the matrix instead of
-        # surfacing here.
+        # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
         id: compat
         env:
           CONFIG_FILE: ${{ github.workspace }}/config.json
@@ -361,12 +345,7 @@ jobs:
           restore-keys: |
             morphe-patches-${{ matrix.patchSlug }}-
 
-      # NOTE: morphe-desktop.jar is intentionally NOT cached at the
-      # build-job level either. The download_morphe_tools.sh /
-      # fetch_morphe_tools.sh steps always re-download the jar from
-      # the cli-version tag, so every matrix entry sees the exact jar
-      # for the resolved cli-version. See AGENTS.md "Common failures"
-      # → "java.lang.NoSuchMethodError" for the full rationale.
+      # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
 
       - name: Get latest Morphe patches + CLI + APKEditor
         id: morphe
