@@ -4,7 +4,7 @@
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/codeql.yml?branch=dev&label=CodeQL)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/codeql.yml)
 [![Build](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/morphe-build.yml?branch=dev&label=Build)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/morphe-build.yml)
 [![License: GPL-3.0](https://img.shields.io/github/license/nxn94/AutoMorpheBuilder?color=blue)](https://github.com/nxn94/AutoMorpheBuilder/blob/dev/LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/nxn94/AutoMorpheBuilder?include_prereleases&sort=semver)](https://github.com/nxn94/AutoMorpheBuilder/releases)
+
 
 GitHub Actions pipeline that builds patched Android APKs with [Morphe patches](https://github.com/MorpheApp/morphe-patches), [morphe-desktop](https://github.com/MorpheApp/morphe-desktop), and [APKEditor](https://github.com/REAndroid/APKEditor). Outputs are signed, per-app versioned, and ready for Obtainium.
 
