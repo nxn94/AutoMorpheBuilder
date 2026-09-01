@@ -18,11 +18,11 @@ Some entries may be TODO (`# TODO(pin-aapt2)` etc.) when the value couldn't be c
 - `aapt2` (Android build-tools): SHA changes per SDK release. Pin via the specific SDK version (`build-tools;35.0.0`) + a commit that introduces it. `install_aapt.sh` prints the actual SHA at the end of each install with a `TODO(pin-aapt2)` note.
 - `chromium-linux.zip`: SHA changes per Playwright/Chromium release. `install_playwright.sh` prints the actual SHA at the end of each install with a `TODO(pin-chromium)` note.
 
-## Certificate fingerprint
+## Certificate fingerprint (not used)
 
-`EXPECTED_CERT_SHA256` is a GitHub Actions variable (set in repo settings or environment `apk-signing`) containing the SHA-256 fingerprint of the signing certificate. `patch_apk.sh` compares the actual signing certificate against this value after signing. If unset, the comparison is skipped with a `::warning::` annotation — the build will still pass, but you'll be missing the certificate-pinning guarantee.
+The previous build flow pinned the signed APK's signing certificate via `EXPECTED_CERT_SHA256` (a repo variable), comparing `apksigner verify --print-certs` SHA-256 against the expected value in `sign_apk.sh`. That code path was removed when `sign_apk.sh` was deleted in favour of morphe-desktop's `patch --keystore` (which patches and signs in one step and does not expose the signed APK to a separate verify step). Pinning is not currently re-implemented — if you need it, post-process the signed APK with `apksigner verify --print-certs` in the `create-release` job and compare against a repo variable.
 
-To extract the fingerprint of an existing keystore:
+To extract the fingerprint of an existing keystore (still useful for documentation / rotation audits):
 
 ```bash
 keytool -list -v -keystore <path-to-keystore.p12> -storetype PKCS12 \

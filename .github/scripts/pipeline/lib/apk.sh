@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 #
-# scripts/lib/apk.sh — APK manipulation helpers (aapt, apksigner).
+# scripts/lib/apk.sh — APK inspection helpers (aapt).
 #
 # Sourced, not executed. Centralises the calls to Google's SDK tools
-# (aapt dump badging, apksigner sign) so they share the same
-# path-discovery + retry logic. Also exposes read_apk_version which is
-# duplicated in download-supported-apk.js — the shell version is here for
-# the small handful of shell-side flows that need it.
+# (aapt dump badging) so they share the same path-discovery + retry
+# logic. Also exposes read_apk_version which is duplicated in
+# download-supported-apk.js — the shell version is here for the small
+# handful of shell-side flows that need it.
+#
+# `apksigner` was historically invoked from this library too, but is no
+# longer used — signing moved into morphe-desktop's `patch --keystore`
+# (see `docs/architecture.md` → "Signing model"). The build pipeline
+# only needs to read APK metadata; signing is opaque to the shell layer.
 
 # shellcheck source=./common.sh
 . "$(dirname "${BASH_SOURCE[0]}")/common.sh"
