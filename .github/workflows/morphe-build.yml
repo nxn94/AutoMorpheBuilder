@@ -52,7 +52,11 @@ jobs:
         # PR 3: scripts/validate-config.js is ajv-based (devDep), so we
         # need node + npm available before the validate step. Pinned
         # to the same node-version as the matrix build for consistency.
-        uses: actions/setup-node@v6
+        # SHA matches every other setup-node@v6 reference in the repo
+        # (lines 160, 345, and ci.yml:44) — keeps the supply-chain pin
+        # uniform and prevents a tag-repointing attack from silently
+        # swapping this single reference to a different commit.
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
         with:
           node-version: '24'
 
