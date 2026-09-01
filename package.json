@@ -7,7 +7,7 @@
   },
   "scripts": {
     "test": "jest --forceExit",
-    "lint": "eslint .github/scripts",
+    "lint": "eslint .github/scripts src scripts",
     "validate:config": "node scripts/validate-config.js",
     "validate:agent-docs": "node scripts/check-agents-doc.js",
     "check": "npm run lint && npm test && npm run validate:config && npm run validate:agent-docs"

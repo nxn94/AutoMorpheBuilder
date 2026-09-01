@@ -52,7 +52,11 @@ jobs:
         # PR 3: scripts/validate-config.js is ajv-based (devDep), so we
         # need node + npm available before the validate step. Pinned
         # to the same node-version as the matrix build for consistency.
-        uses: actions/setup-node@v6
+        # SHA matches every other setup-node@v6 reference in the repo
+        # (lines 160, 345, and ci.yml:44) — keeps the supply-chain pin
+        # uniform and prevents a tag-repointing attack from silently
+        # swapping this single reference to a different commit.
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
         with:
           node-version: '24'
 
@@ -255,6 +259,16 @@ jobs:
     if: needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Gated by the `signing` GitHub environment so KEYSTORE_BASE64 /
+    # KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD are scoped to this
+    # job (and create-release downstream). Previously the sign job
+    # held the secrets; now morphe-desktop's `patch --keystore` runs
+    # in this job (morphe-desktop auto-detects PKCS12 / JKS / BKS and
+    # converts internally — see .github/scripts/pipeline/patch_apk.sh).
+    # The trust boundary that previously separated `build` and `sign`
+    # is intentionally dissolved: morphe-desktop's built-in signing
+    # requires the keystore at patch time.
+    environment: signing
     permissions:
       contents: read
 
@@ -275,6 +289,11 @@ jobs:
       CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
       CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
       CLI_REPO: ${{ needs.check-versions.outputs.cli-repo }}
+      KEYSTORE_FILE: tools/source.keystore
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -298,17 +317,6 @@ jobs:
             fi
             echo "✓ $tool found: $(command -v "$tool")"
           done
-
-      - name: Install BouncyCastle
-        if: steps.cache-bc.outputs.cache-hit != 'true'
-        run: bash .github/scripts/pipeline/install_bouncycastle.sh
-
-      - name: Cache BouncyCastle
-        id: cache-bc
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
-        with:
-          path: /usr/share/java/bcprov.jar
-          key: bouncycastle-bcprov-1.77
 
       - name: Restore apkeep + Playwright from check-versions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
@@ -443,18 +451,43 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
         run: node "$GITHUB_WORKSPACE/.github/scripts/download-supported-apk.js"
 
-      - name: Prepare signing keystore (required)
-        id: keystore
+      - name: Decode signing keystore
+        # The only step in this job that touches KEYSTORE_BASE64.
+        # morphe-desktop's `patch --keystore` auto-detects PKCS12 /
+        # JKS / BKS from the file contents (no extension sniffing, no
+        # BouncyCastle conversion needed) and signs in place. The
+        # decoded file lands under $TOOLS_DIR and never leaves the
+        # runner. patch_apk.sh hard-fails the job if the keystore is
+        # missing or the password is wrong — there is no silent
+        # unsigned output path.
         env:
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
-          MATRIX_NAME: ${{ matrix.name }}
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: bash .github/scripts/pipeline/prepare_keystore.sh
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is required (signed builds are enforced)."
+            exit 1
+          fi
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::KEYSTORE_PASSWORD secret is required (signed builds are enforced)."
+            exit 1
+          fi
+          mkdir -p "$TOOLS_DIR"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$TOOLS_DIR/source.keystore"
+          echo "Decoded keystore to $TOOLS_DIR/source.keystore"
 
-      - name: Patch ${{ matrix.name }} with morphe-desktop
+      - name: Patch and sign ${{ matrix.name }} with morphe-desktop
+        # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError"
+        # for the full rationale. morphe-desktop's `patch --keystore`
+        # accepts PKCS12 / JKS / BKS and auto-detects the format from
+        # file contents (not extension), converting to BKS internally
+        # without touching the original file. The decoded keystore
+        # from the previous step is passed straight in — no manual
+        # type detection, no BouncyCastle conversion, no separate
+        # sign-and-rewrite step. If the keystore is invalid or the
+        # password is wrong, morphe-desktop exits non-zero and this
+        # step fails the workflow loudly (no `--unsigned` fallback).
         id: patch
         env:
           APP_ID: ${{ matrix.appId }}
@@ -464,17 +497,22 @@ jobs:
           PATCH_TAG: ${{ matrix.patchTag }}
           PATCH_REPO: ${{ matrix.patchRepo }}
           PATCH_SLUG: ${{ matrix.patchSlug }}
-          KEYSTORE_FILE: ${{ steps.keystore.outputs.path }}
-          KEY_ALIAS: ${{ steps.keystore.outputs.alias }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ENTRY_PASS: ${{ secrets.KEY_PASSWORD }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
           OUT_DIR: ${{ env.OUT_DIR }}
           APKS_DIR: ${{ env.APKS_DIR }}
           RUNNER_TEMP: ${{ runner.temp }}
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
         run: bash .github/scripts/pipeline/patch_apk.sh
 
-      - name: Upload patched ${{ matrix.name }}
+      - name: Upload signed patched ${{ matrix.name }}
+        # The artifact name preserves the shape create-release already
+        # downloads (it pattern-matches `*-v*` from the build job's
+        # matrix entries). The downstream `create-release` job reads
+        # the signed APK from this artifact directly — no separate
+        # sign job between build and create-release anymore.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
@@ -485,6 +523,7 @@ jobs:
     if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: signing
     permissions:
       contents: write
     steps:
@@ -493,10 +532,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download all patched APKs
+      - name: Download signed APKs from build job
+        # Each `build` matrix entry now produces a signed APK directly
+        # (morphe-desktop's `patch --keystore`) and uploads it under
+        # `<name>-v<ver>-<patches>`. There is no separate `sign` job —
+        # create-release downloads every per-matrix artifact with
+        # `pattern: '*-v*'` + `merge-multiple: true`. create_release.sh
+        # iterates $APKS_DIR/*.apk unchanged.
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
-          pattern: "*-v*"
+          pattern: '*-v*'
           path: apks
           merge-multiple: true
 

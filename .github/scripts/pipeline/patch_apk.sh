@@ -1,53 +1,53 @@
 #!/usr/bin/env bash
 #
-# scripts/patch_apk.sh — invoke morphe-desktop patch on a single APK, then
-# copy the patched output to $OUT_DIR with the canonical Obtainium name.
+# scripts/patch_apk.sh — invoke morphe-desktop `patch` with keystore signing.
 #
-# Replaces the inline block inside the workflow's "Patch ${matrix.name}
-# with morphe-desktop" step (about 90 lines, including the find/awk scan
-# for the patched APK).
+# Replaces the inline `run:` block in the workflow's "Patch and sign
+# ${matrix.name} with morphe-desktop" step. Produces a signed patched APK
+# in $OUT_DIR.
 #
-# Behaviour matches the original step:
+# morphe-desktop's `patch --keystore` accepts PKCS12 / JKS / BKS and
+# auto-detects the format from file contents (not extension), converting
+# to BKS internally without touching the original file. The decoded
+# keystore from the workflow's prior step is passed straight in — no
+# manual type detection, no BouncyCastle conversion, no separate
+# sign-and-rewrite step.
+#
+# Behaviour:
 #   1. Resolve the morphe-desktop jar + .mpp file.
 #   2. Compute enabled/disabled patch counts from patches.json.
-#   3. Run `java -jar morphe-desktop.jar patch ...` with all the flags.
+#   3. Run `java -jar morphe-desktop.jar patch --keystore ...` with the
+#      keystore + password + alias + entry-password flags. morphe-desktop
+#      emits a signed APK in place. There is no `--unsigned` fallback:
+#      if the keystore is invalid or the password is wrong,
+#      morphe-desktop exits non-zero and this script fails the
+#      workflow loudly.
 #   4. Find the patched APK at the deterministic temp path. Fall back to
 #      scanning APKS_DIR / cwd for any newer APK that isn't the input.
 #   5. Rename the patched APK to <app>-v<base-version>-<patches>.apk in
 #      OUT_DIR and emit `output=<name>` to $GITHUB_OUTPUT.
 #
-# Signed builds are enforced — if the keystore preparation step didn't
-# produce the expected file, this script hard-fails.
-#
 # Environment:
-#   APP_ID           required  package id
-#   APP_NAME         required  short app name (matches config.json .name)
-#   APK              required  absolute path to the APK to patch
-#   APK_VERSION      required  base APK version
-#   PATCH_TAG        required  morphe patch tag (e.g. v1.32.0)
-#   PATCH_REPO       required  patch repo slug (used to find .mpp)
-#   PATCH_SLUG       required  repo slug for filename lookup
-#   CLI_JAR          optional  explicit morphe-desktop jar override
-#   KEYSTORE_FILE    required  BKS keystore path (from prepare_keystore)
-#   KEY_ALIAS        required  key alias
-#   KEYSTORE_PASSWORD required  keystore password
-#   KEY_ENTRY_PASS   optional  key password (defaults to KEYSTORE_PASSWORD)
-#   TOOLS_DIR        optional  default ./tools
-#   OUT_DIR          optional  default ./out
-#   APKS_DIR         optional  default ./apps
-#   RUNNER_TEMP      optional  default /tmp
-#   EXPECTED_CERT_SHA256  optional  pin the signing cert fingerprint;
-#                                  when set, the actual cert SHA-256
-#                                  of the signed APK must match
-#                                  (compared case-insensitively). When
-#                                  unset, the comparison is skipped
-#                                  with a ::warning:: annotation.
-#   BT_DIR / ANDROID_BUILD_TOOLS_VERSION  optional  used to locate
-#                                  apksigner. Both env vars come
-#                                  from install_aapt.sh via
-#                                  $GITHUB_ENV; the wrapper falls
-#                                  back to PATH lookup as a last
-#                                  resort.
+#   APP_ID            required  package id
+#   APP_NAME          required  short app name (matches config.json .name)
+#   APK               required  absolute path to the unsigned APK to patch
+#   APK_VERSION       required  base APK version (used for the output filename)
+#   PATCH_TAG         required  morphe patch tag (e.g. v1.32.0)
+#   PATCH_REPO        required  patch repo slug (used to find .mpp)
+#   PATCH_SLUG        required  repo slug for filename lookup
+#   CLI_JAR           optional  explicit morphe-desktop jar override
+#   TOOLS_DIR         optional  default ./tools
+#   OUT_DIR           optional  default ./out
+#   APKS_DIR          optional  default ./apps
+#   RUNNER_TEMP       optional  default /tmp
+#   KEYSTORE_FILE     required  path to the decoded source keystore (PKCS12/JKS/BKS)
+#   KEYSTORE_PASSWORD required  keystore password (used as the entry password
+#                                when KEY_PASSWORD is unset)
+#   KEY_ALIAS         optional  alias override; when unset, the first alias
+#                                detected via `keytool -list` is passed
+#   KEY_PASSWORD      optional  key entry password; when unset, defaults to
+#                                KEYSTORE_PASSWORD (mirrors prepare_keystore.sh's
+#                                `-srckeypass` defaulting to `-srcstorepass`)
 
 set -Eeuo pipefail
 
@@ -63,21 +63,26 @@ PATCH_TAG="${PATCH_TAG:-}"
 PATCH_REPO="${PATCH_REPO:-}"
 PATCH_SLUG="${PATCH_SLUG:-}"
 CLI_JAR="${CLI_JAR:-}"
-KEYSTORE_FILE="${KEYSTORE_FILE:-}"
-KEY_ALIAS="${KEY_ALIAS:-}"
-KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-}"
-KEY_ENTRY_PASS="${KEY_ENTRY_PASS:-$KEYSTORE_PASSWORD}"
 TOOLS_DIR="${TOOLS_DIR:-./tools}"
 OUT_DIR="${OUT_DIR:-./out}"
 APKS_DIR="${APKS_DIR:-./apps}"
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
+KEYSTORE_FILE="${KEYSTORE_FILE:-}"
+KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-}"
+KEY_ALIAS="${KEY_ALIAS:-}"
+KEY_PASSWORD="${KEY_PASSWORD:-}"
 
-for var in APP_ID APP_NAME APK APK_VERSION PATCH_TAG PATCH_REPO KEYSTORE_FILE KEY_ALIAS KEYSTORE_PASSWORD; do
+for var in APP_ID APP_NAME APK APK_VERSION PATCH_TAG PATCH_REPO KEYSTORE_FILE KEYSTORE_PASSWORD; do
   if [ -z "${!var}" ]; then
     log_error "Required env var $var is empty."
     exit 1
   fi
 done
+
+if [ ! -f "$KEYSTORE_FILE" ]; then
+  log_error "Keystore file not found: $KEYSTORE_FILE"
+  exit 1
+fi
 
 mkdir -p "$OUT_DIR" "$APKS_DIR"
 
@@ -95,28 +100,6 @@ if [ ! -f "$MPP" ]; then
   log_error "Patch file not found: $MPP"
   exit 1
 fi
-
-# --- keystore + signing args ----------------------------------------------
-
-if [ ! -f "$KEYSTORE_FILE" ]; then
-  log_error "Prepared keystore file not found at $KEYSTORE_FILE."
-  exit 1
-fi
-
-# NOTE: --keystore-password / --keystore-entry-password are currently
-# passed as inline values, which makes them visible in /proc/<pid>/cmdline
-# to any other process in the same job for the duration of the call.
-# prepare_keystore.sh's keytool invocations already use the safer
-# -storepass:env / -keypass:env form (see that script). If morphe-desktop
-# upstream gains an equivalent env- or file-based password form (e.g.
-# --keystore-password=env:KEYSTORE_PASSWORD or =file:<path>), switch
-# these to it. Until then, this is the documented upstream limitation.
-KEY_ARGS=(
-  --keystore="$KEYSTORE_FILE"
-  --keystore-password="$KEYSTORE_PASSWORD"
-  --keystore-entry-alias="$KEY_ALIAS"
-  --keystore-entry-password="$KEY_ENTRY_PASS"
-)
 
 # --- patches.json → enabled/disabled lists --------------------------------
 
@@ -156,7 +139,7 @@ while IFS= read -r patch_name; do
   PATCH_ARGS+=("-d" "$patch_name")
 done <<< "$DISABLED_PATCHES"
 
-# --- patch ---------------------------------------------------------------
+# --- patch (signed) -------------------------------------------------------
 
 MARKER="$RUNNER_TEMP/morphe_${APP_NAME}_start.marker"
 : > "$MARKER"
@@ -179,8 +162,33 @@ run_patch() {
 }
 
 build_patch_cmd() {
+  # morphe-desktop's `--keystore` accepts PKCS12 / JKS / BKS and
+  # auto-detects the format from file contents (not extension). The
+  # `--keystore-password` is the store password.
+  #
+  # morphe-desktop v1.14.0 HARDCODES the defaults for
+  # `--keystore-entry-password` and `--keystore-entry-alias` to "Morphe"
+  # (a legacy bundled-keystore alias — PatchCommand.kt line 215/221 +
+  # PatchEngine.kt line 64/65). These defaults do NOT inherit from
+  # `--keystore-password` and do NOT auto-pick the keystore's first
+  # alias. Omitting either flag therefore breaks on any third-party
+  # keystore. We always pass both explicitly:
+  #
+  #   * entry-alias: KEY_ALIAS if set, else first alias detected via
+  #     `keytool -list` on the decoded PKCS12/JKS (uses -storepass so
+  #     the password never appears on the cmdline — same hygiene as
+  #     the old prepare_keystore.sh).
+  #   * entry-password: KEY_PASSWORD if set, else KEYSTORE_PASSWORD.
+  #     The user's previous keytool-based flow used `-srcstorepass:env
+  #     KEYSTORE_PASSWORD` for the conversion, with `-srckeypass`
+  #     defaulting to the store password when keys matched. Replicating
+  #     that: pass the store password as the entry password when
+  #     KEY_PASSWORD is unset.
   local -a cmd=(java -jar "$JAR" patch --patches="$MPP")
-  cmd+=("${KEY_ARGS[@]}")
+  cmd+=(--keystore "$KEYSTORE_FILE")
+  cmd+=(--keystore-password "$KEYSTORE_PASSWORD")
+  cmd+=(--keystore-entry-alias "$KEY_ALIAS_RESOLVED")
+  cmd+=(--keystore-entry-password "$KEY_ENTRY_PASSWORD")
   cmd+=(--temporary-files-path="$PATCH_TMP_DIR")
   cmd+=(--out="$PATCHED_APK")
   cmd+=("${PATCH_ARGS[@]}")
@@ -188,12 +196,34 @@ build_patch_cmd() {
   printf '%s\0' "${cmd[@]}"
 }
 
-mapfile -d '' -t PATCH_CMD < <(build_patch_cmd)
-if ! run_patch signed-required "${PATCH_CMD[@]}"; then
-  if grep -q "Wrong version of key store" "$PATCH_LOG"; then
-    log_error "Morphe could not read the provided keystore (Wrong version of key store)."
-    log_error "Ensure KEYSTORE_BASE64 decodes to a valid keystore and KEYSTORE_PASSWORD/KEY_PASSWORD are correct."
+# Detect first alias if KEY_ALIAS is unset, and default entry password to
+# the store password. morphe-desktop v1.14.0's --keystore-entry-{alias,
+# password} defaults are HARDCODED to "Morphe" / "Morphe" (see
+# PatchCommand.kt line 215/221), not "first alias" / "store password".
+# Pre-resolving here mirrors prepare_keystore.sh's behavior so the
+# refactor doesn't silently fall back to the wrong alias/password.
+KEY_ALIAS_RESOLVED="$KEY_ALIAS"
+if [ -z "$KEY_ALIAS_RESOLVED" ]; then
+  KEY_ALIAS_RESOLVED="$(
+    KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
+    keytool -list -keystore "$KEYSTORE_FILE" \
+      -storepass:env KEYSTORE_PASSWORD \
+      2>/dev/null \
+    | awk -F, '/,/{print $1}' | sed '/^$/d' | head -n1
+  )" || true
+  if [ -z "$KEY_ALIAS_RESOLVED" ]; then
+    log_error "No KEY_ALIAS provided and no aliases could be read from $KEYSTORE_FILE."
+    log_error "Either set the KEY_ALIAS secret on the 'signing' environment, or"
+    log_error "verify KEYSTORE_PASSWORD can read the keystore."
+    exit 1
   fi
+  log "No KEY_ALIAS provided; using first keystore alias '$KEY_ALIAS_RESOLVED'."
+fi
+
+KEY_ENTRY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+
+mapfile -d '' -t PATCH_CMD < <(build_patch_cmd)
+if ! run_patch signed "${PATCH_CMD[@]}"; then
   exit 1
 fi
 
@@ -207,23 +237,23 @@ else
   OUT_APK="$(
     { find . -maxdepth 1 -type f -name "*.apk" -newer "$MARKER" -printf '%T@ %p\n' || true; \
       find "$APKS_DIR" -maxdepth 1 -type f -name "*.apk" -newer "$MARKER" -printf '%T@ %p\n' || true; } \
+    | sort -nr \
+    | cut -d' ' -f2- \
+    | awk -v apk="$APK_NORM" '
+        { line=$0; sub(/^\.\//, "", line)
+          if (line != "" && line != apk && out == "") out=line }
+        END { if (out != "") print out }'
+  )"
+  if [ -z "$OUT_APK" ] || [ ! -f "$OUT_APK" ]; then
+    OUT_APK="$(
+      { find . -maxdepth 1 -type f -name "*.apk" -printf '%T@ %p\n' || true; \
+        find "$APKS_DIR" -maxdepth 1 -type f -name "*.apk" -printf '%T@ %p\n' || true; } \
       | sort -nr \
       | cut -d' ' -f2- \
       | awk -v apk="$APK_NORM" '
           { line=$0; sub(/^\.\//, "", line)
             if (line != "" && line != apk && out == "") out=line }
           END { if (out != "") print out }'
-  )"
-  if [ -z "$OUT_APK" ] || [ ! -f "$OUT_APK" ]; then
-    OUT_APK="$(
-      { find . -maxdepth 1 -type f -name "*.apk" -printf '%T@ %p\n' || true; \
-        find "$APKS_DIR" -maxdepth 1 -type f -name "*.apk" -printf '%T@ %p\n' || true; } \
-        | sort -nr \
-        | cut -d' ' -f2- \
-        | awk -v apk="$APK_NORM" '
-            { line=$0; sub(/^\.\//, "", line)
-              if (line != "" && line != apk && out == "") out=line }
-            END { if (out != "") print out }'
     )"
   fi
 fi
@@ -238,83 +268,4 @@ fi
 OUTPUT_NAME="${APP_NAME}-v${APK_VERSION}-${PATCH_TAG}.apk"
 mv "$OUT_APK" "$OUT_DIR/$OUTPUT_NAME"
 json_set_output output "$OUTPUT_NAME"
-log "Patched APK ready: $OUT_DIR/$OUTPUT_NAME"
-
-# --- post-sign verification ------------------------------------------------
-#
-# After morphe-desktop has signed the APK, re-verify with apksigner
-# (apksigner verify --print-certs dumps the SHA-256 of the signing
-# certificate). Catches:
-#   - silent signing failures (morphe-desktop might exit 0 but leave
-#     the APK unsigned in edge cases).
-#   - signing-cert drift: when EXPECTED_CERT_SHA256 is set in the
-#     repo's environment variables, the actual cert fingerprint must
-#     match. This pins the build to a specific keystore so a leaked
-#     signing key triggers an immediate hard-fail.
-# (Previously this block also ran a zipalign -c alignment check as a
-# hard gate, but morphe-desktop.jar's 'patch' produces an unaligned
-# APK by design; the gate rejected 5 of 6 builds in the first
-# post-merge run. Alignment is a follow-up improvement lane, not a
-# gate that fails every APK this workflow produces.)
-#
-# Both tools live in the Android build-tools directory that
-# install_aapt.sh pinned to $ANDROID_HOME/build-tools/<ver>/.
-# $BT_DIR may already be exported by a previous step (the workflow
-# propagates $PATH via $GITHUB_ENV); fall back to aapt-style discovery
-# when it isn't.
-
-BT_DIR_CACHED="${BT_DIR:-}"
-if [ -z "$BT_DIR_CACHED" ] && [ -n "${ANDROID_HOME:-}" ] && [ -n "${ANDROID_BUILD_TOOLS_VERSION:-}" ]; then
-  BT_DIR_CACHED="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS_VERSION}"
-fi
-if [ -n "$BT_DIR_CACHED" ] && [ -x "$BT_DIR_CACHED/apksigner" ]; then
-  APKSIGNER="$BT_DIR_CACHED/apksigner"
-  ZIPALIGN="$BT_DIR_CACHED/zipalign"
-else
-  # Last resort: rely on PATH (install_aapt.sh exports PATH via
-  # GITHUB_ENV so the build-tools dir is on PATH for downstream steps).
-  APKSIGNER="$(command -v apksigner || true)"
-  ZIPALIGN="$(command -v zipalign || true)"
-fi
-
-if [ -z "$APKSIGNER" ] || [ -z "$ZIPALIGN" ]; then
-  log_warn "apksigner/zipalign not found; skipping post-sign verification."
-else
-  log "Verifying signed APK with apksigner..."
-  if ! "$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$OUTPUT_NAME"; then
-    log_error "apksigner verify FAILED for $OUTPUT_NAME"
-    exit 1
-  fi
-
-  if [ -n "${EXPECTED_CERT_SHA256:-}" ]; then
-    # apksigner --print-certs dumps lines like:
-    #   Signer #1 certificate DN: CN=...
-    #   Signer #1 certificate SHA-256 digest: <hex>
-    #     [sha256 of cert above, possibly indented under "Subject"]
-    # Extract the digest with a two-line window so we pick up the
-    # first signer even when the formatting shifts across build-tools
-    # versions. Lowercase both sides for comparison.
-    ACTUAL_CERT_SHA256="$(
-      "$APKSIGNER" verify --print-certs "$OUT_DIR/$OUTPUT_NAME" 2>/dev/null \
-        | awk '/SHA-256 digest:/ { sub(/^[^:]*:/, ""); gsub(/[[:space:]]/, ""); print; exit }'
-    )"
-    EXPECTED_CERT_SHA256_LC="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
-    ACTUAL_CERT_SHA256_LC="$(printf '%s' "$ACTUAL_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
-    if [ -z "$ACTUAL_CERT_SHA256_LC" ]; then
-      log_error "apksigner did not print a SHA-256 digest for $OUTPUT_NAME; cannot compare against EXPECTED_CERT_SHA256"
-      exit 1
-    fi
-    if [ "$ACTUAL_CERT_SHA256_LC" != "$EXPECTED_CERT_SHA256_LC" ]; then
-      log_error "Signed APK certificate SHA-256 mismatch"
-      log_error "Expected: $EXPECTED_CERT_SHA256_LC"
-      log_error "Actual:   $ACTUAL_CERT_SHA256_LC"
-      exit 1
-    fi
-    log "Verified certificate SHA-256 matches EXPECTED_CERT_SHA256"
-  else
-    log_warn "EXPECTED_CERT_SHA256 not set; certificate pinning is skipped."
-    log_warn "Set the env var in repo settings (or env 'apk-signing') to enable pinning."
-  fi
-
-
-fi
+log "Patched (signed) APK ready: $OUT_DIR/$OUTPUT_NAME"

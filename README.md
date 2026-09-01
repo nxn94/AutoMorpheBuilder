@@ -102,11 +102,10 @@ Split packages (XAPK/APKM/APKS) are saved as `.apk` on disk and detected by **co
 
 ## Signing
 
-1. Decode `KEYSTORE_BASE64` → `tools/source.keystore`
-2. Auto-detect type (PKCS12 / JKS / BKS / UBER)
-3. Convert to BKS for morphe-desktop compatibility
-4. Sign patched APK
-5. Fail immediately on any signing error
+1. Decode `KEYSTORE_BASE64` → `tools/source.keystore` (no type detection or conversion step)
+2. Pass the keystore straight to `morphe-desktop patch --keystore` along with `--keystore-password`, `--keystore-entry-password` (defaults to `--keystore-password` if `KEY_PASSWORD` is unset), and `--keystore-entry-alias` (auto-detected via `keytool -list` if `KEY_ALIAS` is unset). morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents and converts to BKS internally
+3. morphe-desktop signs the patched APK in place
+4. Fail immediately on any signing error (no `--unsigned` fallback)
 
 ---
 

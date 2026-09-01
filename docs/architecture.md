@@ -5,8 +5,13 @@ AutoMorpheBuilder is a **GitHub Actions pipeline** that produces signed, patched
 ## High-level flow
 
 1. **`check-versions`** resolves the latest Morphe patches tags per app and the latest `morphe-desktop` CLI tag, then filters the build matrix by whether each app's expected release already exists.
-2. **`build`** (matrix per app) downloads the APK, applies patches, signs the result.
-3. **`create-release`** publishes one GitHub Release per app and prunes the oldest beyond `KEEP_COUNT`.
+2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK and runs `morphe-desktop patch --keystore`, which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents (not extension) and converts internally — no manual type detection, no BouncyCastle conversion step.
+3. (Removed — see "Signing model" below for the dissolved trust boundary.)
+4. **`create-release`** downloads the signed APKs, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
+
+The split between `build` and `sign` has been dissolved in favour of morphe-desktop's native `patch --keystore` (which requires the keystore at patch time). The build matrix and create-release are both gated by the `signing` GitHub environment so the keystore is only visible to those jobs. The keystore still lives in only one place on disk (`tools/source.keystore`) and never leaves the runner, but a code-execution bug during APK download / patch execution can now reach the keystore. The available mitigation is to pin the patch repo (`pin_patch_tag`) and the APK version (`pin_version`) to known-good values, restricting what the build job ever invokes against an untrusted APK.
+
+(Historically a deliberate `build` ↔ `sign` trust boundary separated untrusted-input download/patch from keystore handling; that boundary is gone — the code-execution bug triggered during APK download or morhe-desktop patch execution (the largest untrusted-input surface) could not reach the signing keystore because that code ran in a different job with no signing secrets in its environment.)
 
 ```mermaid
 flowchart TD
@@ -25,28 +30,29 @@ flowchart TD
     B9 --> B10[Cache + install Playwright Chromium]
     B10 --> B11[Cache + install apkeep]
     B11 --> B12[Install aapt]
-    B12 --> B13[Pre-download APKs in parallel<br/>pre_download_apks.sh]
-    B13 --> C[build job matrix per app]
+    B12 --> B13[Pre-download APKs in parallel<br>pre_download_apks.sh]
+    B13 --> C[build job matrix per app<br/>environment: signing<br/>holds keystore secrets]
 
     C --> C1[Checkout + Java 21]
-    C1 --> C2[Restore BouncyCastle / apkeep / Playwright<br/>from check-versions artifacts]
+    C1 --> C2[Restore apkeep / Playwright<br/>from check-versions artifacts]
     C2 --> C3[Restore pre-downloaded APKs]
     C3 --> C4[Cache + fetch morphe tools<br/>fetch_morphe_tools.sh<br/>morphe-desktop.jar always re-downloaded]
     C4 --> C5[Resolve supported version<br/>prepare_target_version.sh]
     C5 --> C6[Download supported APK<br/>download-supported-apk.js<br/>multi-source fallback chain]
-    C6 --> C7[Prepare signing keystore<br/>prepare_keystore.sh<br/>signing is enforced]
-    C7 --> C8[Patch APK<br/>patch_apk.sh runs morphe-desktop patch]
-    C8 --> C9[Upload patched APK as artifact]
+    C6 --> C7[Decode signing keystore<br/>printf '$KEYSTORE_BASE64' | base64 -d<br/>to $TOOLS_DIR/source.keystore]
+    C7 --> C8[Patch and sign APK<br/>patch_apk.sh runs morphe-desktop patch --keystore]
+    C8 --> C9[Upload signed APK as artifact<br/>per-app <name>-v<ver>-<patches>]
 
-    C9 --> D[create-release job]
+    C9 --> D[create-release job<br/>environment: signing]
 
-    D --> D1[Download all patched APKs]
+    D --> D1[Download signed APKs from build<br/>pattern *-v* with merge-multiple]
     D1 --> D2[Publish per-app releases<br/>create_release.sh<br/>tag = name-v apk -v patches]
     D2 --> D3[Prune old releases per app<br/>prune_old_releases.sh<br/>keep KEEP_COUNT = 2 by default]
 
     style B5 stroke-dasharray: 4 4
     style B6 stroke-dasharray: 4 4
     style C4 stroke-dasharray: 4 4
+    style C stroke:#c00,stroke-width:3px
 ```
 
 ## Jobs in detail
@@ -78,26 +84,28 @@ Runs first. Failures here short-circuit the rest of the workflow.
 
 Per-app matrix. Already filtered to apps that need rebuilding by `check-versions`. `fail-fast: false` so a single app failure does not cancel the others.
 
+Gated by the `signing` GitHub environment so `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD` are visible to this job (morphe-desktop's `patch --keystore` requires the keystore at patch time — there is no `--unsigned` fallback). Untrusted inputs (APKMirror HTML/JSON, third-party patch tools) are processed here, and the keystore is decoded straight from `KEYSTORE_BASE64` to `$TOOLS_DIR/source.keystore` — no manual type detection or BouncyCastle conversion needed.
+
 | Step | Purpose |
 |------|---------|
 | Checkout + Java 21 | Standard runner setup. |
-| Restore BouncyCastle / apkeep / Playwright / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
+| Restore apkeep / Playwright / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
 | Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with `restore-keys` fallback. |
 | Resolve supported version | `prepare_target_version.sh` + inline `list-versions` invocation. Pinned apps skip the CLI call. The `sort -Vr` head-pick handles `list-versions` not guaranteeing "latest first" (Twitch's RookieEnough/De-Vanced prints `16.9.1` before `25.3.0`). |
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
 | Download supported APK | `download-supported-apk.js`. Multi-source fallback: `tools/*.apk` → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via apkeep (APKPure), APKMirror-API (if creds), APKMirror scraper (curl → Chromium fallback). **Cleanup on failure** removes partial APK on ABI / version validation throw so a stale file does not pre-empt the good one. |
-| Prepare signing keystore | `prepare_keystore.sh` decodes `KEYSTORE_BASE64`, detects type (PKCS12 / JKS / BKS / UBER), produces BKS (morphe-desktop) + PKCS12 (apksigner) keystores. Uses `keytool -storepass:env / -keypass:env` so passwords never appear on the cmdline. **Hard-fails on any signing error** — there is no unsigned output path. |
-| Patch APK | `patch_apk.sh` runs `morphe-desktop.jar patch`. |
-| Upload patched APK | `${{ matrix.name }}-v${{ version }}-${{ patches-tag }}` artifact. |
+| Decode signing keystore | `printf '%s' "$KEYSTORE_BASE64" \| base64 -d > "$TOOLS_DIR/source.keystore"` — no conversion. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents. Hard-fails if `KEYSTORE_BASE64` or `KEYSTORE_PASSWORD` is unset. |
+| Patch and sign APK | `patch_apk.sh` runs `morphe-desktop.jar patch --keystore … --keystore-password … [--keystore-entry-alias …] [--keystore-entry-password …]`. If the keystore is invalid or the password is wrong, morphe-desktop exits non-zero and the job fails loudly (no `--unsigned` fallback). |
+| Upload signed APK | `${{ matrix.name }}-v${{ version }}-${{ patches-tag }}` artifact. |
 
 ### `create-release`
 
-Runs after `build` succeeds.
+Runs after `build` succeeds (`needs: [check-versions, build]`). Also gated by the `signing` GitHub environment.
 
 | Step | Purpose |
 |------|---------|
-| Download all patched APKs | `actions/download-artifact@v8` with `pattern: "*-v*"` + `merge-multiple: true`. |
+| Download signed APKs from build job | `actions/download-artifact@v8` with `pattern: '*-v*'` + `merge-multiple: true` — pulls every `<name>-v<ver>-<patches>` artifact the `build` matrix uploaded. |
 | Publish per-app releases | `create_release.sh` creates one GitHub Release per app, tag `<name>-v<base-version>-<patches-version>`, contains only that app's APK. |
 | Prune old releases | `prune_old_releases.sh` caps each app's release history at `KEEP_COUNT` (default `2`) by `gh release delete --cleanup-tag` on the oldest beyond the window. Failures on a single tag (race / already gone) are warnings only. |
 
@@ -127,15 +135,16 @@ docs/                      This documentation
 
 ## Signing model
 
-Signing is enforced end-to-end. There is no `--unsigned` path and no env-gated skip.
+Signing is enforced end-to-end. The previous `build` ↔ `sign` job split (which used BouncyCastle + `prepare_keystore.sh` + `sign_apk.sh`/`apksigner`) was replaced when morphe-desktop's `patch` subcommand gained native `--keystore` / `--keystore-password` / `--keystore-entry-alias` / `--keystore-entry-password` flags. morphe-desktop now accepts PKCS12 / JKS / BKS and auto-detects the format from file contents (not extension), converting to BKS internally without touching the original file. There is no separate sign job.
 
-1. **Decode.** `KEYSTORE_BASE64` → `tools/source.keystore`.
-2. **Detect type.** `keytool -list` and sniff the magic bytes to identify PKCS12 / JKS / BKS / UBER.
-3. **Convert.** morphe-desktop requires BKS; apksigner prefers PKCS12. The script writes both, derived from the source.
-4. **Patch.** morphe-desktop signs in the same step that applies the `.mpp` patches.
-5. **Validate.** `apksigner verify` is run after the patch step. Failure aborts the build.
+1. **Decode.** `KEYSTORE_BASE64` → `tools/source.keystore`. Runs as the first step of the `build` job; the file is written under `$TOOLS_DIR` and never leaves the runner.
+2. **Patch + sign.** `morphe-desktop.jar patch --keystore "$KEYSTORE_FILE" --keystore-password "$KEYSTORE_PASSWORD" [--keystore-entry-alias "$KEY_ALIAS"] [--keystore-entry-password "$KEY_PASSWORD"]`. morphe-desktop signs the patched APK in place. There is no `--unsigned` fallback — if the keystore is invalid or the password is wrong, morphe-desktop exits non-zero and the job fails loudly.
+3. **Alias + entry-password resolution.** When `KEY_ALIAS` is unset, `patch_apk.sh` resolves the first alias via `keytool -list` and passes it as `--keystore-entry-alias` (morphe-desktop v1.14.0 hardcodes the default to `"Morphe"` — a legacy bundled-keystore alias — and does NOT auto-pick the first alias). When `KEY_PASSWORD` is unset, `patch_apk.sh` defaults `--keystore-entry-password` to `KEYSTORE_PASSWORD` (morphe-desktop v1.14.0 hardcodes `"Morphe"` here too — works only for the bundled keystore). Identical-password single-keystore users therefore stay on one secret; multi-alias or split-password keystores use the explicit overrides.
+4. **Hard-fail.** Missing `KEYSTORE_BASE64` or `KEYSTORE_PASSWORD` aborts the workflow before any download cost. Patch failures during signing abort the matrix entry.
 
-Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` (defaults to first alias), `KEY_PASSWORD` (only if the key password differs from the keystore password).
+**Trust boundary.** The `signing` GitHub environment (Settings → Environments → `signing` in the repo UI) restricts the four secrets to the `build` and `create-release` jobs. Those are also the only jobs that touch the untrusted-input surface (APKMirror HTML/JSON, third-party patch tools), so a code-execution bug during APK download / patch execution **can reach the keystore**. Mitigate by pinning the patch repo (`pin_patch_tag`) and the APK version (`pin_version`) so the build job only ever invokes against known-good patches / APKs.
+
+Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` (auto-detected as the keystore's first alias via `keytool -list` when unset — morphe-desktop's own default `"Morphe"` is hardcoded and not first-alias), `KEY_PASSWORD` (defaults to `KEYSTORE_PASSWORD` when unset — same morphe-desktop default caveat).
 
 ## Failure model
 

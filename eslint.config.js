@@ -1,7 +1,8 @@
-// ESLint flat config (v9). Scoped to the Node.js helpers under
-// .github/scripts — the shell pipeline under .github/scripts/pipeline/
-// is linted via shellcheck separately (see AGENTS.md). The CI workflow
-// (ci.yml) runs `npm run lint` against this config.
+// ESLint flat config (v9). Cover all Node.js helper sources in the
+// repo: `.github/scripts/**`, `scripts/**`, and `src/**`. The shell
+// pipeline under `.github/scripts/pipeline/` is linted via shellcheck
+// separately (see AGENTS.md). The CI workflow (ci.yml) runs
+// `npm run lint` against this config.
 'use strict';
 
 const js = require('@eslint/js');
@@ -9,7 +10,14 @@ const js = require('@eslint/js');
 module.exports = [
   js.configs.recommended,
   {
-    files: ['.github/scripts/**/*.js'],
+    // Glob over the three source trees. `__tests__/` subdirs are
+    // handled by the dedicated Jest-globals block below so the test
+    // globals (describe/test/expect/jest) are recognised there.
+    files: [
+      '.github/scripts/**/*.js',
+      'scripts/**/*.js',
+      'src/**/*.js',
+    ],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'commonjs',
@@ -57,7 +65,11 @@ module.exports = [
     },
   },
   {
-    files: ['.github/scripts/__tests__/**/*.js'],
+    // Jest test files under both trees share the same global vocabulary.
+    files: [
+      '.github/scripts/__tests__/**/*.js',
+      'src/**/__tests__/**/*.js',
+    ],
     languageOptions: {
       globals: {
         describe: 'readonly',
