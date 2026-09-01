@@ -41,10 +41,13 @@
 #   APKS_DIR          optional  default ./apps
 #   RUNNER_TEMP       optional  default /tmp
 #   KEYSTORE_FILE     required  path to the decoded source keystore (PKCS12/JKS/BKS)
-#   KEYSTORE_PASSWORD required  keystore password
-#   KEY_ALIAS         optional  alias override; omitted → morphe-desktop picks first alias
-#   KEY_PASSWORD      optional  key entry password; omitted (or == KEYSTORE_PASSWORD)
-#                                → morphe-desktop uses KEYSTORE_PASSWORD for the entry too
+#   KEYSTORE_PASSWORD required  keystore password (used as the entry password
+#                                when KEY_PASSWORD is unset)
+#   KEY_ALIAS         optional  alias override; when unset, the first alias
+#                                detected via `keytool -list` is passed
+#   KEY_PASSWORD      optional  key entry password; when unset, defaults to
+#                                KEYSTORE_PASSWORD (mirrors prepare_keystore.sh's
+#                                `-srckeypass` defaulting to `-srcstorepass`)
 
 set -Eeuo pipefail
 
@@ -161,29 +164,63 @@ run_patch() {
 build_patch_cmd() {
   # morphe-desktop's `--keystore` accepts PKCS12 / JKS / BKS and
   # auto-detects the format from file contents (not extension). The
-  # `--keystore-password` is the store password. The alias flag is
-  # omitted when KEY_ALIAS is unset — morphe-desktop then picks the
-  # keystore's first alias (matches the previous "if empty, picks
-  # first alias" behavior of prepare_keystore.sh; flag this if you
-  # ever observe morphe-desktop refusing to pick one — the docs in
-  # AGENTS.md should be updated to require KEY_ALIAS at that point).
-  # The entry-password is only passed when it differs from the store
-  # password, so identical-password keystores stay a single env var.
+  # `--keystore-password` is the store password.
+  #
+  # morphe-desktop v1.14.0 HARDCODES the defaults for
+  # `--keystore-entry-password` and `--keystore-entry-alias` to "Morphe"
+  # (a legacy bundled-keystore alias — PatchCommand.kt line 215/221 +
+  # PatchEngine.kt line 64/65). These defaults do NOT inherit from
+  # `--keystore-password` and do NOT auto-pick the keystore's first
+  # alias. Omitting either flag therefore breaks on any third-party
+  # keystore. We always pass both explicitly:
+  #
+  #   * entry-alias: KEY_ALIAS if set, else first alias detected via
+  #     `keytool -list` on the decoded PKCS12/JKS (uses -storepass so
+  #     the password never appears on the cmdline — same hygiene as
+  #     the old prepare_keystore.sh).
+  #   * entry-password: KEY_PASSWORD if set, else KEYSTORE_PASSWORD.
+  #     The user's previous keytool-based flow used `-srcstorepass:env
+  #     KEYSTORE_PASSWORD` for the conversion, with `-srckeypass`
+  #     defaulting to the store password when keys matched. Replicating
+  #     that: pass the store password as the entry password when
+  #     KEY_PASSWORD is unset.
   local -a cmd=(java -jar "$JAR" patch --patches="$MPP")
   cmd+=(--keystore "$KEYSTORE_FILE")
   cmd+=(--keystore-password "$KEYSTORE_PASSWORD")
-  if [ -n "$KEY_ALIAS" ]; then
-    cmd+=(--keystore-entry-alias "$KEY_ALIAS")
-  fi
-  if [ -n "$KEY_PASSWORD" ] && [ "$KEY_PASSWORD" != "$KEYSTORE_PASSWORD" ]; then
-    cmd+=(--keystore-entry-password "$KEY_PASSWORD")
-  fi
+  cmd+=(--keystore-entry-alias "$KEY_ALIAS_RESOLVED")
+  cmd+=(--keystore-entry-password "$KEY_ENTRY_PASSWORD")
   cmd+=(--temporary-files-path="$PATCH_TMP_DIR")
   cmd+=(--out="$PATCHED_APK")
   cmd+=("${PATCH_ARGS[@]}")
   cmd+=("$APK")
   printf '%s\0' "${cmd[@]}"
 }
+
+# Detect first alias if KEY_ALIAS is unset, and default entry password to
+# the store password. morphe-desktop v1.14.0's --keystore-entry-{alias,
+# password} defaults are HARDCODED to "Morphe" / "Morphe" (see
+# PatchCommand.kt line 215/221), not "first alias" / "store password".
+# Pre-resolving here mirrors prepare_keystore.sh's behavior so the
+# refactor doesn't silently fall back to the wrong alias/password.
+KEY_ALIAS_RESOLVED="$KEY_ALIAS"
+if [ -z "$KEY_ALIAS_RESOLVED" ]; then
+  KEY_ALIAS_RESOLVED="$(
+    KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
+    keytool -list -keystore "$KEYSTORE_FILE" \
+      -storepass:env KEYSTORE_PASSWORD \
+      2>/dev/null \
+    | awk -F, '/,/{print $1}' | sed '/^$/d' | head -n1
+  )" || true
+  if [ -z "$KEY_ALIAS_RESOLVED" ]; then
+    log_error "No KEY_ALIAS provided and no aliases could be read from $KEYSTORE_FILE."
+    log_error "Either set the KEY_ALIAS secret on the 'signing' environment, or"
+    log_error "verify KEYSTORE_PASSWORD can read the keystore."
+    exit 1
+  fi
+  log "No KEY_ALIAS provided; using first keystore alias '$KEY_ALIAS_RESOLVED'."
+fi
+
+KEY_ENTRY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
 
 mapfile -d '' -t PATCH_CMD < <(build_patch_cmd)
 if ! run_patch signed "${PATCH_CMD[@]}"; then
