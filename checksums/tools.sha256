@@ -1,0 +1,64 @@
+# Tool checksums — AutoMorpheBuilder
+#
+# SHA-256 digests of every external artifact the pipeline downloads.
+# The verify scripts in `.github/scripts/pipeline/` consult this file
+# and fail closed on mismatch.
+#
+# Format: <hex-sha256>  <relative-artifact-name>  # <human note>
+# Comments after `#` are ignored by `sha256sum -c --strict`.
+#
+# Most entries are version-pinned. When the upstream version changes
+# (new `morphe-desktop` release, new `APKEditor` tag, new SDK build
+# tools, new Chromium build), update the corresponding SHA below.
+#
+# How to refresh:
+#   1. Trigger a fresh build (the new SHA will be printed to the log
+#      even when the manifest entry is a TODO).
+#   2. Compare the printed `Verified SHA-256 for <path>` line against
+#      the existing entry in this file.
+#   3. If the upstream version changed, replace the line and commit.
+#
+# See `docs/checksums.md` for the full workflow.
+
+# --- morphe-desktop CLI -----------------------------------------------------
+# The Java CLI that drives patching. Hash changes every release.
+# Source: https://github.com/MorpheApp/morphe-desktop/releases
+# Current: v1.14.0  (verified via GitHub API digest + curl + sha256sum)
+d0579df359c75335d7d79927fa52e351c476bb43a66e43f352a85e943e511131  morphe-desktop.jar  # v1.14.0
+
+# --- APKEditor ---------------------------------------------------------------
+# Used to merge split packages (base.apk + split_config.*.apk → universal).
+# Hash changes every release.
+# Source: https://github.com/REAndroid/APKEditor/releases
+# Current: V1.4.9  (verified via GitHub API digest + curl + sha256sum)
+a9cd40df818845456be6d696de6110c89edf4b0a0580cb83438ed6b25a366e67  APKEditor.jar  # V1.4.9
+
+# --- Android build-tools (aapt / aapt2) --------------------------------------
+# The cmdline-tools zip + sdkmanager-produced build-tools dir.
+# Google's `dl.google.com/android/repository/...` does NOT publish a
+# sibling `.sha256` file, so we cannot pin a hash for the SDK zip
+# itself. `install_aapt.sh` prints the actual SHA at the end of each
+# install with a TODO note; copy that hash here when you want strict
+# verification. The build-tools;35.0.0 contents are deterministic per
+# SDK release — once pinned they don't drift within a build-tools
+# version line.
+#
+# TODO(pin-aapt2): drop in the sha256 of build-tools;35.0.0 once captured.
+
+# --- Playwright Chromium (chrome-for-testing) --------------------------------
+# The Chrome-for-testing CDN does NOT publish a sibling `.sha256` for
+# `chrome-linux64.zip`. SHA changes every Playwright/Chromium version.
+# `install_playwright.sh` prints the actual SHA at the end of each
+# install with a TODO note; copy that hash here when you want strict
+# verification.
+#
+# TODO(pin-chromium): drop in the sha256 of chrome-linux64.zip once captured.
+
+# --- per-repo *.mpp patches archives ----------------------------------------
+# Hash changes per (repo, release-tag) pair — too many entries for a
+# single manifest. The existing `Implementation-Version` /
+# `cli-tag`/`patch-tag` check in `download_morphe_tools.sh` and
+# `fetch_morphe_tools.sh` is the primary gate; SHA-256 verification
+# is opt-in via a sibling `checksums/<slug>-<tag>-sha256.txt` file
+# that the build would consume. See `docs/checksums.md` for the
+# upgrade path.

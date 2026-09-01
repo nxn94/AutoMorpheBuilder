@@ -6,8 +6,33 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "jest",
-    "lint": "eslint .github/scripts"
+    "test": "jest --forceExit",
+    "lint": "eslint .github/scripts",
+    "validate:config": "node scripts/validate-config.js",
+    "validate:agent-docs": "node scripts/check-agents-doc.js",
+    "check": "npm run lint && npm test && npm run validate:config && npm run validate:agent-docs"
+  },
+  "jest": {
+    "coverageThreshold": {
+      "./src/errors/": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "./src/apk/candidate.js": {
+        "branches": 90,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      },
+      "./src/archive/": {
+        "branches": 85,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    }
   },
   "dependencies": {
     "cheerio": "^1.0.0",
@@ -15,6 +40,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "eslint": "^10.9.1",
     "jest": "^30.4.2"
   },

@@ -1,0 +1,89 @@
+name: Bug report
+description: Report a build, patch, or release failure.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Please complete the preliminary checks below before submitting — they help us reproduce the issue quickly.
+
+  - type: checkboxes
+    id: preliminary
+    attributes:
+      label: Preliminary checks
+      description: Confirm you have worked through these before filing.
+      options:
+        - label: I searched [existing issues](https://github.com/nxn94/AutoMorpheBuilder/issues?q=is%3Aissue) and did not find a duplicate.
+          required: true
+        - label: I read [docs/troubleshooting.md](https://github.com/nxn94/AutoMorpheBuilder/blob/dev/docs/troubleshooting.md) and the issue is not listed there.
+          required: true
+        - label: I am running the latest commit on the `dev` branch of this repository.
+          required: true
+        - label: I have **not** included any secrets (keystore, passwords, tokens) in the logs below.
+          required: true
+
+  - type: input
+    id: workflow_run
+    attributes:
+      label: Workflow run URL
+      description: Link to the failing GitHub Actions run (Actions → click the run → copy URL). Public runs only.
+      placeholder: https://github.com/nxn94/AutoMorpheBuilder/actions/runs/123456789
+
+  - type: input
+    id: app_package
+    attributes:
+      label: App package id
+      description: The Android `applicationId` (key under `patch_repos` in `config.json`).
+      placeholder: com.google.android.youtube
+
+  - type: input
+    id: expected_version
+    attributes:
+      label: Expected APK version
+      description: The APK `versionName` you expected the build to use.
+      placeholder: 20.45.36
+
+  - type: dropdown
+    id: artifact_format
+    attributes:
+      label: Artifact format on APKMirror
+      description: What does APKMirror list for the failing release? (Monolithic = single .apk, BUNDLE = .xapk / .apkm / .apks)
+      options:
+        - Monolithic APK
+        - XAPK bundle
+        - APKM bundle
+        - APKS bundle
+        - Only BUNDLE variant available
+        - Unknown / need to check
+
+  - type: dropdown
+    id: preferred_arch
+    attributes:
+      label: preferred_arch in your config.json
+      description: The `preferred_arch` value in your fork's `config.json`.
+      options:
+        - arm64-v8a
+        - armeabi-v7a
+        - x86
+        - x86_64
+        - universal
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the failure and the steps to reproduce it. Include the failing step name if known.
+      placeholder: |
+        The `Resolve supported version` step failed with `Could not resolve a Morphe-supported version for com.example.app` after the upstream Morphe tag moved from v1.24.0 to v1.25.0.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant (redacted) log output
+      description: Paste the relevant log lines. **Strip `KEYSTORE_PASSWORD`, `KEY_PASSWORD`, `KEYSTORE_BASE64`, `KEY_ALIAS`, and any GitHub tokens before pasting.**
+      render: shell
+      placeholder: |
+        ::error::Could not resolve a Morphe-supported version for com.example.app
+        ...

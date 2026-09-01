@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Synthetic apkeep-compatible fixture command for downloader tests.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+APKEEP_FIXTURE="${APKEEP_FIXTURE:-${SCRIPT_DIR}/../apk-metadata/placeholder.apk}"
+if [ "${APKEEP_RESULT:-success}" = "fail" ]; then
+  exit 1
+fi
+package_spec="${2:?package@version is required}"
+output_dir="${!#}"
+version="${package_spec#*@}"
+mkdir -p "$output_dir"
+cp "$APKEEP_FIXTURE" "$output_dir/${package_spec}.xapk"

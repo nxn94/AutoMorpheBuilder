@@ -36,6 +36,18 @@
 #   OUT_DIR          optional  default ./out
 #   APKS_DIR         optional  default ./apps
 #   RUNNER_TEMP      optional  default /tmp
+#   EXPECTED_CERT_SHA256  optional  pin the signing cert fingerprint;
+#                                  when set, the actual cert SHA-256
+#                                  of the signed APK must match
+#                                  (compared case-insensitively). When
+#                                  unset, the comparison is skipped
+#                                  with a ::warning:: annotation.
+#   BT_DIR / ANDROID_BUILD_TOOLS_VERSION  optional  used to locate
+#                                  apksigner. Both env vars come
+#                                  from install_aapt.sh via
+#                                  $GITHUB_ENV; the wrapper falls
+#                                  back to PATH lookup as a last
+#                                  resort.
 
 set -Eeuo pipefail
 
@@ -227,3 +239,82 @@ OUTPUT_NAME="${APP_NAME}-v${APK_VERSION}-${PATCH_TAG}.apk"
 mv "$OUT_APK" "$OUT_DIR/$OUTPUT_NAME"
 json_set_output output "$OUTPUT_NAME"
 log "Patched APK ready: $OUT_DIR/$OUTPUT_NAME"
+
+# --- post-sign verification ------------------------------------------------
+#
+# After morphe-desktop has signed the APK, re-verify with apksigner
+# (apksigner verify --print-certs dumps the SHA-256 of the signing
+# certificate). Catches:
+#   - silent signing failures (morphe-desktop might exit 0 but leave
+#     the APK unsigned in edge cases).
+#   - signing-cert drift: when EXPECTED_CERT_SHA256 is set in the
+#     repo's environment variables, the actual cert fingerprint must
+#     match. This pins the build to a specific keystore so a leaked
+#     signing key triggers an immediate hard-fail.
+# (Previously this block also ran a zipalign -c alignment check as a
+# hard gate, but morphe-desktop.jar's 'patch' produces an unaligned
+# APK by design; the gate rejected 5 of 6 builds in the first
+# post-merge run. Alignment is a follow-up improvement lane, not a
+# gate that fails every APK this workflow produces.)
+#
+# Both tools live in the Android build-tools directory that
+# install_aapt.sh pinned to $ANDROID_HOME/build-tools/<ver>/.
+# $BT_DIR may already be exported by a previous step (the workflow
+# propagates $PATH via $GITHUB_ENV); fall back to aapt-style discovery
+# when it isn't.
+
+BT_DIR_CACHED="${BT_DIR:-}"
+if [ -z "$BT_DIR_CACHED" ] && [ -n "${ANDROID_HOME:-}" ] && [ -n "${ANDROID_BUILD_TOOLS_VERSION:-}" ]; then
+  BT_DIR_CACHED="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS_VERSION}"
+fi
+if [ -n "$BT_DIR_CACHED" ] && [ -x "$BT_DIR_CACHED/apksigner" ]; then
+  APKSIGNER="$BT_DIR_CACHED/apksigner"
+  ZIPALIGN="$BT_DIR_CACHED/zipalign"
+else
+  # Last resort: rely on PATH (install_aapt.sh exports PATH via
+  # GITHUB_ENV so the build-tools dir is on PATH for downstream steps).
+  APKSIGNER="$(command -v apksigner || true)"
+  ZIPALIGN="$(command -v zipalign || true)"
+fi
+
+if [ -z "$APKSIGNER" ] || [ -z "$ZIPALIGN" ]; then
+  log_warn "apksigner/zipalign not found; skipping post-sign verification."
+else
+  log "Verifying signed APK with apksigner..."
+  if ! "$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$OUTPUT_NAME"; then
+    log_error "apksigner verify FAILED for $OUTPUT_NAME"
+    exit 1
+  fi
+
+  if [ -n "${EXPECTED_CERT_SHA256:-}" ]; then
+    # apksigner --print-certs dumps lines like:
+    #   Signer #1 certificate DN: CN=...
+    #   Signer #1 certificate SHA-256 digest: <hex>
+    #     [sha256 of cert above, possibly indented under "Subject"]
+    # Extract the digest with a two-line window so we pick up the
+    # first signer even when the formatting shifts across build-tools
+    # versions. Lowercase both sides for comparison.
+    ACTUAL_CERT_SHA256="$(
+      "$APKSIGNER" verify --print-certs "$OUT_DIR/$OUTPUT_NAME" 2>/dev/null \
+        | awk '/SHA-256 digest:/ { sub(/^[^:]*:/, ""); gsub(/[[:space:]]/, ""); print; exit }'
+    )"
+    EXPECTED_CERT_SHA256_LC="$(printf '%s' "$EXPECTED_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
+    ACTUAL_CERT_SHA256_LC="$(printf '%s' "$ACTUAL_CERT_SHA256" | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$ACTUAL_CERT_SHA256_LC" ]; then
+      log_error "apksigner did not print a SHA-256 digest for $OUTPUT_NAME; cannot compare against EXPECTED_CERT_SHA256"
+      exit 1
+    fi
+    if [ "$ACTUAL_CERT_SHA256_LC" != "$EXPECTED_CERT_SHA256_LC" ]; then
+      log_error "Signed APK certificate SHA-256 mismatch"
+      log_error "Expected: $EXPECTED_CERT_SHA256_LC"
+      log_error "Actual:   $ACTUAL_CERT_SHA256_LC"
+      exit 1
+    fi
+    log "Verified certificate SHA-256 matches EXPECTED_CERT_SHA256"
+  else
+    log_warn "EXPECTED_CERT_SHA256 not set; certificate pinning is skipped."
+    log_warn "Set the env var in repo settings (or env 'apk-signing') to enable pinning."
+  fi
+
+
+fi

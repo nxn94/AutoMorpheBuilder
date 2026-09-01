@@ -1,0 +1,24 @@
+# CODEOWNERS
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched below.
+*                                       @nxn94
+
+# Workflow + CI surface
+/.github/workflows/                     @nxn94
+
+# CODEOWNERS must own itself (required by GitHub)
+/.github/CODEOWNERS                     @nxn94
+
+# Scripts that drive the pipeline
+/.github/scripts/                       @nxn94
+
+# Policy and process documents
+/SECURITY.md                            @nxn94
+
+# Build configuration and patch toggles
+/config.json                            @nxn94
+/patches.json                           @nxn94
+
+# JSON Schemas for config.json + patches.json (added in PR 3)
+/schemas/                               @nxn94

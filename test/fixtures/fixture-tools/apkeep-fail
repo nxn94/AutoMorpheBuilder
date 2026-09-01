@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Deliberately fail the synthetic apkeep resolver path in fallback tests.
+exit 1

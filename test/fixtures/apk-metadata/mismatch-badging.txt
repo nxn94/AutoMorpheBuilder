@@ -1,0 +1,4 @@
+# Source: synthetic aapt badging response for fixture validation
+# Captured: 2026-08-31
+# Exercise: Reject a sanitized APK whose version differs from the requested version.
+package: name='com.google.android.youtube' versionName='99.99.99'

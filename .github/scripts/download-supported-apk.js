@@ -60,6 +60,8 @@ const {
   listApkAbis,
   detectApkShape,
 } = require('./apk-selection');
+const { validateApkBoundary, validateArchiveSafe } = require('../../src/apk/validate-boundary');
+const { InvalidApkError, formatError } = require('../../src/errors');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 
 const APP_ID = process.env.APP_ID;
@@ -448,6 +450,80 @@ if (!downloadSuccess) {
   }
   if (!downloadSuccess) {
     console.error(`::error::No APK could be downloaded for ${APP_ID} version ${TARGET_VERSION}.`);
+    process.exit(1);
+  }
+}
+
+// 3.5. APK boundary validation (archive integrity + safe paths + dex).
+// Runs on every archive in APKS_DIR before any further processing. A
+// failure here means the file is corrupt, unsafe, or not actually an
+// APK — none of which downstream steps (aapt, merge, ABI guardrail,
+// morphe-desktop) can recover from. Fail closed.
+console.log('Running APK boundary checks (archive integrity + safe paths + classes.dex)...');
+// Robust split-package detection for the boundary check. The previous
+// helper (isSplitPackageFile from apk-selection.js) delegated to
+// detectApkShape, which classifies an archive by checking for
+// top-level AndroidManifest.xml. The pureapk.com XAPK format puts
+// AndroidManifest.xml at the bundle root, which makes detectApkShape
+// return 'apk' for what is actually a zip-of-zips — so
+// isSplitPackageFile returned false for aida64's XAPK and the
+// boundary check was misrouted to validateApkBoundary, which rejected
+// the bundle with "Archive contains no classes*.dex entries".
+//
+// This helper does the structural test directly: a split package is a
+// zip-of-zips whose entries include one or more inner .apk files and
+// which does NOT have a top-level classes.dex. Plain APKs always have
+// classes.dex and never have inner .apk entries. execFileSync is
+// already imported at the top of this file (line ~51) from
+// node:child_process.
+function isSplitPackageRobust(archivePath) {
+  if (/\.(xapk|apkm|apks)$/i.test(archivePath)) return true;
+  try {
+    const listing = execFileSync(
+      'unzip', ['-Z1', archivePath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let hasInnerApk = false;
+    let hasTopLevelDex = false;
+    for (const line of listing.split('\n')) {
+      if (!line) continue;
+      if (line.toLowerCase().endsWith('.apk')) hasInnerApk = true;
+      else if (/^classes(?:\d+)?\.dex$/.test(line)) hasTopLevelDex = true;
+    }
+    return hasInnerApk && !hasTopLevelDex;
+  } catch {
+    // On error (corrupt zip, unzip missing, etc.), fall through to
+    // the strict per-file boundary check (validateApkBoundary).
+    return false;
+  }
+}
+for (const f of fs.readdirSync(APKS_DIR)) {
+  const full = path.join(APKS_DIR, f);
+  const lower = f.toLowerCase();
+  if (!/\.(apk|xapk|apkm|apks)$/.test(lower)) continue;
+  try {
+    if (isSplitPackageRobust(full)) {
+      // Split package (bundle). Outer zip-of-zips has no top-level
+      // classes.dex; the inner APKs are validated after merge.
+      // The unified-downloader hardcodes the saved filename to
+      // `${packageId}_${version}.apk` regardless of source shape,
+      // so extension matching alone misses bundles served as `.apk`.
+      // isSplitPackageRobust() combines the extension check with a
+      // structural zip-content test that does not depend on the
+      // AndroidManifest.xml heuristic used by detectApkShape().
+      validateArchiveSafe(full);
+    } else {
+      validateApkBoundary(full);
+    }
+  } catch (e) {
+    if (e instanceof InvalidApkError) {
+      console.error(`::error::APK boundary check failed for ${f}: ${e.message}`);
+      // Remove the bad file so subsequent retries can replace it
+      // (unified-downloader won't re-download if the bad file is
+      // sitting in APKS_DIR matching the version).
+      try { fs.unlinkSync(full); } catch { /* ignore */ }
+      continue;
+    }
+    console.error(`::error::Unexpected error during boundary check for ${f}: ${formatError(e)}`);
     process.exit(1);
   }
 }

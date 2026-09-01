@@ -20,60 +20,49 @@
 // MISMATCH + ABI mismatch), plus a positive control that the success
 // path still preserves the file.
 //
-// Mocking strategy mirrors fallback-chain.test.js: child_process
-// (execFile / spawn / execFileSync) and playwright are stubbed at the
-// module level. apk-abi-validator is jest.mock()'d so the
-// destructured reference inside the downloader resolves to the same
-// jest.fn() instance we configure per-test (a jest.spyOn at the
-// test level wouldn't reach the captured reference — see the
-// jest.mock block below).
+// Fixture strategy: child_process is no longer mocked at the module
+// level. The command shims below forward to the real subprocess APIs;
+// aapt/apkeep/curl use sanitized files under test/fixtures.
 
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
+const childProcess = require('node:child_process');
 
-// --- Module-level mocks. Must be in place before the downloader is
-//     require()'d. Mirrors fallback-chain.test.js. ----------------------------
+const fixtureRoot = path.resolve(__dirname, '../../../test/fixtures');
+const fixtureTools = path.join(fixtureRoot, 'fixture-tools');
+const placeholderFixture = path.join(fixtureRoot, 'apk-metadata', 'placeholder.apk');
+const splitFixture = path.join(fixtureRoot, 'apk-metadata', 'split-package.apk');
+const validBadgingFixture = path.join(fixtureRoot, 'apk-metadata', 'valid-badging.txt');
+const mismatchBadgingFixture = path.join(fixtureRoot, 'apk-metadata', 'mismatch-badging.txt');
+const originalPath = process.env.PATH;
 
-// Names MUST start with `mock` so babel-jest's jest.mock hoisting
-// permits the factory to close over them (Jest 30 enforces this —
-// see https://jestjs.io/docs/jest-object#jestmockmodulename-factory-options).
-const mockChildProcessExecFile = jest.fn();
-const mockChildProcessExecFileSync = jest.fn().mockImplementation(() => {
-  // execFileSync is used by apkmirrorFetch for curl subprocess
-  // probes. Make it throw with "403" so resolveApkmirror's fallback
-  // to Playwright triggers (Playwright is also mocked below to
-  // reject). Without this, any code path that inadvertently touches
-  // resolveApkmirror will hit the real network.
-  const err = new Error('HTTP 403 — Cloudflare block (mocked)');
-  throw err;
+// Forwarding shims preserve call-count assertions while exercising real
+// child_process operations. They are deliberately local rather than
+// module-level shims so no subprocess contract is hidden.
+const spawn = jest.fn((...args) => childProcess.spawn(...args));
+const execFile = jest.fn((file, args, ...rest) => {
+  const command = file === 'apkeep' ? path.join(fixtureTools, 'apkeep') : file;
+  if (file === 'apkeep' && !process.env.APKEEP_FIXTURE) {
+    process.env.APKEEP_FIXTURE = placeholderFixture;
+  }
+  return childProcess.execFile(command, args, ...rest);
 });
-const mockChildProcessSpawn = jest.fn();
-jest.mock('child_process', () => ({
-  ...jest.requireActual('child_process'),
-  execFile: mockChildProcessExecFile,
-  execFileSync: mockChildProcessExecFileSync,
-  spawn: mockChildProcessSpawn,
-}));
-jest.mock('node:child_process', () => ({
-  ...jest.requireActual('node:child_process'),
-  execFile: mockChildProcessExecFile,
-  execFileSync: mockChildProcessExecFileSync,
-  spawn: mockChildProcessSpawn,
-}));
+const execFileSync = jest.fn((file, args, ...rest) => {
+  if (file === 'aapt') {
+    return fs.readFileSync(process.env.AAPT_FIXTURE || validBadgingFixture, 'utf8');
+  }
+  if (file === 'aapt2') {
+    const error = new Error('aapt2 is unavailable in fixture mode');
+    error.code = 'ENOENT';
+    throw error;
+  }
+  return childProcess.execFileSync(file, args, ...rest);
+});
 
-jest.mock('playwright', () => ({
-  chromium: {
-    launch: jest.fn(() => Promise.reject(new Error('mocked: no browser in tests'))),
-  },
-}));
-
-// Mock the apk-abi-validator module BEFORE the downloader is
-// required. The downloader destructures `validateDownloadedApkAbi`
-// at require time, so a jest.spyOn() at the test level wouldn't
-// reach the captured reference — we have to mock the source module
-// up-front so both the test and the downloader see the same
-// jest.fn() instance.
+// Mock apk-abi-validator only: its function is the isolation seam these
+// tests need to force an ABI failure while retaining the downloader's
+// real cleanup flow.
 jest.mock('../apk-abi-validator', () => {
   const actual = jest.requireActual('../apk-abi-validator');
   return {
@@ -85,8 +74,6 @@ jest.mock('../apk-abi-validator', () => {
 process.env.APKMIRROR_API_USER = 'test-user';
 process.env.APKMIRROR_API_PASS = 'test-pass';
 
-const { execFile, execFileSync, spawn } = require('child_process');
-const actualExecFileSync = jest.requireActual('child_process').execFileSync;
 const { validateDownloadedApkAbi } = require('../apk-abi-validator');
 const { downloadWithUrl, downloadWithApkeep } = require('../unified-downloader');
 
@@ -94,28 +81,46 @@ function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cleanup-test-'));
 }
 
-// Convenience: spawn that writes a fake APK to the same path curl
-// would have used, then closes cleanly. Mirrors the established
-// pattern in fallback-chain.test.js:209-219.
-function makeFakeCurlSpawn(apksDir, pkg, ver) {
-  return () => {
-    const fakeApk = path.join(apksDir, `${pkg}_${ver}.apk`);
-    fs.writeFileSync(fakeApk, Buffer.alloc(20 * 1024, 0x41)); // 20KB of 'A'
-    return {
-      stderr: { on: jest.fn() },
-      on: (event, cb) => {
-        if (event === 'close') setImmediate(() => cb(0));
-      },
-    };
+function fixtureUrl(filePath) {
+  return `file://${filePath}`;
+}
+
+function installFixtureTools() {
+  process.env.AAPT_FIXTURE = validBadgingFixture;
+  process.env.APKEEP_FIXTURE = placeholderFixture;
+  process.env.PATH = `${fixtureTools}:${process.env.PATH}`;
+}
+
+function copyFixtureTo(source, target) {
+  const result = childProcess.spawnSync('cp', [source, target], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    throw new Error(`Could not seed fixture ${source}: ${result.stderr}`);
+  }
+}
+
+function downloadOptions() {
+  return {
+    spawnImpl: spawn,
+    execFileImpl: execFile,
+    execFileSyncImpl: execFileSync,
+    sleepImpl: async () => {},
   };
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
+  installFixtureTools();
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+  delete process.env.AAPT_FIXTURE;
+  delete process.env.APKEEP_FIXTURE;
+  if (originalPath === undefined) {
+    delete process.env.PATH;
+  } else {
+    process.env.PATH = originalPath;
+  }
 });
 
 describe('downloadWithUrl — cleanup-on-failure contract', () => {
@@ -131,70 +136,49 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
   });
 
   test('deletes the partial APK when VERSION MISMATCH is detected', async () => {
-    // The curl mock writes a fake APK and "succeeds" with code 0,
-    // simulating a completed download. Then validateApkVersion (via
-    // execFileSync) returns a wrong version, triggering VERSION MISMATCH.
-    spawn.mockImplementation(makeFakeCurlSpawn(apksDir, PKG, VER));
-    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
-
+    process.env.AAPT_FIXTURE = mismatchBadgingFixture;
     const expectedPath = path.join(apksDir, `${PKG}_${VER}.apk`);
+    // Seed the output with a real fixture, then let curl replace it.
+    copyFixtureTo(placeholderFixture, expectedPath);
 
-    await expect(downloadWithUrl('https://example.invalid/x.apk', apksDir, PKG, VER))
-      .rejects.toThrow(/VERSION MISMATCH/);
+    await expect(
+      downloadWithUrl(
+        fixtureUrl(placeholderFixture),
+        apksDir,
+        PKG,
+        VER,
+        downloadOptions(),
+      ),
+    ).rejects.toThrow(/VERSION MISMATCH/);
 
-    // The contract: spawn ran (curl wrote the file) AND the file is
-    // gone after the rejection (cleanup ran before throw). Checking
-    // both conditions prevents a vacuous pass where spawn never
-    // wrote anything.
+    // The contract: a real curl process ran and its partial file was
+    // removed after the rejection (cleanup ran before throw).
     expect(spawn).toHaveBeenCalled();
     expect(fs.existsSync(expectedPath)).toBe(false);
   });
 
   // ABI errors trigger the retry path in downloadWithUrl (3 attempts
-  // with 0+2+4s backoff = ~6s wallclock). Use fake timers to skip
-  // the sleep waits so the test runs in milliseconds, not seconds.
+  // with 0+2+4s backoff). The fixture dependency skips only the backoff
+  // sleeps so the retry/cleanup contract runs quickly.
   test('deletes the partial APK when ABI validation throws', async () => {
-    jest.useFakeTimers();
-
     // Same setup as VERSION MISMATCH, but version validation passes
-    // and the failure comes from validateDownloadedApkAbi. We
-    // configure the mocked validateDownloadedApkAbi (jest.fn()
-    // installed at the module level — see the jest.mock block at
-    // the top of this file) to throw, simulating the upstream
-    // mislabelled-ABI case.
-    //
-    // spawn strategy: succeed cleanly on every call (so ABI
-    // validation runs and throws — that's the branch we're
-    // testing). The retry path then takes over and the cleanup
-    // contract is exercised on every attempt. Fake timers handle
-    // the backoff sleeps.
-    spawn.mockImplementation(makeFakeCurlSpawn(apksDir, PKG, VER));
-    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
-
+    // and the failure comes from validateDownloadedApkAbi.
+    const expectedPath = path.join(apksDir, `${PKG}_${VER}.apk`);
+    copyFixtureTo(placeholderFixture, expectedPath);
     validateDownloadedApkAbi.mockImplementation(() => {
       throw new Error('Downloaded APK is missing lib/arm64-v8a/*.so (forced for test)');
     });
 
-    const expectedPath = path.join(apksDir, `${PKG}_${VER}.apk`);
+    const result = await downloadWithUrl(
+      fixtureUrl(placeholderFixture),
+      apksDir,
+      PKG,
+      VER,
+      downloadOptions(),
+    ).catch((e) => e); // capture the rejection instead of letting jest see it as unhandled
 
-    // Start the download but don't await yet — fake timers must be
-    // advanced manually so the retry sleeps don't hang.
-    const downloadPromise = downloadWithUrl('https://example.invalid/x.apk', apksDir, PKG, VER)
-      .catch((e) => e); // capture the rejection instead of letting jest see it as unhandled
-
-    // Run pending microtasks + timer callbacks. Each retry waits
-    // 2s then 4s; advance enough to cover both, then a little more
-    // for the final throw to surface.
-    for (let i = 0; i < 20; i += 1) {
-      await jest.advanceTimersByTimeAsync(1000);
-    }
-
-    // downloadPromise was started above; pull its settled value now.
-    const result = await downloadPromise;
     expect(result).toBeInstanceOf(Error);
     expect(result.message).toMatch(/missing.*lib\/arm64-v8a|curl failed/);
-
-    jest.useRealTimers();
 
     // Cleanup contract verified: the partial APK that was written
     // on every retry attempt is gone.
@@ -207,93 +191,38 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
     // The cleanup-on-failure contract must NOT touch the file when
     // every validation passes. Pin the success path so a future
     // refactor doesn't accidentally delete the working APK.
-    spawn.mockImplementation(makeFakeCurlSpawn(apksDir, PKG, VER));
-    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
-
-    // ABI validation passes (no throw).
+    const expectedPath = path.join(apksDir, `${PKG}_${VER}.apk`);
+    copyFixtureTo(placeholderFixture, expectedPath);
     validateDownloadedApkAbi.mockImplementation(() => { /* no throw — pretend the arch is fine */ });
 
-    const result = await downloadWithUrl('https://example.invalid/x.apk', apksDir, PKG, VER);
+    const result = await downloadWithUrl(
+      fixtureUrl(placeholderFixture),
+      apksDir,
+      PKG,
+      VER,
+      downloadOptions(),
+    );
     expect(result.success).toBe(true);
-    expect(result.path).toBe(path.join(apksDir, `${PKG}_${VER}.apk`));
+    expect(result.path).toBe(expectedPath);
     // File is preserved — this is the negative of the cleanup tests.
     expect(fs.existsSync(result.path)).toBe(true);
   });
 
   test('skips aapt version validation for split packages (.xapk/.apkm/.apks)', async () => {
-    // Sofascore regression: apkeep resolves arm64-v8a as a .xapk URL.
-    // aapt can't parse the outer zip-of-zips, so the old code threw
-    // VERSION MISMATCH and deleted the working bundle. The split-package
-    // path must skip the aapt check (caller validates inner base.apk).
+    // Sofascore regression: a fixture bundle is mislabelled .apk but has
+    // an inner APK entry. aapt cannot parse this outer zip-of-zips.
     const xapkPath = path.join(apksDir, `${PKG}_${VER}.apk`);
-    // Build a minimal zip-of-zips in pure JS. Layout: [local file header
-    // + inner apk data] [central dir] [EOCD]. Field offsets per the ZIP
-    // spec (PKWARE APPNOTE.TXT). CRC/size fields are 0 — detectApkShape
-    // only inspects the file listing, not the entry data.
-    const innerName = 'config.arm64_v8a.apk';
-    const innerData = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00]);
-    const nameBuf = Buffer.from(innerName, 'utf8');
-    const lfh = Buffer.alloc(30);
-    lfh.writeUInt32LE(0x04034b50, 0);
-    lfh.writeUInt16LE(20, 4);
-    lfh.writeUInt16LE(0, 6);
-    lfh.writeUInt16LE(0, 8);
-    lfh.writeUInt16LE(0, 10);
-    lfh.writeUInt16LE(0, 12);
-    lfh.writeUInt32LE(0, 14);
-    lfh.writeUInt32LE(innerData.length, 18);
-    lfh.writeUInt32LE(innerData.length, 22);
-    lfh.writeUInt16LE(nameBuf.length, 26);
-    lfh.writeUInt16LE(0, 28);
-    const cdh = Buffer.alloc(46);
-    cdh.writeUInt32LE(0x02014b50, 0);
-    cdh.writeUInt16LE(20, 4);
-    cdh.writeUInt16LE(20, 6);
-    cdh.writeUInt16LE(0, 8);
-    cdh.writeUInt16LE(0, 10);
-    cdh.writeUInt16LE(0, 12);
-    cdh.writeUInt16LE(0, 14);
-    cdh.writeUInt32LE(0, 16);
-    cdh.writeUInt32LE(innerData.length, 20);
-    cdh.writeUInt32LE(innerData.length, 24);
-    cdh.writeUInt16LE(nameBuf.length, 28);
-    cdh.writeUInt16LE(0, 30);
-    cdh.writeUInt16LE(0, 32);
-    cdh.writeUInt16LE(0, 34);
-    cdh.writeUInt16LE(0, 36);
-    cdh.writeUInt32LE(0, 38);
-    cdh.writeUInt32LE(0, 42);
-    const eocd = Buffer.alloc(22);
-    eocd.writeUInt32LE(0x06054b50, 0);
-    eocd.writeUInt16LE(0, 4);
-    eocd.writeUInt16LE(0, 6);
-    eocd.writeUInt16LE(1, 8);
-    eocd.writeUInt16LE(1, 10);
-    eocd.writeUInt32LE(cdh.length + nameBuf.length, 12);
-    eocd.writeUInt32LE(lfh.length + nameBuf.length + innerData.length, 16);
-    eocd.writeUInt16LE(0, 20);
-    const xapkBytes = Buffer.concat([lfh, nameBuf, innerData, cdh, nameBuf, eocd, Buffer.alloc(12 * 1024, 0x43)]);
-    spawn.mockImplementation(() => {
-      fs.writeFileSync(xapkPath, xapkBytes);
-      return {
-        stderr: { on: jest.fn() },
-        on: (event, cb) => {
-          if (event === 'close') setImmediate(() => cb(0));
-        },
-      };
-    });
+    copyFixtureTo(splitFixture, xapkPath);
 
-    // aapt returns a wrong versionName — the split-package path must ignore it.
-    // Also forward to the real unzip so detectApkShape can identify the bundle.
-    execFileSync.mockImplementation((cmd, args) => {
-      if (cmd === 'unzip' && args[0] === '-Z1') {
-        return actualExecFileSync('unzip', ['-Z1', args[1]], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-      }
-      return `package: name='${PKG}' versionName='99.99.99'\n`;
-    });
-    validateDownloadedApkAbi.mockImplementation(() => { /* no throw */ });
-
-    const result = await downloadWithUrl(`https://example.invalid/${PKG}_${VER}.xapk`, apksDir, PKG, VER);
+    // aapt is intentionally not called for this bundle. The real unzip
+    // probe still detects the sanitized inner APK fixture.
+    const result = await downloadWithUrl(
+      fixtureUrl(splitFixture),
+      apksDir,
+      PKG,
+      VER,
+      downloadOptions(),
+    );
     expect(result.success).toBe(true);
     expect(result.path).toBe(xapkPath);
     expect(result.version).toBe(VER); // falls back to expected version for split packages
@@ -314,70 +243,33 @@ describe('downloadWithApkeep — cleanup-on-failure contract', () => {
   });
 
   test('skips aapt version validation for split packages (.xapk/.apkm/.apks)', async () => {
-    // Repro of the Sofascore bug: apkeep legitimately downloads a xapk
-    // bundle for the requested package@version. aapt can't parse
-    // zip-of-zips, so the old code threw VERSION MISMATCH and deleted
-    // the working xapk, leaving the operator thinking apkeep didn't
-    // find the package. The fix: split packages skip the aapt version
-    // check entirely (aapt can't read them anyway) and rely on the
-    // caller's merge step in download-supported-apk.js to validate the
-    // inner base.apk's versionName.
-    const { EventEmitter } = require('node:events');
-
-    execFile.mockImplementation(() => {
-      const fakeXapk = path.join(apksDir, `${PKG}@${VER}.xapk`);
-      fs.writeFileSync(fakeXapk, Buffer.alloc(20 * 1024, 0x42)); // 20KB of 'B'
-      const cp = new EventEmitter();
-      cp.stdout = new EventEmitter();
-      cp.stderr = new EventEmitter();
-      cp.kill = jest.fn();
-      setImmediate(() => cp.emit('close', 0));
-      return cp;
-    });
-
-    // aapt returns a wrong versionName. The split-package path must ignore it.
-    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='99.99.99'\n`);
-
-    validateDownloadedApkAbi.mockImplementation(() => { /* no throw */ });
-
+    // The fixture apkeep command creates the synthetic .xapk bundle;
+    // validation is intentionally bypassed for split packages.
     const expectedPath = path.join(apksDir, `${PKG}@${VER}.xapk`);
 
-    const result = await downloadWithApkeep(PKG, VER, apksDir);
+    const result = await downloadWithApkeep(
+      PKG,
+      VER,
+      apksDir,
+      downloadOptions(),
+    );
     expect(result.success).toBe(true);
     expect(result.filepath).toBe(expectedPath);
     expect(fs.existsSync(expectedPath)).toBe(true);
   });
 
-  test('deletes the partial .xapk when ABI validation throws', async () => {
-    // Mirror of the VERSION MISMATCH test, but with version validation
-    // passing and ABI validation throwing — exercises the second
+  test('deletes the partial .xapk when API validation throws', async () => {
+    // Version validation passes; ABI validation throws — exercises the
     // cleanup branch in downloadWithApkeep independently.
-    const { EventEmitter } = require('node:events');
-
-    execFile.mockImplementation(() => {
-      const fakeXapk = path.join(apksDir, `${PKG}@${VER}.xapk`);
-      fs.writeFileSync(fakeXapk, Buffer.alloc(20 * 1024, 0x42));
-      const cp = new EventEmitter();
-      cp.stdout = new EventEmitter();
-      cp.stderr = new EventEmitter();
-      cp.kill = jest.fn();
-      setImmediate(() => cp.emit('close', 0));
-      return cp;
-    });
-
-    // Version validation passes.
-    execFileSync.mockImplementation(() => `package: name='${PKG}' versionName='${VER}'\n`);
-
-    // ABI validation throws — the actual Reddit failure mode that
-    // prompted the cleanup contract.
+    const expectedPath = path.join(apksDir, `${PKG}@${VER}.xapk`);
     validateDownloadedApkAbi.mockImplementation(() => {
       throw new Error('Downloaded APK is missing lib/arm64-v8a/*.so (forced for test)');
     });
 
-    const expectedPath = path.join(apksDir, `${PKG}@${VER}.xapk`);
-
-    await expect(downloadWithApkeep(PKG, VER, apksDir)).rejects.toThrow(
-      /missing.*lib\/arm64-v8a|APKPure does not have/
+    await expect(
+      downloadWithApkeep(PKG, VER, apksDir, downloadOptions()),
+    ).rejects.toThrow(
+      /missing.*lib\/arm64-v8a|APKPure does not have/,
     );
 
     expect(execFile).toHaveBeenCalled();

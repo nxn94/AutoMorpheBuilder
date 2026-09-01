@@ -13,6 +13,11 @@
 #      instructions with the required -v filter).
 #   4. If the release exists, upload any new assets with retry + skip
 #      already-attached. If it doesn't, create it.
+#   5. Generate a SHA256SUMS file next to the APKs, verify it via
+#      `sha256sum --check`, and upload it alongside the APK assets.
+#      Downstream consumers (Obtainium, manual curators) can use this
+#      to confirm the APK they downloaded matches the one the workflow
+#      built (see docs/checksums.md).
 #
 # Environment:
 #   APKS_DIR         required  where patched APKs land (download-artifact dest)
@@ -123,5 +128,53 @@ for app_name in "${APPS[@]}"; do
       --title "$TITLE" \
       --notes "$RELEASE_NOTES"
   fi
+
+  # Per-release integrity manifest. Generate SHA256SUMS in the APK
+  # directory (same place where the .apk files live) and upload it
+  # alongside the release assets. Downstream consumers (Obtainium,
+  # curators) can `sha256sum --check SHA256SUMS` against this file to
+  # confirm the APK they downloaded matches the one the workflow built.
+  #
+  # The intermediate `sha256sum --check` is a self-test that catches
+  # bugs in the file glob (a typo would silently produce a file that
+  # doesn't match the actual binaries).
+  if [ "${#apk_files[@]}" -gt 0 ]; then
+    sha256_dir="$(dirname "${apk_files[0]}")"
+    log "Writing per-release SHA256SUMS to $sha256_dir/SHA256SUMS..."
+    (
+      cd "$sha256_dir"
+      # Note: redirect target is relative to cwd (which is now $sha256_dir),
+      # so use the bare filename "SHA256SUMS" — not "$sha256_dir/SHA256SUMS"
+      # (which would resolve to $sha256_dir/$sha256_dir/SHA256SUMS and fail).
+      sha256sum -- "${apk_files[@]#$sha256_dir/}" > SHA256SUMS
+    )
+    # Self-test: re-hash and compare. Any mismatch means a file in the
+    # manifest no longer matches the bytes on disk — surface as an
+    # ::error:: rather than shipping a broken manifest.
+    if ! ( cd "$sha256_dir" && sha256sum --check SHA256SUMS ); then
+      log_error "SHA256SUMS self-test failed for $TAG"
+      exit 1
+    fi
+    if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null \
+      | grep -Fxq "SHA256SUMS"; then
+      log "  SHA256SUMS already attached; skipping."
+    else
+      uploaded=false
+      for try in 1 2 3 4 5; do
+        if gh release upload "$TAG" "$sha256_dir/SHA256SUMS" --clobber; then
+          uploaded=true
+          break
+        fi
+        log_warn "  SHA256SUMS upload attempt $try failed; retrying in 3s..."
+        sleep 3
+      done
+      if [ "$uploaded" != "true" ]; then
+        log_error "Failed to upload SHA256SUMS to release $TAG after 5 attempts."
+        exit 1
+      fi
+      log "  SHA256SUMS uploaded"
+    fi
+  fi
+
   log "::notice::Published release: ${TAG}"
 done

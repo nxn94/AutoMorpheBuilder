@@ -1,0 +1,4 @@
+# Source: synthetic aapt badging response for fixture validation
+# Captured: 2026-08-31
+# Exercise: Accept a sanitized APK whose version matches the requested version.
+package: name='com.google.android.youtube' versionName='20.44.38'

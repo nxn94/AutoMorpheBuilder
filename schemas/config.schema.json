@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nxn94/AutoMorpheBuilder/schemas/config.schema.json",
+  "title": "AutoMorpheBuilder config.json",
+  "description": "Structural schema for the build config consumed by morphe-build.yml and the Node.js helpers under .github/scripts/. Semantic checks (duplicate names, ABI enum drift, cross-key invariants) live in .github/scripts/validate-config.js and run on top of this schema in scripts/validate-config.js.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["patch_repos", "cli"],
+  "properties": {
+    "preferred_arch": {
+      "type": "string",
+      "enum": ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"],
+      "description": "Android ABI the downloader prefers when multiple APKs are available."
+    },
+    "auto_update_urls": {
+      "type": "boolean",
+      "description": "When true, pre_download_apks.sh writes resolved URLs back into download_urls."
+    },
+    "patch_repos": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+        "description": "Android package id, e.g. com.google.android.youtube."
+      },
+      "additionalProperties": { "$ref": "#/$defs/app" }
+    },
+    "cli": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "branch"],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$",
+          "description": "owner/repo slug for the morphe-desktop CLI repo on GitHub."
+        },
+        "branch": {
+          "type": "string",
+          "enum": ["main", "dev"],
+          "description": "morphe-desktop branch resolve-tag.sh will pin the CLI jar to."
+        }
+      }
+    },
+    "download_urls": {
+      "type": "object",
+      "description": "Cache of resolved APK download URLs, keyed by package id then version (or the literal 'latest_supported').",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "repo", "branch", "apkmirror_path"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$",
+          "description": "Release-name slug. Lowercase letters/digits/hyphens; used directly in GitHub release tags."
+        },
+        "repo": {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$",
+          "description": "owner/repo slug for the patch repo on GitHub."
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]+$",
+          "description": "Branch of the patch repo to fetch the patches-list.json + .mpp from."
+        },
+        "apkmirror_path": {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$",
+          "description": "APKMirror publisher/package slug (single slash, no whitespace)."
+        },
+        "pin_version": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+)+$",
+          "description": "Optional. Numeric APK version pin that bypasses morphe-supported resolution."
+        },
+        "pin_patch_tag": {
+          "type": "string",
+          "pattern": "^v?\\d+(\\.\\d+)+([-.+][\\w.-]+)?$",
+          "description": "Optional. Patch-tag pin (e.g. 'v1.18.3' or 'v1.24.0-dev.8')."
+        }
+      }
+    }
+  }
+}
