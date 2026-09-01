@@ -30,16 +30,19 @@ The downloader now uses content-based split-package detection (`detectApkShape` 
 
 ---
 
-## `Wrong version of key store`
+## `Wrong version of key store` / `keystore password was incorrect`
 
-**Symptom:** the `Patch and sign ${{ matrix.name }} with morphe-desktop` step fails with `Wrong version of key store` (or similar) from `morphe-desktop`, or fails with a generic "cannot read keystore" message before morphe-desktop exits.
+**Symptom:** the `Patch and sign ${{ matrix.name }} with morphe-desktop` step fails with `Couldn't decrypt keystore — wrong password or alias` from morphe-desktop, with the underlying Java stack trace typically `java.io.IOException: keystore password was incorrect` at `sun.security.pkcs12.PKCS12KeyStore.engineLoad` (PKCS12) or `BadPaddingException` deep down.
 
 **Cause:** wrong keystore password, **or** the key password differs from the keystore password and only the keystore password is set as a secret, **or** the keystore is in a format morphe-desktop does not accept.
+
+`patch_apk.sh` always passes `--keystore-password` (store password), `--keystore-entry-password` (entry password — defaults to the store password when `KEY_PASSWORD` is unset), and `--keystore-entry-alias` (defaults to the keystore's first alias detected via `keytool -list` when `KEY_ALIAS` is unset). The previous version omitted those flags and trusted morphe-desktop's defaults; those defaults are hardcoded to `"Morphe"` in v1.14.0 (`PatchCommand.kt:215`/`221`), so any third-party keystore hit a hardcoded legacy alias/password that does not match. The flags are now passed unconditionally for that reason.
 
 **Fix:**
 
 - Confirm `KEYSTORE_PASSWORD` matches the password used when the keystore was generated.
-- If the key password differs, set `KEY_PASSWORD` to the key-specific password (and leave `KEYSTORE_PASSWORD` for the keystore). `patch_apk.sh` only passes `--keystore-entry-password` when `KEY_PASSWORD` differs from `KEYSTORE_PASSWORD`.
+- If the key password differs, set `KEY_PASSWORD` to the key-specific password (and leave `KEYSTORE_PASSWORD` for the keystore). `patch_apk.sh` falls back to `KEYSTORE_PASSWORD` for the entry when `KEY_PASSWORD` is unset — matches the old `keytool -srckeypass`-defaults-to-`-srcstorepass` behavior.
+- If your keystore has multiple aliases and you want a non-first one, set `KEY_ALIAS` explicitly. `patch_apk.sh` detects the first alias via `keytool -list -keystore <file> -storepass:env KEYSTORE_PASSWORD` when `KEY_ALIAS` is unset.
 - morphe-desktop's `patch --keystore` accepts PKCS12 / JKS / BKS and auto-detects the format from file contents (not extension). If your keystore is in another format, convert it locally before base64-encoding:
 
   ```bash
