@@ -82,7 +82,8 @@ Shell scripts use `shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipe
 
 - `morphe-desktop.jar` is **never** cached. `actions/cache@v5` only saves on miss, so caching the jar would silently put a stale jar back into `tools/`. `download_morphe_tools.sh` and `fetch_morphe_tools.sh` both `rm -f` and re-download on every run. See `docs/troubleshooting.md` → "java.lang.NoSuchMethodError" for the failure mode this prevents.
 - `morphe-desktop.jar` verification is via `META-INF/MANIFEST.MF` `Implementation-Version`, not SHA-256. PR 6 upgrades to SHA-256.
-- `apkeep` and `bouncycastle` installers verify SHA-256; `aapt` and `playwright` installers do not (PR 6).
+- `apkeep` installer verifies SHA-256; `aapt` and `playwright` installers do not (PR 6). The previous `install_bouncycastle.sh` (BouncyCastle for keystore conversion) was deleted when morphe-desktop's `patch --keystore` flags made the conversion redundant.
+- Signing has **no** `--unsigned` fallback. morphe-desktop's `patch` always signs when `--keystore` is passed; a bad password or invalid keystore aborts the workflow loudly rather than producing an unsigned APK. The previous `build` ↔ `sign` trust boundary was dissolved (see `docs/architecture.md` → "Signing model" for the implications).
 - The downloader saves XAPK/APKM/APKS bundles with a `.apk` extension. `detectApkShape` in `apk-selection.js` inspects zip contents to recognise bundles — required because APKMirror often serves bundles without preserving the extension.
 - The `aapt` version check is skipped for split packages (the outer zip-of-zips is not a valid APK); the post-merge step verifies the inner `base.apk`.
 - `pre_download_apks.sh` runs apps in parallel via `&` + `wait`. Each app's `.mpp` is passed directly to `morphe-desktop list-versions` (no shared-file race).

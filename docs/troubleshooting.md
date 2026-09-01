@@ -32,15 +32,15 @@ The downloader now uses content-based split-package detection (`detectApkShape` 
 
 ## `Wrong version of key store`
 
-**Symptom:** the patch step fails with `Wrong version of key store` from `keytool`, or the sign step fails with a similar message from `apksigner`.
+**Symptom:** the `Patch and sign ${{ matrix.name }} with morphe-desktop` step fails with `Wrong version of key store` (or similar) from `morphe-desktop`, or fails with a generic "cannot read keystore" message before morphe-desktop exits.
 
-**Cause:** wrong keystore password, **or** the key password differs from the keystore password and only the keystore password is set as a secret.
+**Cause:** wrong keystore password, **or** the key password differs from the keystore password and only the keystore password is set as a secret, **or** the keystore is in a format morphe-desktop does not accept.
 
 **Fix:**
 
 - Confirm `KEYSTORE_PASSWORD` matches the password used when the keystore was generated.
-- If the key password differs, set `KEY_PASSWORD` to the key-specific password (and leave `KEYSTORE_PASSWORD` for the keystore).
-- To confirm, run locally:
+- If the key password differs, set `KEY_PASSWORD` to the key-specific password (and leave `KEYSTORE_PASSWORD` for the keystore). `patch_apk.sh` only passes `--keystore-entry-password` when `KEY_PASSWORD` differs from `KEYSTORE_PASSWORD`.
+- morphe-desktop's `patch --keystore` accepts PKCS12 / JKS / BKS and auto-detects the format from file contents (not extension). If your keystore is in another format, convert it locally before base64-encoding:
 
   ```bash
   base64 -d keystore.b64 > /tmp/test.keystore

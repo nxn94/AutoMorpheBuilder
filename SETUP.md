@@ -41,7 +41,7 @@ Repo → Settings → Secrets and variables → Actions.
 |--------|----------|-------------|
 | `KEYSTORE_BASE64` | yes | Output from step 2 |
 | `KEYSTORE_PASSWORD` | yes | Keystore password |
-| `KEY_ALIAS` | no | Defaults to first alias in keystore |
+| `KEY_ALIAS` | no | Defaults to first alias in keystore (relies on morphe-desktop picking the first alias when `--keystore-entry-alias` is omitted; set this if your keystore has multiple aliases) |
 | `KEY_PASSWORD` | no | Only if key password ≠ keystore password |
 | `APKMIRROR_API_USER` | no | Speeds up APK resolution (skips Playwright fallback) |
 | `APKMIRROR_API_PASS` | no | APKMirror-API password |

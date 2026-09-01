@@ -259,6 +259,16 @@ jobs:
     if: needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Gated by the `signing` GitHub environment so KEYSTORE_BASE64 /
+    # KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD are scoped to this
+    # job (and create-release downstream). Previously the sign job
+    # held the secrets; now morphe-desktop's `patch --keystore` runs
+    # in this job (morphe-desktop auto-detects PKCS12 / JKS / BKS and
+    # converts internally — see .github/scripts/pipeline/patch_apk.sh).
+    # The trust boundary that previously separated `build` and `sign`
+    # is intentionally dissolved: morphe-desktop's built-in signing
+    # requires the keystore at patch time.
+    environment: signing
     permissions:
       contents: read
 
@@ -279,6 +289,11 @@ jobs:
       CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
       CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
       CLI_REPO: ${{ needs.check-versions.outputs.cli-repo }}
+      KEYSTORE_FILE: ${{ env.TOOLS_DIR }}/source.keystore
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -436,14 +451,43 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
         run: node "$GITHUB_WORKSPACE/.github/scripts/download-supported-apk.js"
 
-      - name: Patch ${{ matrix.name }} with morphe-desktop (unsigned)
+      - name: Decode signing keystore
+        # The only step in this job that touches KEYSTORE_BASE64.
+        # morphe-desktop's `patch --keystore` auto-detects PKCS12 /
+        # JKS / BKS from the file contents (no extension sniffing, no
+        # BouncyCastle conversion needed) and signs in place. The
+        # decoded file lands under $TOOLS_DIR and never leaves the
+        # runner. patch_apk.sh hard-fails the job if the keystore is
+        # missing or the password is wrong — there is no silent
+        # unsigned output path.
+        env:
+          TOOLS_DIR: ${{ env.TOOLS_DIR }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::KEYSTORE_BASE64 secret is required (signed builds are enforced)."
+            exit 1
+          fi
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::KEYSTORE_PASSWORD secret is required (signed builds are enforced)."
+            exit 1
+          fi
+          mkdir -p "$TOOLS_DIR"
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$TOOLS_DIR/source.keystore"
+          echo "Decoded keystore to $TOOLS_DIR/source.keystore"
+
+      - name: Patch and sign ${{ matrix.name }} with morphe-desktop
         # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError"
-        # for the full rationale. The `--unsigned` flag tells
-        # morphe-desktop to skip its built-in signing step; the
-        # downstream `sign` job (environment: signing, the ONLY job
-        # with KEYSTORE_* secrets in its env) re-signs with apksigner.
-        # Keeping these in separate jobs means a code-execution bug in
-        # the download/patch surface cannot reach the keystore.
+        # for the full rationale. morphe-desktop's `patch --keystore`
+        # accepts PKCS12 / JKS / BKS and auto-detects the format from
+        # file contents (not extension), converting to BKS internally
+        # without touching the original file. The decoded keystore
+        # from the previous step is passed straight in — no manual
+        # type detection, no BouncyCastle conversion, no separate
+        # sign-and-rewrite step. If the keystore is invalid or the
+        # password is wrong, morphe-desktop exits non-zero and this
+        # step fails the workflow loudly (no `--unsigned` fallback).
         id: patch
         env:
           APP_ID: ${{ matrix.appId }}
@@ -457,115 +501,29 @@ jobs:
           OUT_DIR: ${{ env.OUT_DIR }}
           APKS_DIR: ${{ env.APKS_DIR }}
           RUNNER_TEMP: ${{ runner.temp }}
+          KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
+          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ env.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
         run: bash .github/scripts/pipeline/patch_apk.sh
 
-      - name: Upload unsigned patched ${{ matrix.name }}
-        # The artifact name intentionally preserves the same shape as
-        # the previous (signed) artifact so the downstream `sign` job
-        # and `create-release` job work unchanged. The sign job
-        # rewrites the APK in place; create-release downloads the
-        # post-sign artifact (named `signed-apks`).
+      - name: Upload signed patched ${{ matrix.name }}
+        # The artifact name preserves the shape create-release already
+        # downloads (it pattern-matches `*-v*` from the build job's
+        # matrix entries). The downstream `create-release` job reads
+        # the signed APK from this artifact directly — no separate
+        # sign job between build and create-release anymore.
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
           path: out/${{ steps.patch.outputs.output }}
 
-  sign:
-    # The ONLY job in this workflow that consumes signing secrets.
-    # Gated by the `signing` GitHub environment so the secrets are
-    # scoped to this job alone (Settings → Environments → signing in
-    # the repo UI). If a malicious APK / patch repo triggers code
-    # execution during download/patch (the untrusted-input surface), it
-    # runs in the `build` job above with no keystore access. The
-    # blast radius of any such compromise ends at the job boundary.
-    needs: build
+  create-release:
+    needs: [check-versions, build]
     if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: signing
-    permissions:
-      contents: read
-    env:
-      # prepare_keystore.sh writes decoded keystore files under
-      # $TOOLS_DIR; sign_apk.sh needs no other env from the build job.
-      TOOLS_DIR: tools
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Java (for keytool in prepare_keystore.sh)
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Install BouncyCastle (for prepare_keystore.sh)
-        run: bash .github/scripts/pipeline/install_bouncycastle.sh
-
-      - name: Cache BouncyCastle
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
-        with:
-          path: /usr/share/java/bcprov.jar
-          key: bouncycastle-bcprov-1.77
-
-      - name: Install aapt for apksigner
-        # install_aapt.sh installs the full Android SDK build-tools,
-        # which provides apksigner alongside aapt. The downstream
-        # sign_apk.sh prefers $BT_DIR over PATH lookup.
-        id: aapt
-        env:
-          ANDROID_HOME: /tmp/android-sdk
-        run: bash .github/scripts/pipeline/install_aapt.sh
-
-      - name: Download all unsigned APKs from build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
-        with:
-          pattern: '*-v*'
-          path: unsigned-apks
-          merge-multiple: true
-
-      - name: Prepare signing keystore
-        # The only step that decodes KEYSTORE_BASE64. Decoded keystore
-        # files are written to TOOLS_DIR and never leave the runner.
-        id: keystore
-        env:
-          TOOLS_DIR: ${{ env.TOOLS_DIR }}
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: bash .github/scripts/pipeline/prepare_keystore.sh
-
-      - name: Sign all APKs with apksigner
-        # sign_apk.sh signs each unsigned APK in $INPUT_DIR in place
-        # using the PKCS12 keystore from prepare_keystore.sh, verifies
-        # the result, and copies signed APKs to $OUTPUT_DIR.
-        env:
-          INPUT_DIR: unsigned-apks
-          OUTPUT_DIR: signed-apks
-          P12_FILE: ${{ steps.keystore.outputs.p12_path }}
-          KEY_ALIAS: ${{ steps.keystore.outputs.alias }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ENTRY_PASS: ${{ secrets.KEY_PASSWORD }}
-          BT_DIR: /tmp/android-sdk/build-tools/${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
-          EXPECTED_CERT_SHA256: ${{ vars.EXPECTED_CERT_SHA256 }}
-        run: bash .github/scripts/pipeline/sign_apk.sh
-
-      - name: Upload signed APKs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
-        with:
-          name: signed-apks
-          path: signed-apks/
-          retention-days: 1
-          if-no-files-found: error
-
-  create-release:
-    needs: [check-versions, sign]
-    if: needs.sign.result == 'success' && needs.check-versions.outputs.should-build == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -574,14 +532,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download signed APKs from sign job
-        # The `sign` job (env: signing) signs every unsigned APK from
-        # the `build` job and repackages them under the `signed-apks`
-        # artifact, preserving the per-APK filename. create_release.sh
+      - name: Download signed APKs from build job
+        # Each `build` matrix entry now produces a signed APK directly
+        # (morphe-desktop's `patch --keystore`) and uploads it under
+        # `<name>-v<ver>-<patches>`. There is no separate `sign` job —
+        # create-release downloads every per-matrix artifact with
+        # `pattern: '*-v*'` + `merge-multiple: true`. create_release.sh
         # iterates $APKS_DIR/*.apk unchanged.
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
-          name: signed-apks
+          pattern: '*-v*'
           path: apks
           merge-multiple: true
 

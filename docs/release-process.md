@@ -7,11 +7,12 @@ This document describes how AutoMorpheBuilder produces, tags, publishes, and pru
 The `morphe-build.yml` workflow runs on a daily cron (`15 5 * * *` UTC) and on `workflow_dispatch`. The full pipeline is:
 
 1. **`check-versions`** resolves the latest Morphe patches tags per app and the latest `morphe-desktop` CLI tag, then filters the build matrix by whether each app's expected release already exists.
-2. **`build`** (matrix per app, already filtered) downloads the APK and runs morphe-desktop's `patch` with `--unsigned`, producing an un-signed APK. **No signing secrets are visible to this job** — a code-execution bug during download/patch cannot reach the keystore.
-3. **`sign`** (single runner, gated by the `signing` GitHub environment) downloads every unsigned APK, signs each with `apksigner` using the project's keystore, and uploads the signed artifacts. This is the **only** job that consumes `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`.
-4. **`create-release`** downloads the signed APKs, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
+2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK, decodes `KEYSTORE_BASE64` straight to `tools/source.keystore`, then runs `morphe-desktop patch --keystore` which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents.
+3. **`create-release`** (also gated by the `signing` environment) downloads every signed APK artifact via `pattern: '*-v*'` + `merge-multiple: true`, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
 
-See `docs/architecture.md` for the job graph and the signing trust boundary.
+There is no separate `sign` job anymore — morphe-desktop's `patch --keystore` makes it redundant. The previous `build` ↔ `sign` trust boundary has been dissolved; the build matrix entry that processes untrusted APK + patch input now holds the keystore. Mitigate by pinning `pin_patch_tag` and `pin_version` to known-good values.
+
+See `docs/architecture.md` for the job graph and the signing model.
 
 ## Release tag format
 

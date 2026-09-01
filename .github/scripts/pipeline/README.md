@@ -15,18 +15,16 @@ under `lib/` and are sourced (not executed) by the per-step scripts.
 │   ├── config.sh             config.json / patches.json helpers
 │   ├── github.sh             gh CLI wrappers + token checks
 │   ├── json.sh               jq-backed JSON access
-│   └── apk.sh                aapt / apksigner helpers
+│   └── apk.sh                aapt helpers
 ├── check_versions.sh         resolve latest Morphe + CLI tags; emit matrix + should-build
 ├── install_apkeep.sh         download apkeep binary
 ├── install_aapt.sh           install aapt + capture build-tools version
-├── install_bouncycastle.sh   download BouncyCastle provider jar
 ├── install_playwright.sh     install Playwright Chromium + smoke test
 ├── download_morphe_tools.sh  download morphe-desktop.jar + per-repo .mpp
 ├── fetch_morphe_tools.sh     per-matrix mpp / cli / APKEditor download
 ├── pre_download_apks.sh      parallel pre-download APKs across all apps
 ├── prepare_target_version.sh gather inputs for download-supported-apk.js
-├── prepare_keystore.sh       decode KEYSTORE_BASE64; produce BKS + PKCS12 keystores
-├── patch_apk.sh              run morphe-desktop patch; rename output for Obtainium
+├── patch_apk.sh              run morphe-desktop patch --keystore; rename output for Obtainium
 ├── create_release.sh         publish per-app GitHub Releases
 ├── resolve-tag.sh            resolve branch → tag (sourced by check_versions.sh + update-patches.yml)
 └── sync-patches.sh           sync patches.json from upstream patch repos (invoked by update-patches.yml)
