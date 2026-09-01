@@ -289,7 +289,7 @@ jobs:
       CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
       CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
       CLI_REPO: ${{ needs.check-versions.outputs.cli-repo }}
-      KEYSTORE_FILE: ${{ env.TOOLS_DIR }}/source.keystore
+      KEYSTORE_FILE: tools/source.keystore
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
