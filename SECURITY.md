@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest commit on the default branch (`dev`) of this repository receives security fixes. Older tags, forks, and stale branches are not maintained.
+Only the latest commit on the default branch (`main`) of this repository receives security fixes. Older tags, forks, and stale branches are not maintained.
 
 ## Reporting a vulnerability
 
