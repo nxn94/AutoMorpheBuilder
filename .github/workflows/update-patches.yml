@@ -50,7 +50,7 @@ jobs:
         env:
           CONFIG_FILE: config.json
           PATCHES_FILE: patches.json
-        run: bash scripts/detect-new-repos.js
+        run: node scripts/detect-new-repos.js
 
       - name: Sync patches.json (skip if no new repos on auto-trigger)
         if: github.event_name == 'workflow_dispatch' || steps.detect.outputs.has_new_repos == 'true'
