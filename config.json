@@ -66,13 +66,6 @@
       "branch": "main",
       "apkmirror_path": "flightradar24-ab/flightradar24-flight-tracker-2",
       "display_name": "Flightradar24"
-    },
-    "com.example.autoregen-test": {
-      "name": "autoregen-test",
-      "repo": "MorpheApp/morphe-patches",
-      "branch": "main",
-      "apkmirror_path": "example/example-app",
-      "display_name": "Autoregen Test"
     }
   },
   "cli": {
