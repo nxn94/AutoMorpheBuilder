@@ -5,10 +5,37 @@ name: CI
 # The two existing workflows (morphe-build.yml and update-patches.yml)
 # are dispatch/schedule-only, so this is the only thing that gates a
 # broken PR from merging.
+#
+# Config-change orchestration: when a push to main changes
+# `config.json`, the auto-regenerate in `update-patches.yml` lands the
+# matching README update as a follow-up commit (PR #43 fix). If CI's
+# own `push` trigger ran in parallel, it would check the README on the
+# user's commit (which doesn't have the update yet) and fail — a brief
+# red run that's later overwritten by a green run on the auto-commit.
+#
+# Two changes eliminate that race entirely:
+#   1. `paths-ignore: ['config.json']` on the `push` trigger — CI does
+#      NOT run from `push` when `config.json` is in the diff; the
+#      workflow is then picked up by the `workflow_run` listener below.
+#   2. `workflow_run` trigger listening for `update-patches.yml`
+#      completion on main. It checks out the branch TIP (which already
+#      includes the auto-commit when update-patches succeeded) and runs
+#      the full check. So CI never sees an out-of-sync README.
+#
+# `paths-ignore` only excludes pushes where `config.json` changed; pure
+# code or docs pushes still go through the normal `push` path. For PRs
+# (which don't trigger update-patches), the strict `check:readme` runs
+# as usual and forces authors to commit a regen themselves.
 
 on:
   pull_request:
   push:
+    branches: [main]
+    paths-ignore:
+      - 'config.json'
+  workflow_run:
+    workflows: ["Update patches.json from upstream repos"]
+    types: [completed]
     branches: [main]
 
 permissions:
@@ -31,6 +58,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
+          # For `workflow_run` triggers, default `${{ github.sha }}` is
+          # the commit that triggered update-patches (the user's commit
+          # BEFORE the auto-regen landed). Check out the branch tip
+          # instead so `check:readme` sees the auto-commit's README.
+          # For `push` and `pull_request` triggers, `head_branch` is
+          # unset so we fall back to the default `github.sha` checkout.
+          ref: ${{ github.event.workflow_run.head_branch || github.sha }}
           persist-credentials: false
 
       - name: Install zip
