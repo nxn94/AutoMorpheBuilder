@@ -1,6 +1,7 @@
 {
   "MorpheApp/morphe-patches": {
     "com.google.android.apps.youtube.music": {
+      "App refresh rate": true,
       "Bypass certificate checks": true,
       "Change header": true,
       "Change miniplayer color": true,
@@ -27,6 +28,8 @@
       "Miniplayer previous and next buttons": true,
       "Navigation bar": true,
       "Network proxy": true,
+      "Play albums songs": true,
+      "PoToken provider": true,
       "Remember repeat state": true,
       "Remember shuffle state": true,
       "Remove background playback restrictions": true,
@@ -45,6 +48,7 @@
       "Add to queue": true,
       "Alternative thumbnails": true,
       "Ambient mode": true,
+      "App refresh rate": true,
       "Bypass image region restrictions": true,
       "Bypass link redirects": true,
       "Captions": true,
@@ -63,7 +67,9 @@
       "Disable haptic feedback": true,
       "Disable layout updates": true,
       "Disable player popup panels": true,
+      "Disable playlist autoplay": true,
       "Disable rolling number animations": true,
+      "Disable scrolling speed limit": true,
       "Disable sign in to TV popup": true,
       "Disable video codecs": true,
       "Double tap to seek": true,
@@ -71,6 +77,7 @@
       "Enable debugging": true,
       "Exit fullscreen mode": true,
       "Force original audio": true,
+      "Fullscreen video scale": true,
       "GmsCore support": true,
       "Hide Shorts components": true,
       "Hide ads": true,
@@ -88,6 +95,7 @@
       "Loop video": true,
       "Media notification controls": true,
       "Miniplayer": true,
+      "Mute button": true,
       "Navigation bar": true,
       "Network proxy": true,
       "Open Shorts in regular player": true,
@@ -99,12 +107,13 @@
       "Play all": true,
       "Playback in feeds": true,
       "Playback speed": true,
+      "PoToken provider": true,
       "Reload video": true,
       "Remove background playback restrictions": true,
       "Remove viewer discretion dialog": true,
       "Return YouTube Dislike": true,
       "Sanitize sharing links": true,
-      "Save to watch later": true,
+      "Save to Watch later": true,
       "Seekbar": true,
       "Settings menu filter": true,
       "Shorts autoplay": true,
@@ -162,6 +171,9 @@
   "rushiranpise/morphe-patches": {
     "com.finalwire.aida64": {
       "Remove ads": true
+    },
+    "com.flightradar24free": {
+      "Unlock Business Premium": true
     },
     "com.kevinforeman.nzb360": {
       "Unlock All Access": true
