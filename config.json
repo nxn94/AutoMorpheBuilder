@@ -73,6 +73,13 @@
       "branch": "main",
       "apkmirror_path": "darken/sd-maid-2-se-system-cleaner",
       "display_name": "SDMaidSE"
+    },
+    "abdelrahman.wifianalyzerpro": {
+      "name": "wifianalyzerpro",
+      "repo": "BlazeFTL/FTL-Patches",
+      "branch": "main",
+      "apkmirror_path": "olgor-com/wifi-analyzer-3",
+      "display_name": "WiFiAnalyzerPro"
     }
   },
   "cli": {
