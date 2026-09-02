@@ -59,16 +59,18 @@
       "branch": "main",
       "apkmirror_path": "mimohello-gmbh/mimo-learn-to-code",
       "display_name": "Mimo"
+    },
+    "com.flightradar24free": {
+      "name": "flightradar24",
+      "repo": "rushiranpise/morphe-patches",
+      "branch": "main",
+      "apkmirror_path": "flightradar24-ab/flightradar24-flight-tracker-2",
+      "display_name": "Flightradar24"
     }
   },
   "cli": {
     "repo": "MorpheApp/morphe-desktop",
     "branch": "main"
   },
-  "download_urls": {
-    "com.google.android.apps.youtube.music": {
-      "8.44.54": "https://www.apkmirror.com/apk/google-inc/youtube-music/youtube-music-8-44-54-release/youtube-music-8-44-54-android-apk-download/",
-      "latest_supported": "https://www.apkmirror.com/apk/google-inc/youtube-music/youtube-music-8-44-54-release/youtube-music-8-44-54-android-apk-download/"
-    }
-  }
+  "download_urls": {}
 }
