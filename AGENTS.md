@@ -48,6 +48,7 @@ The repo mixes hand-curated and workflow-generated content. Treat the categories
 - **Workflows**: `.github/workflows/morphe-build.yml`, `update-patches.yml`, `ci.yml`, `codeql.yml` — orchestration only.
 - **Scripts (Node.js)**: `.github/scripts/*.js` — downloaders, validators, release helpers, installer scripts.
 - **Scripts (shell pipeline)**: `.github/scripts/pipeline/*.sh` plus shared helpers in `.github/scripts/pipeline/lib/`. Each `<step>.sh` corresponds to one workflow step.
+- **Scripts (CLI orchestrators)**: `scripts/*.js` — thin entry points that wire `node_modules` (ajv etc.) into the pure logic in `.github/scripts/`. `scripts/generate-readme-tables.js` regenerates the "Tested apps" / "Releases & Obtainium" tables in `README.md` from `config.json` `patch_repos`.
 - **Tests**: `.github/scripts/__tests__/*.test.js` — Jest unit tests for pure helpers and CLI wrappers.
 - **Config**: `config.json`, `patches.json`, `eslint.config.js` (lints `.github/scripts/**/*.js` only).
 - **Docs**: `docs/{configuration,architecture,troubleshooting,release-process}.md` plus `README.md`, `SETUP.md`, `AGENTS.md`.
@@ -67,14 +68,17 @@ The repo mixes hand-curated and workflow-generated content. Treat the categories
 
 ## Required Validation
 
-Run these before every commit. `npm run check` runs the full chain (lint + test + validate:config + validate:agent-docs).
+Run these before every commit. `npm run check` runs the full chain (lint + test + validate:config + validate:agent-docs + check:readme).
 
 ```bash
 npm ci
 npm run lint
 npm test
 npm run validate:config
+npm run check:readme        # regenerates README tables in-memory and diffs; --check-style
 ```
+
+`npm run generate:readme` (no flag) writes the regenerated tables back to `README.md` — run this after any change to `config.json` `patch_repos` so the "Tested apps" / "Releases & Obtainium" tables stay in sync. `update-patches.yml` does this automatically on push to main, alongside the existing patches.json sync.
 
 Shell scripts use `shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh`; workflow YAML uses `actionlint .github/workflows/*.yml`. CI runs `node .github/scripts/validate-config.js` directly (it is not on `npm run` yet); the JSON config validator catches typos and missing required keys before merge.
 

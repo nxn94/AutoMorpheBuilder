@@ -69,7 +69,8 @@ The dynamic build matrix. Each key is an Android package id (`applicationId`), e
   "branch":         "main",                    // required, the patches repo branch to track tags from
   "apkmirror_path": "vendor/example",          // required, APKMirror URL slug
   "pin_version":    "1.2.3",                   // optional, lock to this APK version
-  "pin_patch_tag":  "v1.0.0"                   // optional, lock the patches release tag
+  "pin_patch_tag":  "v1.0.0",                  // optional, lock the patches release tag
+  "display_name":   "Example"                  // optional, human-readable name for README/Obtainium
 }
 ```
 
@@ -157,6 +158,18 @@ When set:
 | Example | `"v1.18.3"` |
 
 Lock the patches tag to this exact release, bypassing `gh release list` on the patches repo. Currently used by `nzb360` and `aida64` because their upstream `rushiranpise/morphe-patches` ships patches tags that lag the morphe-desktop CLI API surface.
+
+#### `display_name` (optional)
+
+| | |
+|---|---|
+| Type | `string` (non-empty) |
+| Required | no |
+| Example | `"YouTube Music"` |
+
+Human-readable name rendered in `README.md`'s **Tested apps** / **Releases & Obtainium** tables and embedded in the Obtainium deep-link's `name` field. The `name` field is a build slug (lowercase letters/digits/hyphens) baked into release tags, so IDs like `ytmusic`, `nzb360`, and `aida64` cannot be humanised by capitalisation alone — set `display_name` explicitly for those.
+
+When `display_name` is omitted, the generator falls back to a capitalised `name` (so `nzb360` renders as `Nzb360` if no `display_name` is set). The field stays optional so adding a new app entry never blocks on picking a pretty name.
 
 ## `cli`
 

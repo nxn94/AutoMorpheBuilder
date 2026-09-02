@@ -89,6 +89,11 @@
           "type": "string",
           "pattern": "^v?\\d+(\\.\\d+)+([-.+][\\w.-]+)?$",
           "description": "Optional. Patch-tag pin (e.g. 'v1.18.3' or 'v1.24.0-dev.8')."
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional. Human-readable name used in README tables and the Obtainium deep-link. Falls back to a capitalised `name` when absent (so `nzb360` renders as `Nzb360` if no display_name is set). Set this when the slug alone doesn't spell the app name correctly (e.g. 'YouTube Music', 'NZB360', 'AIDA64')."
         }
       }
     }

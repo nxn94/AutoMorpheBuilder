@@ -65,6 +65,7 @@ const KNOWN_APP_KEYS = new Set([
   'apkmirror_path',
   'pin_version',
   'pin_patch_tag',
+  'display_name',
 ]);
 
 /** owner/repo slug — used by every <owner>/<repo> entry. */
@@ -324,6 +325,19 @@ function validateConfig(config) {
           message:
             `pin_patch_tag "${entry.pin_patch_tag}" must look like a ` +
             `release tag, e.g. "v1.18.3" or "v1.24.0-dev.8".`,
+        });
+      }
+    }
+
+    // display_name (optional)
+    if ('display_name' in entry) {
+      if (typeof entry.display_name !== 'string' || entry.display_name.length === 0) {
+        issues.push({
+          level: 'error',
+          appId,
+          message:
+            `display_name "${entry.display_name}" must be a non-empty ` +
+            `string (used in README tables and the Obtainium deep-link).`,
         });
       }
     }

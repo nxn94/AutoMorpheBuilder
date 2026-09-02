@@ -10,7 +10,9 @@
     "lint": "eslint .github/scripts src scripts",
     "validate:config": "node scripts/validate-config.js",
     "validate:agent-docs": "node scripts/check-agents-doc.js",
-    "check": "npm run lint && npm test && npm run validate:config && npm run validate:agent-docs"
+    "generate:readme": "node scripts/generate-readme-tables.js",
+    "check:readme": "node scripts/generate-readme-tables.js --check",
+    "check": "npm run lint && npm test && npm run validate:config && npm run validate:agent-docs && npm run check:readme"
   },
   "jest": {
     "coverageThreshold": {
