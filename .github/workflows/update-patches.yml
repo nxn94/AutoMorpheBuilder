@@ -72,6 +72,9 @@ jobs:
       - name: Commit if changed
         run: |
           set -euo pipefail
+          # Mask GH_TOKEN so the URL-embedded form below never echoes
+          # in logs even if a later change flips on `set -x`.
+          echo "::add-mask::${GH_TOKEN}"
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add patches.json README.md
@@ -88,6 +91,13 @@ jobs:
             COMMIT_MSG="chore: sync patches from upstream repos"
           fi
           git commit -m "$COMMIT_MSG"
+          # `actions/checkout` is invoked with `persist-credentials:
+          # false` (hardening pass: 0883d8c) so the auto-provisioned
+          # GITHUB_TOKEN is NOT in the runner's git credential helper.
+          # Push using an inline x-access-token URL instead — the token
+          # is masked above so the URL is safe to print and never lands
+          # in git config or any persisted credential store.
           BRANCH_NAME="${GITHUB_REF_NAME:-main}"
-          git push origin "HEAD:${BRANCH_NAME}"
+          PUSH_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push "${PUSH_URL}" "HEAD:${BRANCH_NAME}"
           echo "::notice::Committed and pushed: $(git diff --cached --name-only | tr '\n' ' ')"
