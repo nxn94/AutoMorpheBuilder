@@ -117,6 +117,20 @@ Split packages (XAPK/APKM/APKS) are saved as `.apk` on disk and detected by **co
 - **Arm64-v8a APK arrives with armeabi-v7a libs only** — upstream bundle is mislabeled. Use `pin_version` to lock to a known-good APK version.
 - **Obtainium not finding updates** — verify the Release Tag Filter regex matches the `name` field in `config.json`.
 
+For the full catalogue of symptoms, causes, and fixes see [`docs/troubleshooting.md`](docs/troubleshooting.md).
+
+---
+
+## Documentation
+
+- [`docs/configuration.md`](docs/configuration.md) — every `config.json` field, with type, required-ness, example, and validation rules.
+- [`docs/architecture.md`](docs/architecture.md) — pipeline architecture, the `check-versions` → `build` → `create-release` job graph, and the signing model.
+- [`docs/troubleshooting.md`](docs/troubleshooting.md) — symptom / cause / fix catalogue for every common failure mode.
+- [`docs/release-process.md`](docs/release-process.md) — release tag format, per-app isolation, pruning (`KEEP_COUNT`), and rollback procedure.
+- [`SETUP.md`](SETUP.md) — step-by-step fork + signing keystore + GitHub Actions secrets walkthrough.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to file issues, send PRs, and validate locally before pushing.
+- [`SECURITY.md`](SECURITY.md) — vulnerability disclosure policy and how to report a private issue.
+
 ---
 
 ## License

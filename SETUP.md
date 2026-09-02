@@ -50,7 +50,7 @@ Repo → Settings → Secrets and variables → Actions.
 
 ## 4. Configure `config.json`
 
-Each entry under `patch_repos` is one app. Remove entries to skip an app; add entries to support more.
+Each entry under `patch_repos` is one app. Remove entries to skip an app; add entries to support more. The full field reference (types, defaults, allowed values, validation) lives in [`docs/configuration.md`](docs/configuration.md) — read that before adding new fields.
 
 ```json
 {
@@ -182,6 +182,8 @@ One entry per app, same repo, different Release Tag Filter:
 ---
 
 ## Common issues
+
+The list below mirrors the short set in `README.md` → "Common failures". For the full symptom/cause/fix catalogue — including APK download failures, `NoSuchMethodError` from the compat probe, stale `.xapk`/`apkm` bundles, and version-mismatch from `downloadWithUrl` — see [`docs/troubleshooting.md`](docs/troubleshooting.md).
 
 - **`Chosen APK has no classes.dex`** — split/config APK picked. The post-merge step handles XAPK/APKM/APKS bundles via APKEditor, so bundles should resolve to a patched base APK automatically.
 - **`[pkg] could not determine version`** — `morphe-desktop list-versions` found no compatible APK for the app's patch. Verify `patch_repos[*].repo` publishes a `.mpp` for your package.
