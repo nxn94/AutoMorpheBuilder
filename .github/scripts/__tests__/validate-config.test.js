@@ -290,6 +290,35 @@ describe('validateConfig — per-app entry', () => {
     expect(hasError(issues, 'pin_patch_tag')).toBe(true);
   });
 
+  test('display_name omitted is allowed (optional, falls back to capitalised name)', () => {
+    const issues = validateConfig(validConfig());
+    expect(issues.filter((i) => i.level === 'error')).toEqual([]);
+  });
+
+  test('display_name set to a non-empty string is allowed', () => {
+    const issues = validateConfig({
+      patch_repos: { 'com.getmimo': validApp({ display_name: 'Mimo' }) },
+      cli: { repo: 'a/b', branch: 'main' },
+    });
+    expect(issues.filter((i) => i.level === 'error')).toEqual([]);
+  });
+
+  test('display_name set to empty string is an error', () => {
+    const issues = validateConfig({
+      patch_repos: { 'com.getmimo': validApp({ display_name: '' }) },
+      cli: { repo: 'a/b', branch: 'main' },
+    });
+    expect(hasError(issues, 'display_name "" must be a non-empty string')).toBe(true);
+  });
+
+  test('display_name set to a non-string is an error', () => {
+    const issues = validateConfig({
+      patch_repos: { 'com.getmimo': validApp({ display_name: 42 }) },
+      cli: { repo: 'a/b', branch: 'main' },
+    });
+    expect(hasError(issues, 'display_name "42" must be a non-empty string')).toBe(true);
+  });
+
   test('unknown per-app key is a warning', () => {
     const issues = validateConfig({
       patch_repos: { 'com.getmimo': { ...validApp(), apkmirror_paath: 'x' } },

@@ -59,17 +59,35 @@ jobs:
           PATCHES_FILE: patches.json
         run: bash scripts/sync-patches.sh
 
+      - name: Regenerate README tables from config.json
+        # Same trigger as the sync step above: only on push to main
+        # (workflow_dispatch skips this because the operator may have
+        # staged a manual commit already). Keeps the "Tested apps" and
+        # "Releases & Obtainium" tables in sync with patch_repos — adding
+        # or removing an app in config.json auto-updates both files in
+        # the same commit.
+        if: github.event_name == 'push'
+        run: node scripts/generate-readme-tables.js
+
       - name: Commit if changed
         run: |
           set -euo pipefail
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add patches.json
+          git add patches.json README.md
           if git diff --cached --quiet; then
-            echo "::notice::patches.json unchanged; nothing to commit."
+            echo "::notice::No file changes; nothing to commit."
             exit 0
           fi
-          git commit -m "chore: sync patches from upstream repos"
+          if git diff --cached --name-only | grep -qx README.md \
+              && git diff --cached --name-only | grep -qx patches.json; then
+            COMMIT_MSG="chore: sync patches and README tables from config.json"
+          elif git diff --cached --name-only | grep -qx README.md; then
+            COMMIT_MSG="chore: regenerate README tables from config.json"
+          else
+            COMMIT_MSG="chore: sync patches from upstream repos"
+          fi
+          git commit -m "$COMMIT_MSG"
           BRANCH_NAME="${GITHUB_REF_NAME:-main}"
           git push origin "HEAD:${BRANCH_NAME}"
-          echo "::notice::Committed and pushed updated patches.json."
+          echo "::notice::Committed and pushed: $(git diff --cached --name-only | tr '\n' ' ')"

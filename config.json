@@ -6,51 +6,59 @@
       "name": "youtube",
       "repo": "MorpheApp/morphe-patches",
       "branch": "main",
-      "apkmirror_path": "google-inc/youtube"
+      "apkmirror_path": "google-inc/youtube",
+      "display_name": "YouTube"
     },
     "com.google.android.apps.youtube.music": {
       "name": "ytmusic",
       "repo": "MorpheApp/morphe-patches",
       "branch": "main",
-      "apkmirror_path": "google-inc/youtube-music"
+      "apkmirror_path": "google-inc/youtube-music",
+      "display_name": "YouTube Music"
     },
     "com.reddit.frontpage": {
       "name": "reddit",
       "repo": "MorpheApp/morphe-patches",
       "branch": "main",
-      "apkmirror_path": "redditinc/reddit"
+      "apkmirror_path": "redditinc/reddit",
+      "display_name": "Reddit"
     },
     "com.sofascore.results": {
       "name": "sofascore",
       "repo": "heval99/morphe-patches",
       "branch": "main",
-      "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore"
+      "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore",
+      "display_name": "Sofascore"
     },
     "tv.twitch.android.app": {
       "name": "twitch",
       "repo": "RookieEnough/De-Vanced",
       "branch": "main",
-      "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming"
+      "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming",
+      "display_name": "Twitch"
     },
     "com.kevinforeman.nzb360": {
       "name": "nzb360",
       "repo": "rushiranpise/morphe-patches",
       "branch": "main",
       "apkmirror_path": "kevin-foreman/nzb360",
-      "pin_patch_tag": "v1.18.3"
+      "pin_patch_tag": "v1.18.3",
+      "display_name": "NZB360"
     },
     "com.finalwire.aida64": {
       "name": "aida64",
       "repo": "rushiranpise/morphe-patches",
       "branch": "main",
       "apkmirror_path": "finalwire-ltd/aida64",
-      "pin_patch_tag": "v1.18.3"
+      "pin_patch_tag": "v1.18.3",
+      "display_name": "AIDA64"
     },
     "com.getmimo": {
       "name": "mimo",
       "repo": "hoo-dles/morphe-patches",
       "branch": "main",
-      "apkmirror_path": "mimohello-gmbh/mimo-learn-to-code"
+      "apkmirror_path": "mimohello-gmbh/mimo-learn-to-code",
+      "display_name": "Mimo"
     }
   },
   "cli": {

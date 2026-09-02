@@ -1,9 +1,10 @@
 name: CI
 
 # Pull-request and main-branch CI. Runs `npm ci` → `npm run lint` →
-# `npm test`. The two existing workflows (morphe-build.yml and
-# update-patches.yml) are dispatch/schedule-only, so this is the only
-# thing that gates a broken PR from merging.
+# `npm run validate:config` → `npm run check:readme` → `npm test`.
+# The two existing workflows (morphe-build.yml and update-patches.yml)
+# are dispatch/schedule-only, so this is the only thing that gates a
+# broken PR from merging.
 
 on:
   pull_request:
@@ -15,7 +16,7 @@ permissions:
 
 # Cancel any in-flight run for the same ref when a new commit lands.
 # PR pushes + main-branch auto-runs are cheap but the test fixture
-# build (`zip` install + npm ci + lint + 224 jest tests) is not free —
+# build (`zip` install + npm ci + lint + jest suite) is not free —
 # cancelling the superseded run keeps the queue moving.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -59,6 +60,15 @@ jobs:
         # (schemas/*.schema.json) runs alongside the hand-rolled
         # semantic rules from .github/scripts/validate-config.js.
         run: npm run validate:config
+
+      - name: Verify README tables match config.json
+        # The "Tested apps" and "Releases & Obtainium" tables in README.md
+        # are generated from config.json by scripts/generate-readme-tables.js
+        # so adding/removing an app is a one-edit affair. This step fails
+        # the PR if the README is out of sync — mirrors validate:config
+        # and forces a `npm run generate:readme` commit on top of any
+        # config.json change.
+        run: npm run check:readme
 
       - name: Test
         run: npm test
