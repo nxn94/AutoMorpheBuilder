@@ -73,13 +73,6 @@
       "branch": "main",
       "apkmirror_path": "darken/sd-maid-2-se-system-cleaner",
       "display_name": "SDMaidSE"
-    },
-    "com.example.ciwait": {
-      "name": "ciwait",
-      "repo": "MorpheApp/morphe-patches",
-      "branch": "main",
-      "apkmirror_path": "example/example-app",
-      "display_name": "CI Wait Test"
     }
   },
   "cli": {
