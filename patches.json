@@ -177,11 +177,17 @@
     },
     "com.kevinforeman.nzb360": {
       "Unlock All Access": true
+    },
+    "eu.darken.sdmse": {
+      "Unlock Pro": true
     }
   },
   "hoo-dles/morphe-patches": {
     "com.getmimo": {
       "Enable Pro": true
     }
+  },
+  "BlazeFTL/FTL-Patches": {
+    "abdelrahman.wifianalyzerpro": {}
   }
 }
