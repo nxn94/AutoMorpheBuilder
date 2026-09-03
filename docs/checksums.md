@@ -2,11 +2,25 @@
 
 `checksums/tools.sha256` records SHA-256 digests of downloaded tools. The CI workflow verifies each downloaded tool against its expected hash and fails closed on mismatch.
 
+## Source of truth: GitHub release API
+
+The verify step in `download_morphe_tools.sh` and `fetch_morphe_tools.sh` treats the **per-asset digest served by the GitHub release API** as the authoritative hash for each run. `gh release view <tag> --json assets` returns each asset's `digest` field (`sha256:HEX`), and `gh_asset_sha256 <repo> <tag> <asset-name>` in `lib/github.sh` extracts that hex.
+
+This means a new CLI release does **not** require editing the manifest to keep the build green: the API digest we just fetched is what we compare the local bytes against.
+
+## Role of `checksums/tools.sha256`
+
+The pinned values in the manifest are a **tripwire, not the primary gate**:
+
+1. **Local bytes must match the API digest** — this is the tamper / corruption gate. If they disagree, the build fails closed: someone republished the asset, the download was corrupted in transit, or `--pattern` matched the wrong file.
+2. **Pinned value must match the API digest** — when the manifest is pinned, a disagreement means the upstream asset was *republished under the same tag*. The build fails closed with a message naming both hashes; either the pin is stale (refresh and continue) or the asset was tampered with (stop the workflow).
+3. **No pin → accept the API digest but emit a `TODO(refresh-pin-…)` marker** in the CI log. The build proceeds; a maintainer can refresh the pin before the next bump makes the drift harder to spot.
+
 ## Updating a checksum
 
-1. Trigger a fresh build with `actions: write` permission, OR run `scripts/download-tool.sh <URL> /tmp/<output> <expected-sha>` locally with a fresh download.
-2. Compare the printed `Verified SHA-256 for /tmp/<output>` line against the existing entry in `checksums/tools.sha256`.
-3. If the upstream version changed, replace the line and commit.
+1. Trigger a fresh build with `actions: write` permission.
+2. The pinned row already in `checksums/tools.sha256` (if any) is only one of the two things being compared; the more useful line is `SHA-256 verified against upstream API digest (….)`, which is what actually matched the local bytes.
+3. If the upstream version bumped, the API digest printed in the prior step is your new pin target. Replace the line and commit so the tripwire stays active — a stale pin that disagrees with the API digest is a hard fail on the next run.
 
 ## Empty or TODO entries
 
