@@ -107,6 +107,30 @@ function buildReleasePageUrl(apkmirrorPath, version) {
 }
 
 /**
+ * Pre-release suffixes APKMirror inserts between the version and the
+ * trailing `-release/` segment when a developer uploads a release
+ * candidate, beta, or alpha build. The upstream patch repo (and
+ * `patches-list.json`) usually records the bare version (e.g. `2.0.2`),
+ * but APKMirror's URL slug uses the pre-release form (`2.0.2-rc0`),
+ * which our `<dashedVersion>-release/` selector would miss. We try the
+ * exact match first, then progressively widen to common suffixes so
+ * apps like SD Maid (2.0.2 → /sd-maid-2-se-system-cleaner-2-0-2-rc0-release/)
+ * resolve without per-app configuration.
+ *
+ * Ordered by frequency on APKMirror; rc0..rc9 covers the full release
+ * candidate sequence without skipping numbers (some devs ship rc1
+ * straight to rc3, but listing the gaps cheaply).
+ */
+function apkmirrorReleaseTailCandidates(version) {
+  const dashed = version.replace(/\./g, '-');
+  const tails = [`-${dashed}-release/`];
+  for (let i = 0; i < 10; i++) tails.push(`-${dashed}-rc${i}-release/`);
+  tails.push(`-${dashed}-beta-release/`, `-${dashed}-beta1-release/`);
+  tails.push(`-${dashed}-alpha-release/`, `-${dashed}-alpha1-release/`);
+  return tails;
+}
+
+/**
  * Resolve APKMirror's actual release-page slug for a given (path, version).
  *
  * APKMirror's `apkmirror_path` config value points at the package's index
@@ -129,7 +153,10 @@ function buildReleasePageUrl(apkmirrorPath, version) {
  * pagination; `show-more` is purely a visual fold that hides nothing
  * from the HTML source) and match the URL whose tail ends in
  * `<dashed-version>-release/`. We always return the path observed on
- * APKMirror's server — never a fabricated one.
+ * APKMirror's server — never a fabricated one. When the upstream
+ * version lacks the rc/beta/alpha suffix that APKMirror bakes into
+ * the slug (e.g. `2.0.2` vs `2-0-2-rc0`), we widen the selector to
+ * common pre-release suffixes before giving up.
  *
  * Falls back to `buildReleasePageUrl(apkmirrorPath, version)` on network
  * / parse errors so the existing path-slug contract still works for
@@ -153,7 +180,11 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
   const cheerioImpl = opts.cheerioImpl || cheerio;
 
   const listUrl = `https://www.apkmirror.com/apk/${apkmirrorPath}/all-versions/`;
-  const versionTail = `-${version.replace(/\./g, '-')}-release/`;
+  // Selector tail suffixes, ordered exact → rc0..rc9 → beta → alpha.
+  // APKMirror slugs are case-stable; we don't normalize case because
+  // the live HTML always emits lowercase for the path components we
+  // observe in /all-versions/.
+  const tailCandidates = apkmirrorReleaseTailCandidates(version);
 
   try {
     let html;
@@ -181,15 +212,32 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
     const $ = cheerioImpl.load(html);
 
     // Every release row links to the release page with href ending in
-    // `<dashed-version>-release/`. We capture that href verbatim —
-    // never reconstruct the slug from the version.
-    const href = $(`a[href$="${versionTail}"]`).first().attr('href');
-    if (href) {
-      const abs = href.startsWith('http') ? href : `https://www.apkmirror.com${href}`;
-      console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${abs}`);
+    // `<dashed-version>[-rc0|rc1|…|beta|alpha]-release/`. We capture
+    // that href verbatim — never reconstruct the slug from the
+    // version. We prefer the exact match; the pre-release suffix
+    // fallbacks only fire when the developer's patch repo records a
+    // bare version (e.g. SD Maid `2.0.2` ↔ APKMirror `2.0.2-rc0`).
+    let matchedTail = null;
+    let matchedHref = null;
+    for (const tail of tailCandidates) {
+      const href = $(`a[href$="${tail}"]`).first().attr('href');
+      if (href) {
+        matchedTail = tail;
+        matchedHref = href;
+        break;
+      }
+    }
+    if (matchedHref) {
+      const abs = matchedHref.startsWith('http')
+        ? matchedHref
+        : `https://www.apkmirror.com${matchedHref}`;
+      const suffixNote = matchedTail === tailCandidates[0] ? '' : ` (matched via fallback tail ${matchedTail})`;
+      console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${abs}${suffixNote}`);
       return abs;
     }
-    throw new Error(`No release link found ending in ${versionTail}`);
+    throw new Error(
+      `No release link found ending in any of: ${tailCandidates.join(', ')}`
+    );
   } catch (err) {
     console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
     return buildReleasePageUrl(apkmirrorPath, version);
@@ -1790,6 +1838,7 @@ if (require.main === module) {
 module.exports = {
   buildReleasePageUrl,
   buildVariantPriorities,
+  apkmirrorReleaseTailCandidates,
   selectVariant,
   collectCookies,
   resolveApkmirrorReleaseSlug,

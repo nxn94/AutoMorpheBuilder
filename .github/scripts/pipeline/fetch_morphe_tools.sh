@@ -107,8 +107,13 @@ rm -f "$TOOLS_DIR/morphe-desktop.jar"
 # MorpheApp/morphe-cli repo. Current releases use morphe-desktop-*; accept
 # either name so legacy pins still resolve.
 gh_release_download "$CLI_REPO" "$CLI_VERSION" "morphe-desktop-*-all.jar" "$TOOLS_DIR" >/dev/null || true
+# Capture the exact asset name before the rename loop, so the
+# per-asset digest pulled from the GitHub release API matches the
+# bytes on disk verbatim.
+cli_asset_name=""
 for f in "$TOOLS_DIR"/morphe-desktop-*-all.jar "$TOOLS_DIR"/morphe-cli-*-all.jar; do
   [ -f "$f" ] || continue
+  cli_asset_name="$(basename "$f")"
   if [ "$f" != "$TOOLS_DIR/morphe-desktop.jar" ]; then
     mv "$f" "$TOOLS_DIR/morphe-desktop.jar"
     log "  moved $(basename "$f") -> morphe-desktop.jar"
@@ -126,18 +131,46 @@ if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
     log_warn "morphe-desktop.jar version mismatch: expected ${expected_version}, got ${actual_version}."
   fi
 
-  # SHA-256 verification when checksums/tools.sha256 pins this artifact.
-  # tools_sha_pinned returns false for TODO placeholders, so the existing
-  # MANIFEST.MF Implementation-Version check above remains the primary
-  # gate until a real SHA is committed to the manifest.
+  # SHA-256 verification. GitHub's release API exposes a per-asset
+  # digest that we treat as authoritative for this run — a CLI bump
+  # no longer fails the build on a stale manual pin. The pin in
+  # checksums/tools.sha256 stays as a tamper tripwire (mismatched
+  # pin vs. API digest means someone republished the asset). See
+  # docs/checksums.md and the matching block in
+  # download_morphe_tools.sh for the full contract.
+  api_sha=""
+  if [ -n "$cli_asset_name" ]; then
+    api_sha="$(gh_asset_sha256 "$CLI_REPO" "$CLI_VERSION" "$cli_asset_name" || true)"
+  fi
+  pinned_sha=""
   if tools_sha_pinned "morphe-desktop.jar"; then
-    expected_sha="$(tools_sha_lookup "morphe-desktop.jar")"
-    actual_sha="$(sha256sum "$TOOLS_DIR/morphe-desktop.jar" | awk '{print $1}')"
-    if [ "$actual_sha" != "$expected_sha" ]; then
-      log_error "morphe-desktop.jar SHA-256 mismatch: expected ${expected_sha}, got ${actual_sha}."
+    pinned_sha="$(tools_sha_lookup "morphe-desktop.jar")"
+  fi
+  actual_sha="$(sha256sum "$TOOLS_DIR/morphe-desktop.jar" | awk '{print $1}')"
+
+  if [ -n "$api_sha" ]; then
+    if [ "$actual_sha" != "$api_sha" ]; then
+      log_error "morphe-desktop.jar SHA-256 mismatch against upstream API digest. expected (from ${CLI_REPO}@${CLI_VERSION}): ${api_sha}, got: ${actual_sha}."
       exit 1
     fi
-    log "morphe-desktop.jar SHA-256 verified"
+    log "morphe-desktop.jar SHA-256 verified against upstream API digest (${api_sha})"
+    if [ -n "$pinned_sha" ] && [ "$pinned_sha" != "$api_sha" ]; then
+      log_error "morphe-desktop.jar pin in checksums/tools.sha256 disagrees with upstream API digest. pinned: ${pinned_sha}, API: ${api_sha}. This usually means the asset was republished under ${CLI_VERSION}; either refresh the pin or stop the workflow to investigate."
+      exit 1
+    fi
+    if [ -z "$pinned_sha" ]; then
+      log "TODO(refresh-pin-morphe-desktop): API has no local pin to compare; update checksums/tools.sha256 to pin ${cli_asset_name} = ${api_sha} before the next CLI bump so subsequent runs can detect republish attacks."
+    fi
+  else
+    if [ -n "$pinned_sha" ]; then
+      if [ "$actual_sha" != "$pinned_sha" ]; then
+        log_error "morphe-desktop.jar SHA-256 mismatch: expected ${pinned_sha}, got ${actual_sha}."
+        exit 1
+      fi
+      log "morphe-desktop.jar SHA-256 verified (manifest pin; no upstream digest available)"
+    else
+      log "morphe-desktop.jar SHA-256 not verified (no upstream digest, no manifest pin)"
+    fi
   fi
 fi
 

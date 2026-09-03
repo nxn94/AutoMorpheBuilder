@@ -5,6 +5,7 @@
 const {
   buildReleasePageUrl,
   buildVariantPriorities,
+  apkmirrorReleaseTailCandidates,
   selectVariant,
   collectCookies,
   resolveApkmirrorReleaseSlug,
@@ -25,6 +26,34 @@ describe('buildReleasePageUrl', () => {
     expect(url).toBe(
       'https://www.apkmirror.com/apk/google-inc/youtube-music/youtube-music-8-44-54-release/'
     );
+  });
+});
+
+describe('apkmirrorReleaseTailCandidates', () => {
+  test('puts the exact dashed-version tail first, then rc/beta/alpha fallbacks', () => {
+    expect(apkmirrorReleaseTailCandidates('2.0.2')).toEqual([
+      '-2-0-2-release/',
+      '-2-0-2-rc0-release/',
+      '-2-0-2-rc1-release/',
+      '-2-0-2-rc2-release/',
+      '-2-0-2-rc3-release/',
+      '-2-0-2-rc4-release/',
+      '-2-0-2-rc5-release/',
+      '-2-0-2-rc6-release/',
+      '-2-0-2-rc7-release/',
+      '-2-0-2-rc8-release/',
+      '-2-0-2-rc9-release/',
+      '-2-0-2-beta-release/',
+      '-2-0-2-beta1-release/',
+      '-2-0-2-alpha-release/',
+      '-2-0-2-alpha1-release/',
+    ]);
+  });
+
+  test('handles a double-digit major version like sofascore 26.07.27', () => {
+    const tails = apkmirrorReleaseTailCandidates('26.07.27');
+    expect(tails[0]).toBe('-26-07-27-release/');
+    expect(tails).toContain('-26-07-27-rc0-release/');
   });
 });
 
@@ -270,6 +299,88 @@ describe('resolveApkmirrorReleaseSlug', () => {
 
     expect(url).toBe(
       'https://www.apkmirror.com/apk/google-inc/youtube/youtube-20-44-38-release/'
+    );
+  });
+
+  // SD Maid (darken) ships its upstream tag as `2.0.2` but APKMirror
+  // lists the same build under `/sd-maid-2-se-system-cleaner-2-0-2-rc0-release/`.
+  // The exact `-2-0-2-release/` match misses; the rc0 fallback must pick
+  // it up without per-app configuration.
+  test('matches an -rc0 release when upstream lists the bare version only', async () => {
+    const sdmaidPath = 'darken/sd-maid-2-se-system-cleaner';
+    const html = `
+      <html><body>
+        <a class="fontBlack" href="/apk/${sdmaidPath}/sd-maid-2-se-system-cleaner-2-0-2-rc0-release/">2.0.2</a>
+        <a class="fontBlack" href="/apk/${sdmaidPath}/sd-maid-2-se-system-cleaner-2-0-1-release/">2.0.1</a>
+      </body></html>
+    `;
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(html) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(sdmaidPath, '2.0.2', { fetchImpl });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${sdmaidPath}/sd-maid-2-se-system-cleaner-2-0-2-rc0-release/`
+    );
+  });
+
+  test('prefers the exact tail when both exact and rcX match in the same listing', async () => {
+    // Belt-and-braces for apps that ship both a stable AND a tagged
+    // pre-release on the same major version: the resolver must keep
+    // preferring the stable URL (matching original behavior) and only
+    // broaden when the exact tail is absent.
+    const path = 'example/example-app';
+    const html = `
+      <html><body>
+        <a class="fontBlack" href="/apk/${path}/example-app-1-2-3-release/">1.2.3</a>
+        <a class="fontBlack" href="/apk/${path}/example-app-1-2-3-rc0-release/">1.2.3-rc0</a>
+      </body></html>
+    `;
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(html) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(path, '1.2.3', { fetchImpl });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${path}/example-app-1-2-3-release/`
+    );
+  });
+
+  test('falls through rc0..rc9 and lands on rc1', async () => {
+    const path = 'example/another-app';
+    const html = `
+      <html><body>
+        <a class="fontBlack" href="/apk/${path}/another-app-3-1-4-rc1-release/">3.1.4-rc1</a>
+      </body></html>
+    `;
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(html) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(path, '3.1.4', { fetchImpl });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${path}/another-app-3-1-4-rc1-release/`
+    );
+  });
+
+  test('matches -beta suffix when no exact or rc tail is present', async () => {
+    const path = 'example/beta-app';
+    const html = `
+      <html><body>
+        <a class="fontBlack" href="/apk/${path}/beta-app-0-9-0-beta-release/">0.9.0-beta</a>
+      </body></html>
+    `;
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(html) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(path, '0.9.0', { fetchImpl });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${path}/beta-app-0-9-0-beta-release/`
     );
   });
 
