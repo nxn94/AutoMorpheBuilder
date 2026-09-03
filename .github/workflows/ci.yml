@@ -58,13 +58,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
-          # For `workflow_run` triggers, default `${{ github.sha }}` is
-          # the commit that triggered update-patches (the user's commit
-          # BEFORE the auto-regen landed). Check out the branch tip
-          # instead so `check:readme` sees the auto-commit's README.
-          # For `push` and `pull_request` triggers, `head_branch` is
-          # unset so we fall back to the default `github.sha` checkout.
-          ref: ${{ github.event.workflow_run.head_branch || github.sha }}
+          # For `workflow_run` triggers, use the immutable triggering
+          # commit SHA from the completed upstream run.
+          # For `push` and `pull_request` triggers, `head_sha` is unset
+          # so we fall back to the default `github.sha` checkout.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Install zip
