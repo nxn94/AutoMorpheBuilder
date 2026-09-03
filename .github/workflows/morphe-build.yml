@@ -520,7 +520,21 @@ jobs:
 
   create-release:
     needs: [check-versions, build]
-    if: needs.build.result == 'success' && needs.check-versions.outputs.should-build == 'true'
+    # Release whatever the matrix successfully produced. The build matrix
+    # already runs with `fail-fast: false`, so a single bad app lets every
+    # other leg finish — but matrix-job `result` still flips to `'failure'`
+    # if any leg errors. Gating on `'success'` would discard the entire
+    # release batch on one bad app, so we let `'failure'` through too:
+    # failed matrix legs never reach the upload-artifact step, so their
+    # APKs never reach $APKS_DIR, and create_release.sh releases exactly
+    # the successful legs. Only `'cancelled'` (e.g. user dispatch-cancel
+    # mid-flight) and `'skipped'` (should-build returned false) bail out.
+    # An empty $APKS_DIR (every leg failed) makes create_release.sh
+    # ::error:: and exit non-zero, which is the right signal — don't
+    # publish nothing and pretend the run succeeded.
+    if: |
+      (needs.build.result == 'success' || needs.build.result == 'failure') &&
+      needs.check-versions.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: signing
@@ -538,7 +552,9 @@ jobs:
         # `<name>-v<ver>-<patches>`. There is no separate `sign` job —
         # create-release downloads every per-matrix artifact with
         # `pattern: '*-v*'` + `merge-multiple: true`. create_release.sh
-        # iterates $APKS_DIR/*.apk unchanged.
+        # iterates $APKS_DIR/*.apk unchanged. Failed matrix legs never
+        # reached the upload step, so partial-failure downloads only
+        # contain artifacts for the apps that built successfully.
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           pattern: '*-v*'
