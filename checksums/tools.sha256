@@ -23,8 +23,8 @@
 # --- morphe-desktop CLI -----------------------------------------------------
 # The Java CLI that drives patching. Hash changes every release.
 # Source: https://github.com/MorpheApp/morphe-desktop/releases
-# Current: v1.14.0  (verified via GitHub API digest + curl + sha256sum)
-d0579df359c75335d7d79927fa52e351c476bb43a66e43f352a85e943e511131  morphe-desktop.jar  # v1.14.0
+# Current: v1.15.0  (verified via gh release download + sha256sum)
+727e3744aa5c0006474590de6f4041bd55edc59f3d6cb9b596e95f7116384506  morphe-desktop.jar  # v1.15.0
 
 # --- APKEditor ---------------------------------------------------------------
 # Used to merge split packages (base.apk + split_config.*.apk → universal).
