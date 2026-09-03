@@ -51,6 +51,58 @@ concurrency:
 
 jobs:
   test:
+    if: ${{ github.event_name != 'workflow_run' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+
+      - name: Install zip
+        # The apk-selection and apk-abi-validator test fixtures shell
+        # out to `zip` to build fake APKs. `unzip` is preinstalled on
+        # the runner; `zip` is not — without this step several tests
+        # skip with "no zip" warnings instead of actually exercising
+        # the path-stripping bug fix.
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate config.json shape
+        # Catches typos and missing required keys in patch_repos entries
+        # BEFORE merge. Layer A of the "adding a new app must just work"
+        # robustness fix — see AGENTS.md / PR #32.
+        # PR 3: routes through npm so the ajv-based structural layer
+        # (schemas/*.schema.json) runs alongside the hand-rolled
+        # semantic rules from .github/scripts/validate-config.js.
+        run: npm run validate:config
+
+      - name: Verify README tables match config.json
+        # The "Tested apps" and "Releases & Obtainium" tables in README.md
+        # are generated from config.json by scripts/generate-readme-tables.js
+        # so adding/removing an app is a one-edit affair. This step fails
+        # the PR if the README is out of sync — mirrors validate:config
+        # and forces a `npm run generate:readme` commit on top of any
+        # config.json change.
+        run: npm run check:readme
+
+      - name: Test
+        run: npm test
+
+  test_workflow_run:
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -60,9 +112,7 @@ jobs:
         with:
           # For `workflow_run` triggers, use the immutable triggering
           # commit SHA from the completed upstream run.
-          # For `push` and `pull_request` triggers, `head_sha` is unset
-          # so we fall back to the default `github.sha` checkout.
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
       - name: Install zip
