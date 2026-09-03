@@ -66,13 +66,6 @@
       "branch": "main",
       "apkmirror_path": "flightradar24-ab/flightradar24-flight-tracker-2",
       "display_name": "Flightradar24"
-    },
-    "eu.darken.sdmse": {
-      "name": "sdmaidse",
-      "repo": "rushiranpise/morphe-patches",
-      "branch": "main",
-      "apkmirror_path": "darken/sd-maid-2-se-system-cleaner",
-      "display_name": "SDMaidSE"
     }
   },
   "cli": {
