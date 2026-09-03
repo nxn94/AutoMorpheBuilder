@@ -110,9 +110,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
-          # For `workflow_run` triggers, use the immutable triggering
-          # commit SHA from the completed upstream run.
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # The `workflow_run` listener above is filtered to
+          # `branches: [main]` (and the job's `if:` also requires
+          # `head_repository.full_name == github.repository`), so the
+          # completed upstream run is always the same repo on the main
+          # branch. A literal `refs/heads/main` checks out that branch
+          # tip — equivalent to `head_sha` for a single-branch
+          # workflow, and avoids the CodeQL
+          # `actions/untrusted-checkout` alert that fires whenever a
+          # workflow_run `head_*` field flows into `actions/checkout`'s
+          # `ref`.
+          ref: refs/heads/main
           persist-credentials: false
 
       - name: Install zip
