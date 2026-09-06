@@ -189,6 +189,26 @@ If you see this error after upgrading, your saved file may not be the bundle sha
 
 ---
 
+## Build job silently re-creates an existing release (stale `.mpp` from a prior patch tag)
+
+**Symptom:** the `Filter matrix by existing releases` step keeps an app in the matrix (e.g. `[youtube] no release at youtube-v21.07.247-v1.41.0; keeping in matrix.`) but the build produces an artifact whose tag already exists (`create-release` logs `<app>.apk already attached; skipping`). The pre-download step and the build job disagree on the APK version: pre-download logs `<pkg> downloading v<new>` while the build job's `Resolve supported version` step logs `Selected version for <pkg>: <old>`.
+
+**Root cause:** the build job's `Cache patches .mpp` step was restoring the per-repo `.mpp` from an *older* patch tag because the cache step had a `restore-keys: morphe-patches-<slug>-` fallback that matched across patch tags. `morphe-desktop list-versions` then read the stale `.mpp` and returned an APK version that was already published. `fetch_morphe_tools.sh` saw the `.mpp` already present on disk and skipped re-downloading, so the matrix tag (`<matrix.patchTag>`) and the actual `.mpp` content (from a previous tag) drifted apart.
+
+**Fix:**
+
+The build job's `.mpp` cache now uses exact-key match only — no `restore-keys` fallback. When the matrix's patch tag moves forward, the cache key changes (`morphe-patches-<slug>-<new-tag>`), the restore misses, `fetch_morphe_tools.sh` re-downloads the correct `.mpp` via `gh release download`, and `list-versions` resolves the new APK version. The build job and pre-download agree again, and `create-release` either publishes the new tag or notes a fresh asset (the existing `gh release upload --clobber` retry handles re-attachment).
+
+If you see this symptom on an older deployment, clear it manually:
+
+  ```bash
+  gh cache delete morphe-patches-<slug>-<old-tag> --repo <owner/repo>
+  ```
+
+then re-run the workflow.
+
+---
+
 ## Reporting a new failure
 
 If you hit a failure not listed here:

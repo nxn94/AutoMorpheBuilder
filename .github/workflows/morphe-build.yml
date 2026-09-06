@@ -385,12 +385,22 @@ jobs:
           apkeep --version
 
       - name: Cache patches .mpp
+        # Exact-key match only — deliberately NOT using a `restore-keys:`
+        # fallback. The build job runs `morphe-desktop list-versions`
+        # against this .mpp to resolve the APK version, so a stale
+        # restore from an earlier tag silently returns the previous
+        # tag's supported-versions list and the build ends up
+        # patching an older APK whose release tag already exists —
+        # `create_release.sh` then logs "<app>.apk already attached;
+        # skipping" and the daily run produces nothing even though
+        # the filter step kept the app in the matrix. Forcing an
+        # exact-key match means a forward patch-tag move (e.g. Twitch
+        # v1.3.1 → v1.3.2) misses the cache here and `fetch_morphe_tools.sh`
+        # re-downloads the correct .mpp from `gh release download`.
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25  # v5
         with:
           path: ${{ env.TOOLS_DIR }}/${{ matrix.patchSlug }}.mpp
           key: morphe-patches-${{ matrix.patchSlug }}-${{ matrix.patchTag }}
-          restore-keys: |
-            morphe-patches-${{ matrix.patchSlug }}-
 
       # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
 

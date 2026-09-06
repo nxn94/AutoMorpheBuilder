@@ -90,7 +90,7 @@ Gated by the `signing` GitHub environment so `KEYSTORE_BASE64` / `KEYSTORE_PASSW
 |------|---------|
 | Checkout + Java 21 | Standard runner setup. |
 | Restore apkeep / Playwright / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
-| Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with `restore-keys` fallback. |
+| Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with **exact-key match only** — no `restore-keys` fallback. A `restore-keys: morphe-patches-<slug>-` would silently restore an `.mpp` from an older patch tag when the matrix moves forward (e.g. Twitch `v1.3.1` → `v1.3.2`), which `morphe-desktop list-versions` would then read to produce a stale APK version; the build would silently re-create an already-released APK and `create_release.sh` would skip the upload. Forcing an exact-key match forces `fetch_morphe_tools.sh` to re-download the `.mpp` from `gh release download` whenever the patch tag moves. |
 | Resolve supported version | `prepare_target_version.sh` + inline `list-versions` invocation. Pinned apps skip the CLI call. The `sort -Vr` head-pick handles `list-versions` not guaranteeing "latest first" (Twitch's RookieEnough/De-Vanced prints `16.9.1` before `25.3.0`). |
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
