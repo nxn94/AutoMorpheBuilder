@@ -56,7 +56,7 @@ jobs:
         # (lines 160, 345, and ci.yml:44) — keeps the supply-chain pin
         # uniform and prevents a tag-repointing attack from silently
         # swapping this single reference to a different commit.
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '24'
 
@@ -161,7 +161,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '24'
 
@@ -350,7 +350,7 @@ jobs:
         run: mkdir -p "$TOOLS_DIR" "$APKS_DIR" "$OUT_DIR"
 
       - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38  # v6
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '24'
 
