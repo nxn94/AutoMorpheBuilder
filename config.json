@@ -5,7 +5,7 @@
     "com.google.android.youtube": {
       "name": "youtube",
       "repo": "MorpheApp/morphe-patches",
-      "branch": "main",
+      "branch": "dev",
       "apkmirror_path": "google-inc/youtube",
       "display_name": "YouTube"
     },
