@@ -5,7 +5,7 @@
  * Custom Playwright browser installer for CI.
  *
  * Why this exists:
- *   `npx playwright install chromium` on Playwright 1.58.x uses a yauzl-based
+ *   `npx playwright install chromium` on Playwright ≥1.58 uses a yauzl-based
  *   extraction in a forked child process (oopDownloadBrowserMain.js) and the
  *   pipeline from yauzl's read stream into fs.createWriteStream never emits
  *   'finish' / 'close' on modern Node — the child hangs after extracting a
@@ -34,7 +34,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-// Playwright 1.58 enforces an `exports` field in its package.json, so deep
+// Playwright ≥1.58 enforces an `exports` field in its package.json, so deep
 // require paths must match. The subpath below is allowed by the exports map.
 // browsers.json is *not* in the exports map, so we read it from disk directly.
 const REGISTRY_PATH = require.resolve('playwright-core/lib/server/registry/index');
