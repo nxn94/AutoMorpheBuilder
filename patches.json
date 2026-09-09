@@ -120,7 +120,7 @@
       "SponsorBlock": true,
       "Spoof app version": true,
       "Spoof device dimensions": true,
-      "Spoof video streams": true,
+      "Spoof video streams": false,
       "Swipe controls": true,
       "Theme": true,
       "Video quality": true,
