@@ -58,15 +58,116 @@ gh_require_token
 mkdir -p "$TOOLS_DIR"
 
 # --- patches .mpp --------------------------------------------------------
+#
+# The .mpp at $MPP_DEST can come from `actions/cache` (this script runs
+# after the build job's `Cache patches .mpp` step). Before fd537df removed
+# `restore-keys: morphe-patches-<slug>-`, that step could silently restore
+# a `.mpp` from an older tag, and `fetch_morphe_tools.sh` would skip the
+# download because the file already existed — leaving a stale bundle in
+# place for the rest of the build. Verify the bytes against the per-asset
+# digest served by the GitHub release API; if they disagree, delete the
+# cached file and re-download. A stale `.mpp` therefore always fails the
+# verify-and-re-fetch loop and self-heals on the next run, without
+# requiring a manual `gh cache delete`.
 
 MPP_DEST="$TOOLS_DIR/${PATCH_SLUG}.mpp"
-if [ ! -f "$MPP_DEST" ]; then
-  log "Downloading patches from ${PATCH_REPO}@${PATCH_TAG}..."
-  gh_release_download "$PATCH_REPO" "$PATCH_TAG" "patches-*.mpp" "$TOOLS_DIR" >/dev/null
-  for f in "$TOOLS_DIR"/patches-*.mpp; do
-    [ -f "$f" ] && mv "$f" "$MPP_DEST"
-    break
-  done
+
+# Resolve the exact asset name from the release API so the per-asset
+# digest we look up matches the bytes we download. `gh release view
+# --json assets` is a single small request and is the same call shape
+# `gh_asset_sha256` uses internally. If the API call fails (rate limit,
+# private fork without workflow auth), we fall back to the legacy
+# `patches-*.mpp` glob and skip SHA verification with a warning.
+mpp_asset_name="$(gh release view "$PATCH_TAG" --repo "$PATCH_REPO" --json assets \
+  --jq '[.assets[] | select(.name | startswith("patches-")) | select(.name | endswith(".mpp")) | .name][0] // empty' \
+  2>/dev/null || true)"
+if [ -z "$mpp_asset_name" ]; then
+  log_warn "${PATCH_REPO}@${PATCH_TAG}: could not resolve patches-*.mpp asset name from release API; SHA-256 verification will be skipped for this run."
+fi
+
+# Pre-resolve the API digest so the verify-and-re-fetch loop can compare
+# without re-issuing the API call on the re-download path. `gh_asset_sha256`
+# returns "" on failure (network / auth / asset missing), in which case
+# `verify_or_fetch_mpp` falls back to "file must exist, no SHA check".
+api_mpp_sha=""
+if [ -n "$mpp_asset_name" ]; then
+  api_mpp_sha="$(gh_asset_sha256 "$PATCH_REPO" "$PATCH_TAG" "$mpp_asset_name" || true)"
+fi
+
+# verify_or_fetch_mpp <dest> <expected_sha> <repo> <tag> <asset_name>
+#
+# Ensures <dest> exists and matches <expected_sha>. If the file is
+# missing OR its bytes don't match the upstream digest, delete it and
+# re-download. Re-verifies after the re-download so a republish attack
+# (upstream served tampered bytes between the two API calls) still fails
+# closed. Returns 0 on success, 1 on unrecoverable failure.
+verify_or_fetch_mpp() {
+  local dest="$1" expected_sha="$2" repo="$3" tag="$4" asset_name="$5"
+  local actual_sha="" dest_name="${dest##*/}"
+
+  if [ -z "$expected_sha" ]; then
+    # No API digest — preserve the legacy behaviour: download if
+    # missing, otherwise keep what's on disk.
+    if [ ! -f "$dest" ]; then
+      log "Downloading patches from ${repo}@${tag} (no SHA verification available)..."
+      gh_release_download "$repo" "$tag" "patches-*.mpp" "$TOOLS_DIR" >/dev/null || true
+      for f in "$TOOLS_DIR"/patches-*.mpp; do
+        [ -f "$f" ] && mv "$f" "$dest"
+        break
+      done
+    fi
+    return 0
+  fi
+
+  if [ -e "$dest" ]; then
+    # `-e` matches any path entry (regular file, directory, symlink,
+    # etc.) so a stray directory at $dest — which would otherwise be
+    # invisible to the `[ -f ]` test and silently break the `mv`
+    # below with "cannot overwrite directory" — still gets cleaned up.
+    if [ ! -f "$dest" ]; then
+      log_warn "${dest_name} exists but is not a regular file; removing before re-download."
+      rm -rf "$dest"
+    else
+      actual_sha="$(sha256sum "$dest" | awk '{print $1}')"
+      if [ "$actual_sha" = "$expected_sha" ]; then
+        log "${dest_name} SHA-256 verified against upstream API digest (${actual_sha})"
+        return 0
+      fi
+      log_warn "${dest_name} SHA-256 mismatch (cache stale? got ${actual_sha}, expected ${expected_sha}). Re-downloading from ${repo}@${tag}."
+      rm -rf "$dest"
+    fi
+  fi
+
+  log "Downloading patches from ${repo}@${tag}..."
+  if [ -n "$asset_name" ]; then
+    gh_release_download "$repo" "$tag" "$asset_name" "$TOOLS_DIR" >/dev/null || true
+    if [ -f "$TOOLS_DIR/$asset_name" ] && [ "$TOOLS_DIR/$asset_name" != "$dest" ]; then
+      mv "$TOOLS_DIR/$asset_name" "$dest"
+    fi
+  else
+    gh_release_download "$repo" "$tag" "patches-*.mpp" "$TOOLS_DIR" >/dev/null || true
+    for f in "$TOOLS_DIR"/patches-*.mpp; do
+      [ -f "$f" ] && mv "$f" "$dest"
+      break
+    done
+  fi
+
+  if [ ! -f "$dest" ]; then
+    log_error "Failed to obtain ${dest} from ${repo}@${tag}."
+    return 1
+  fi
+
+  actual_sha="$(sha256sum "$dest" | awk '{print $1}')"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    log_error "${dest_name} SHA-256 mismatch after re-download: expected ${expected_sha}, got ${actual_sha}. Upstream republish attack or stale API digest; investigate before re-running."
+    return 1
+  fi
+  log "${dest_name} SHA-256 verified against upstream API digest (${actual_sha})"
+  return 0
+}
+
+if ! verify_or_fetch_mpp "$MPP_DEST" "$api_mpp_sha" "$PATCH_REPO" "$PATCH_TAG" "$mpp_asset_name"; then
+  exit 1
 fi
 if [ ! -f "$MPP_DEST" ]; then
   log_error "Failed to obtain ${MPP_DEST} from ${PATCH_REPO}@${PATCH_TAG}."
