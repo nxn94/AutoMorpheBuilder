@@ -18,6 +18,14 @@
  *     - `curl` for the download (rewritten URL via the cft-path patch).
  *     - `unzip` for the extraction (system Info-ZIP, ~3s for the full zip).
  *
+ *   On Playwright ≥1.62 the `playwright-core` `exports` field no longer
+ *   exposes `lib/server/registry/index`, so we cannot use Playwright's own
+ *   `_downloadURLs` helper. We derive the URL from the version pinned in
+ *   `playwright-core/browsers.json` (which IS on disk and is part of the
+ *   published package) — the chrome-for-testing URL pattern is
+ *   `${baseUrl}/${browserVersion}/linux64/${name}-linux64.zip`, identical
+ *   to what Playwright uses internally.
+ *
  * Usage:
  *   PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST=https://storage.googleapis.com/chrome-for-testing-public \
  *     node .github/scripts/install-playwright-browsers.js chromium chromium-headless-shell
@@ -34,40 +42,47 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-// Playwright ≥1.58 enforces an `exports` field in its package.json, so deep
-// require paths must match. The subpath below is allowed by the exports map.
-// browsers.json is *not* in the exports map, so we read it from disk directly.
-const REGISTRY_PATH = require.resolve('playwright-core/lib/server/registry/index');
-const BROWSERS_JSON_PATH = path.join(path.dirname(require.resolve('playwright-core/package.json')), 'browsers.json');
+// browsers.json is *not* in playwright-core's exports map, so read it from
+// disk directly. It is the source of truth for the revision + browserVersion
+// each `npx playwright install <name>` would download.
+const PLAYWRIGHT_CORE_DIR = path.dirname(require.resolve('playwright-core/package.json'));
+const BROWSERS_JSON_PATH = path.join(PLAYWRIGHT_CORE_DIR, 'browsers.json');
 
 // Reflect Playwright's own expectation: $XDG_CACHE_HOME/$HOME/.cache/ms-playwright
 const CACHE_DIR = process.env.PLAYWRIGHT_BROWSERS_PATH
   || path.join(process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache'), 'ms-playwright');
 
+// PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST is the chrome-for-testing bucket prefix.
+// Playwright's default URL template is `${baseUrl}/builds/cft/${browserVersion}/${suffix}`;
+// the public chrome-for-testing bucket serves `${browserVersion}/${suffix}` (no
+// `builds/cft/` prefix), hence `patch-playwright-cft-path.js` when the CLI
+// installer is used. We construct the public URL directly, no patch needed.
+const CFT_BASE_URL = (process.env.PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST || 'https://storage.googleapis.com/chrome-for-testing-public').replace(/\/$/, '');
+
 /**
- * Resolve the download URL for a browser descriptor using Playwright's own
- * `_downloadURLs` method (after the cft-path patch has been loaded). The
- * patch file must be required before this script runs (via NODE_OPTIONS).
+ * Look up the revision + browserVersion for a browser name in
+ * playwright-core/browsers.json. We don't use the registry because
+ * playwright-core's `exports` no longer exposes `lib/server/registry/index`
+ * on Playwright ≥1.62.
  */
-function resolveDownloadURLs(name) {
-  const registryModule = require(REGISTRY_PATH);
-  const registry = registryModule.registry;
+function lookupBrowser(name) {
   const descriptors = JSON.parse(fs.readFileSync(BROWSERS_JSON_PATH, 'utf8')).browsers;
-  const descriptor = descriptors.find((b) => b.name === name);
-  if (!descriptor) throw new Error(`Unknown browser: ${name}`);
-  // The registry exposes per-name executables; pull the descriptor-style
-  // entry it uses for installation.
-  const exec = registry._executables?.find((e) => e.name === name);
-  if (!exec) throw new Error(`No executable for ${name} in registry`);
-  const urls = registry._downloadURLs({
-    name: exec.name,
-    browserName: exec.browserName,
-    revision: exec.revision,
-    browserVersion: exec.browserVersion,
-    installByDefault: exec.installType === 'download-by-default',
-  });
-  if (!urls.length) throw new Error(`No download URL for ${name}`);
-  return urls;
+  const d = descriptors.find((b) => b.name === name);
+  if (!d) throw new Error(`Unknown browser: ${name}`);
+  return { name: d.name, revision: d.revision, browserVersion: d.browserVersion };
+}
+
+/**
+ * Compute the public chrome-for-testing download URL for a given
+ * (name, browserVersion) pair. The URL pattern is:
+ *   ${baseUrl}/${browserVersion}/linux64/${name}-linux64.zip
+ * which is what Playwright's own `_downloadURLs` returns after the
+ * `builds/cft/` patch strips its prefix.
+ */
+function buildDownloadURL(name, browserVersion) {
+  // 'chromium' and 'chromium-headless-shell' map to chrome-linux64 / chrome-headless-shell-linux64
+  const archiveBase = name === 'chromium-headless-shell' ? 'chrome-headless-shell-linux64' : 'chrome-linux64';
+  return `${CFT_BASE_URL}/${browserVersion}/linux64/${archiveBase}.zip`;
 }
 
 /**
@@ -113,12 +128,9 @@ function download(url, destPath) {
 }
 
 function install(name) {
-  const registryModule = require(REGISTRY_PATH);
-  const exec = registryModule.registry._executables.find((e) => e.name === name);
-  const revision = exec.revision;
+  const { revision, browserVersion } = lookupBrowser(name);
   // Playwright normalizes the on-disk dir name by replacing '-' with '_' in
-  // the browser name (see registry/index.js: `browserDirectoryPrefix.replace(/-/g, '_')`).
-  // Use the same convention so the dir matches what exec.executablePath() returns.
+  // the browser name (the registry applies that same convention).
   const targetDir = path.join(CACHE_DIR, `${name.replace(/-/g, '_')}-${revision}`);
 
   const marker = path.join(targetDir, 'INSTALLATION_COMPLETE');
@@ -127,8 +139,8 @@ function install(name) {
     return;
   }
 
-  const urls = resolveDownloadURLs(name);
-  console.error(`[install] ${name} r${revision} -> ${urls[0]}`);
+  const url = buildDownloadURL(name, browserVersion);
+  console.error(`[install] ${name} r${revision} (chrome ${browserVersion}) -> ${url}`);
 
   // Wipe any partial install from a previous failed run.
   if (fs.existsSync(targetDir)) {
@@ -140,7 +152,7 @@ function install(name) {
   const tmpZip = path.join(targetDir, `__download.zip`);
   const t0 = Date.now();
   try {
-    download(urls[0], tmpZip);
+    download(url, tmpZip);
     console.error(`[install] ${name} downloaded in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
     const t1 = Date.now();
@@ -151,10 +163,12 @@ function install(name) {
     try { fs.unlinkSync(tmpZip); } catch { /* ignore */ }
   }
 
-  // Validate: the expected executable must exist. Use chmodSync directly
-  // (chmod throws ENOENT atomically) so the existsSync + chmodSync pair
-  // doesn't have a TOCTOU window — covers CodeQL js/file-system-race.
-  const expectedExec = exec.executablePath();
+  // The chromium zip extracts to <dir>/chrome-linux64/{chrome, chrome-headless-shell}, ...
+  // Validate the expected executable exists, then chmod +x (artifact upload
+  // strips the exec bit — same as the post-install step in
+  // install_playwright.sh does for the whole cache tree).
+  const expectedExec = path.join(targetDir,
+    name === 'chromium-headless-shell' ? 'chrome-headless-shell-linux64/chrome-headless-shell' : 'chrome-linux64/chrome');
   try {
     fs.chmodSync(expectedExec, 0o755);
   } catch (e) {
