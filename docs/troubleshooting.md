@@ -207,6 +207,18 @@ If you see this symptom on an older deployment, clear it manually:
 
 then re-run the workflow.
 
+## Build job silently skips patches (stale `.mpp` cached under the current key)
+
+**Symptom:** the input patch list at the top of the morphe-desktop log contains a patch (e.g. `PoToken provider`, `App refresh rate`, `Mute button`, `Wide search bar`, `Disable scrolling speed limit`) but it never appears in the `INFO: Applied:` block. No `INFO: Skipping disabled:` line matches the patch name either — it is simply absent from the second half of the log. Multiple patches can be missing from the same build.
+
+**Root cause:** the build job's `Cache patches .mpp` step was populated with a `.mpp` from an earlier patch tag (back when `restore-keys: morphe-patches-<slug>-` was the cache pattern). The upstream `.mpp` no longer declares those patch names as YouTube-compatible, so `morphe-desktop filterPatchSelection` takes the silent `logger.fine("Skipping \"<name>\": incompatible with ...") → return@patchLoop` path — invisible at the default INFO log level.
+
+**Fix:**
+
+`fetch_morphe_tools.sh` now resolves the per-asset digest from the GitHub release API and verifies the on-disk bytes before letting the build continue. A stale cache entry fails the SHA check; the script logs the mismatch, deletes the stale file, re-downloads the correct `.mpp`, re-verifies, and only then exits 0. The next `actions/cache` save replaces the polluted entry with the correct bytes, so subsequent runs hit a clean cache. No manual `gh cache delete` is needed.
+
+If you see this symptom on a deployment that hasn't picked up this version of `fetch_morphe_tools.sh` yet, the manual recipe is identical to the case above (`gh cache delete morphe-patches-<slug>-<old-tag>`).
+
 ---
 
 ## Reporting a new failure
