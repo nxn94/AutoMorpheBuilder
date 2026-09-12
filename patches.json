@@ -154,7 +154,7 @@
       "Disable Facebook SDK": true,
       "Disable Play Integrity": true,
       "Disable ads": true,
-      "Disable telemetry": true,
+      "Disable telemetry": false,
       "Enable Premium": true
     }
   },
