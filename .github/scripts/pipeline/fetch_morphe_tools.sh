@@ -224,12 +224,19 @@ done
 
 # Paranoia: confirm the downloaded jar matches CLI_VERSION before
 # downstream steps (which call list-versions / patch) try to use it.
+# `tr -d '\r'` strips a stray carriage return that the upstream JAR's
+# MANIFEST.MF sometimes ships with (it would otherwise survive
+# `head -n1` and break the string compare below, producing a spurious
+# "version mismatch" warning when both sides match).
 if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
   actual_version="$(unzip -p "$TOOLS_DIR/morphe-desktop.jar" META-INF/MANIFEST.MF 2>/dev/null \
-    | grep '^Implementation-Version:' | sed 's/^Implementation-Version:[[:space:]]*//' | head -n1 || true)"
+    | grep '^Implementation-Version:' | sed 's/^Implementation-Version:[[:space:]]*//' \
+    | head -n1 | tr -d '\r' || true)"
   expected_version="${CLI_VERSION#v}"
   if [ -n "$actual_version" ] && [ "$actual_version" != "$expected_version" ]; then
     log_warn "morphe-desktop.jar version mismatch: expected ${expected_version}, got ${actual_version}."
+  elif [ -n "$actual_version" ]; then
+    log "morphe-desktop.jar version confirmed: ${actual_version}"
   fi
 
   # SHA-256 verification. GitHub's release API exposes a per-asset
@@ -255,9 +262,23 @@ if [ -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
       exit 1
     fi
     log "morphe-desktop.jar SHA-256 verified against upstream API digest (${api_sha})"
+    # Pin drift check: pin must agree with API *for the same CLI tag*,
+    # or someone has tampered with the asset. When the pin row carries
+    # a `# vX.Y.Z` annotation that names a *different* CLI release than
+    # the one we're downloading, the SHA mismatch is just a version
+    # bump we haven't refreshed the pin for yet — log a TODO marker
+    # and continue. Without the version annotation (or with one that
+    # does match), disagreement stays a hard fail.
     if [ -n "$pinned_sha" ] && [ "$pinned_sha" != "$api_sha" ]; then
-      log_error "morphe-desktop.jar pin in checksums/tools.sha256 disagrees with upstream API digest. pinned: ${pinned_sha}, API: ${api_sha}. This usually means the asset was republished under ${CLI_VERSION}; either refresh the pin or stop the workflow to investigate."
-      exit 1
+      pinned_version_raw="$(tools_sha_pinned_version "morphe-desktop.jar" || true)"
+      pinned_version="${pinned_version_raw#v}"
+      if [ -n "$pinned_version_raw" ] && [ -n "$pinned_version" ] \
+          && [ "$pinned_version" != "$expected_version" ]; then
+        log "morphe-desktop.jar pin in checksums/tools.sha256 is for ${pinned_version_raw} but downloading v${expected_version}; treating as a CLI version bump (not a tamper signal). TODO(refresh-pin-morphe-desktop): update checksums/tools.sha256 to pin ${cli_asset_name} = ${api_sha}  # v${expected_version} so the next run can detect republish attacks."
+      else
+        log_error "morphe-desktop.jar pin in checksums/tools.sha256 disagrees with upstream API digest for ${CLI_VERSION}. pinned: ${pinned_sha}, API: ${api_sha}. This means the asset was republished under ${CLI_VERSION}; either refresh the pin or stop the workflow to investigate."
+        exit 1
+      fi
     fi
     if [ -z "$pinned_sha" ]; then
       log "TODO(refresh-pin-morphe-desktop): API has no local pin to compare; update checksums/tools.sha256 to pin ${cli_asset_name} = ${api_sha} before the next CLI bump so subsequent runs can detect republish attacks."

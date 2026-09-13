@@ -532,19 +532,24 @@ jobs:
     needs: [check-versions, build]
     # Release whatever the matrix successfully produced. The build matrix
     # already runs with `fail-fast: false`, so a single bad app lets every
-    # other leg finish — but matrix-job `result` still flips to `'failure'`
-    # if any leg errors. Gating on `'success'` would discard the entire
-    # release batch on one bad app, so we let `'failure'` through too:
-    # failed matrix legs never reach the upload-artifact step, so their
+    # other leg finish — but the matrix `needs.build.result` value that
+    # downstream jobs see is unreliable across GitHub Actions versions
+    # (in some runners a matrix with one failed leg and `fail-fast: false`
+    # reports `success` to `needs`, dropping partial batches on the floor).
+    # Use `always()` so the gate fires regardless of the upstream
+    # aggregate, then explicitly filter the two cases we *don't* want:
+    # `should-build == false` (filter step kept every app out of the
+    # matrix; nothing to release) and `needs.build.result == 'cancelled'`
+    # (user dispatch-cancelled mid-flight; artifacts never uploaded).
+    # Failed matrix legs never reach the upload-artifact step, so their
     # APKs never reach $APKS_DIR, and create_release.sh releases exactly
-    # the successful legs. Only `'cancelled'` (e.g. user dispatch-cancel
-    # mid-flight) and `'skipped'` (should-build returned false) bail out.
-    # An empty $APKS_DIR (every leg failed) makes create_release.sh
-    # ::error:: and exit non-zero, which is the right signal — don't
-    # publish nothing and pretend the run succeeded.
+    # the successful legs. An empty $APKS_DIR (every leg failed) makes
+    # create_release.sh ::error:: and exit non-zero, which is the right
+    # signal — don't publish nothing and pretend the run succeeded.
     if: |
-      (needs.build.result == 'success' || needs.build.result == 'failure') &&
-      needs.check-versions.outputs.should-build == 'true'
+      always() &&
+      needs.check-versions.outputs.should-build == 'true' &&
+      needs.build.result != 'cancelled'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: signing

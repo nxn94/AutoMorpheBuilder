@@ -13,14 +13,29 @@ This means a new CLI release does **not** require editing the manifest to keep t
 The pinned values in the manifest are a **tripwire, not the primary gate**:
 
 1. **Local bytes must match the API digest** — this is the tamper / corruption gate. If they disagree, the build fails closed: someone republished the asset, the download was corrupted in transit, or `--pattern` matched the wrong file.
-2. **Pinned value must match the API digest** — when the manifest is pinned, a disagreement means the upstream asset was *republished under the same tag*. The build fails closed with a message naming both hashes; either the pin is stale (refresh and continue) or the asset was tampered with (stop the workflow).
-3. **No pin → accept the API digest but emit a `TODO(refresh-pin-…)` marker** in the CI log. The build proceeds; a maintainer can refresh the pin before the next bump makes the drift harder to spot.
+2. **Pin must agree with the API digest *for the same CLI tag*** — when the pin row carries a `# vX.Y.Z` annotation, the verify scripts compare the running CLI tag to the pin's annotation before treating a SHA disagreement as a tamper signal. If the pin is for a *different* CLI release, the mismatch is a normal version bump and the build continues with a `TODO(refresh-pin-…)` log line. If the pin is for the *same* CLI tag and the SHA still disagrees, that is a republish attack and the build fails closed.
+3. **Pin row has no parseable `# vX.Y.Z` comment and SHA disagrees with API** — fail closed. Better to over-warn than to silently accept a malformed manifest.
+4. **No pin → accept the API digest but emit a `TODO(refresh-pin-…)` marker** in the CI log. The build proceeds; a maintainer can refresh the pin before the next bump makes the drift harder to spot.
 
 ## Updating a checksum
 
 1. Trigger a fresh build with `actions: write` permission.
 2. The pinned row already in `checksums/tools.sha256` (if any) is only one of the two things being compared; the more useful line is `SHA-256 verified against upstream API digest (….)`, which is what actually matched the local bytes.
-3. If the upstream version bumped, the API digest printed in the prior step is your new pin target. Replace the line and commit so the tripwire stays active — a stale pin that disagrees with the API digest is a hard fail on the next run.
+3. If the upstream version bumped, the API digest printed in the prior step is your new pin target. Replace the line **and** the `# vX.Y.Z` annotation on the same row so the tripwire stays active. The version annotation lets the verify scripts distinguish a normal CLI bump from a same-tag republish attack. A stale pin whose annotation no longer matches the running CLI tag is logged as a `TODO(refresh-pin-…)` instead of failing the build — but the next run with the same tag will fail closed if the asset is tampered with, so refresh promptly.
+
+### Example: bumping `morphe-desktop.jar` from v1.15.0 → v1.15.1
+
+Before:
+```
+727e3744aa5c0006474590de6f4041bd55edc59f3d6cb9b596e95f7116384506  morphe-desktop.jar  # v1.15.0
+```
+
+After (one-line edit, both SHA and `# vX.Y.Z` annotation refresh together):
+```
+6ae9954cd4e22e61055cf9ef6b0bbd25556d2092f354031828f824dc0f7364e1  morphe-desktop.jar  # v1.15.1
+```
+
+The verify scripts in `download_morphe_tools.sh` and `fetch_morphe_tools.sh` extract the version annotation via the `tools_sha_pinned_version` helper in `.github/scripts/pipeline/lib/checksums.sh`; if the helper returns empty (no annotation, malformed row), disagreement still fails closed so a damaged manifest cannot silently disable the tripwire.
 
 ## Empty or TODO entries
 
