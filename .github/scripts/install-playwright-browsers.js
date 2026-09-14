@@ -114,12 +114,17 @@ function unzip(zipPath, destDir) {
  */
 function download(url, destPath) {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
+  // codeql[js/file-access-to-http] reason: CFT_BASE_URL is a controlled
+  // env var with a safe default (chrome-for-testing-public); browserVersion
+  // comes from playwright-core's checked-in browsers.json (npm metadata,
+  // not user data); the URL is built from a fixed template with no
+  // user-controlled file content flowing into the outbound request.
   execFileSync('curl', [
     '-fSL', '--retry', '3', '--retry-delay', '2',
     '--connect-timeout', '30', '--max-time', '300',
     '-o', destPath,
     url,
-  ], { stdio: ['ignore', 'pipe', 'pipe'] }); // codeql[js/file-access-to-http] reason: CFT_BASE_URL is a controlled env var with a safe default (chrome-for-testing-public); browserVersion comes from playwright-core's checked-in browsers.json (npm metadata, not user data); the URL is built from a fixed template.
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
   const stat = fs.statSync(destPath);
   if (stat.size < 1_000_000) {
     throw new Error(`Downloaded ${url} is suspiciously small (${stat.size} bytes)`);
