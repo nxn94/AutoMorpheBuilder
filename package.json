@@ -44,7 +44,7 @@
     "@eslint/js": "^10.0.0",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "eslint": "^10.9.1",
+    "eslint": "^10.10.0",
     "jest": "^30.5.1"
   },
   "overrides": {
