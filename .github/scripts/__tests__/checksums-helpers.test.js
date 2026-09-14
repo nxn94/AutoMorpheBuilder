@@ -7,9 +7,13 @@
 // pin row's `# vX.Y.Z` annotation would silently flip a "CLI bump" warning
 // into a "tamper signal" hard-fail on the next release.
 //
-// The helpers are shell-only, so each test spawns `bash -c` against a
-// fixture manifest written to a tmpdir. Tests are skipped when bash is
-// unavailable.
+// The helpers are shell-only, so each test spawns bash against a fixture
+// manifest written to a tmpdir. We avoid `bash -c <constructed-string>`
+// (CodeQL js/shell-command-injection-from-environment) by writing a fixed
+// wrapper script to a tmp file and invoking it via `bash <script>`
+// (no `-c`), with the manifest path, lib path, helper name, and artifact
+// all passed via env vars / argv rather than string interpolation.
+// Tests are skipped when bash is unavailable.
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -25,6 +29,13 @@ const CHECKSUMS_LIB = path.join(
   'lib',
   'checksums.sh',
 );
+
+// Fixed wrapper script. $1 = helper name, $2 = artifact name.
+// CHECKSUMS_FILE and CHECKSUMS_LIB come from env vars set by runHelper().
+const WRAPPER_SCRIPT = `set -e
+. "$CHECKSUMS_LIB"
+"$1" "$2"
+`;
 
 function bashAvailable() {
   try {
@@ -45,21 +56,73 @@ function writeManifest(tmpDir, body) {
   return file;
 }
 
-// runHelper <manifestFile> <artifact>
-//   Source the lib in a fresh bash subshell and invoke the requested
-//   helper. Returns the captured stdout, trimmed. Exit code is exposed
-//   via the second tuple element when callers care.
+// newScriptPath returns a unique tmp path for a wrapper script.
+function newScriptPath() {
+  return path.join(
+    os.tmpdir(),
+    `chk-wrapper-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.sh`,
+  );
+}
+
+// runHelper <manifestFile> <artifact> <helper>
+//   Sources CHECKSUMS_LIB in a fresh bash subshell and invokes the
+//   requested helper with the artifact name as its sole argument.
+//   Returns the captured stdout, trimmed.
 function runHelper(manifestFile, artifact, helper) {
-  const script =
-    `set -e\n` +
-    `CHECKSUMS_FILE='${manifestFile}'\n` +
-    `. '${CHECKSUMS_LIB}'\n` +
-    `${helper} '${artifact}'\n`;
-  const out = execFileSync('bash', ['-c', script], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return out.replace(/\n$/, '');
+  const scriptFile = newScriptPath();
+  fs.writeFileSync(scriptFile, WRAPPER_SCRIPT, { mode: 0o600 });
+  const env = {
+    ...process.env,
+    CHECKSUMS_FILE: manifestFile,
+    CHECKSUMS_LIB,
+  };
+  try {
+    const out = execFileSync('bash', [scriptFile, helper, artifact], {
+      encoding: 'utf8',
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return out.replace(/\n$/, '');
+  } finally {
+    try {
+      fs.unlinkSync(scriptFile);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+// runHelperExit <manifestFile> <artifact> <helper>
+//   Same as runHelper, but returns { code, stdout } so callers can
+//   distinguish exit codes (e.g. tools_sha_pinned's success/failure).
+function runHelperExit(manifestFile, artifact, helper) {
+  const scriptFile = newScriptPath();
+  fs.writeFileSync(scriptFile, WRAPPER_SCRIPT, { mode: 0o600 });
+  const env = {
+    ...process.env,
+    CHECKSUMS_FILE: manifestFile,
+    CHECKSUMS_LIB,
+  };
+  try {
+    const out = execFileSync('bash', [scriptFile, helper, artifact], {
+      encoding: 'utf8',
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { code: 0, stdout: out.replace(/\n$/, '') };
+  } catch (e) {
+    return {
+      code: typeof e.status === 'number' ? e.status : 1,
+      stdout: '',
+      stderr: (e.stderr || '').toString(),
+    };
+  } finally {
+    try {
+      fs.unlinkSync(scriptFile);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 describe('lib/checksums.sh helpers', () => {
@@ -111,13 +174,9 @@ describe('lib/checksums.sh helpers', () => {
         tmp,
         'a'.repeat(64) + "  morphe-desktop.jar  # v1.15.1\n",
       );
-      const script =
-        `set -e\n` +
-        `CHECKSUMS_FILE='${file}'\n` +
-        `. '${CHECKSUMS_LIB}'\n` +
-        `if tools_sha_pinned morphe-desktop.jar; then echo pinned; else echo nope; fi\n`;
-      const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
-      expect(out.trim()).toBe('pinned');
+      expect(
+        runHelperExit(file, 'morphe-desktop.jar', 'tools_sha_pinned').code,
+      ).toBe(0);
     });
 
     test('returns failure for unknown artifact', () => {
@@ -127,13 +186,7 @@ describe('lib/checksums.sh helpers', () => {
         tmp,
         'a'.repeat(64) + "  morphe-desktop.jar  # v1.15.1\n",
       );
-      const script =
-        `set -e\n` +
-        `CHECKSUMS_FILE='${file}'\n` +
-        `. '${CHECKSUMS_LIB}'\n` +
-        `if tools_sha_pinned nope.jar; then echo pinned; else echo nope; fi\n`;
-      const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
-      expect(out.trim()).toBe('nope');
+      expect(runHelperExit(file, 'nope.jar', 'tools_sha_pinned').code).toBe(1);
     });
   });
 
