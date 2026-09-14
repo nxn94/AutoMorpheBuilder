@@ -94,7 +94,7 @@ jobs:
         # Java 21 separately. Runs unconditionally so the filter step
         # can compare against existing releases before any of the
         # expensive Playwright / apkeep / APK pre-download steps fire.
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6
         with:
           distribution: temurin
           java-version: "21"
@@ -302,7 +302,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java (for morphe-desktop)
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c  # v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6  # v6
         with:
           distribution: temurin
           java-version: "21"
