@@ -114,15 +114,18 @@ function unzip(zipPath, destDir) {
  */
 function download(url, destPath) {
   fs.mkdirSync(path.dirname(destPath), { recursive: true });
-  // codeql[js/file-access-to-http] reason: CFT_BASE_URL is a controlled
-  // env var with a safe default (chrome-for-testing-public); browserVersion
-  // comes from playwright-core's checked-in browsers.json (npm metadata,
-  // not user data); the URL is built from a fixed template with no
-  // user-controlled file content flowing into the outbound request.
   execFileSync('curl', [
     '-fSL', '--retry', '3', '--retry-delay', '2',
     '--connect-timeout', '30', '--max-time', '300',
+    // codeql[js/file-access-to-http] reason: destPath is a tmp file path
+    // we just constructed inside the user-owned cache dir; the network
+    // -derived data going out is browserVersion from playwright-core's
+    // checked-in browsers.json (npm metadata, not user data).
     '-o', destPath,
+    // codeql[js/file-access-to-http] reason: url is built from a fixed
+    // template; browserVersion comes from playwright-core's checked-in
+    // browsers.json (npm metadata, not user data); CFT_BASE_URL is a
+    // controlled env var with a safe default.
     url,
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
   const stat = fs.statSync(destPath);
