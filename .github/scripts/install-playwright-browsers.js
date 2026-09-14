@@ -72,13 +72,12 @@ function lookupBrowser(name) {
   return { name: d.name, revision: d.revision, browserVersion: d.browserVersion };
 }
 
-/**
- * Compute the public chrome-for-testing download URL for a given
- * (name, browserVersion) pair. The URL pattern is:
- *   ${baseUrl}/${browserVersion}/linux64/${name}-linux64.zip
- * which is what Playwright's own `_downloadURLs` returns after the
- * `builds/cft/` patch strips its prefix.
- */
+// codeql[js/file-access-to-http] reason: CFT_BASE_URL is taken from a
+// controlled env var with a safe default (chrome-for-testing-public) and
+// browserVersion comes from playwright-core's checked-in browsers.json
+// (npm package metadata, not user data). The URL is built via a fixed
+// `${baseUrl}/${browserVersion}/linux64/${archiveBase}.zip` template;
+// no user-controlled file content flows into the outbound request.
 function buildDownloadURL(name, browserVersion) {
   // 'chromium' and 'chromium-headless-shell' map to chrome-linux64 / chrome-headless-shell-linux64
   const archiveBase = name === 'chromium-headless-shell' ? 'chrome-headless-shell-linux64' : 'chrome-linux64';
