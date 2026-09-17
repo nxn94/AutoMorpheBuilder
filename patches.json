@@ -1,49 +1,5 @@
 {
   "MorpheApp/morphe-patches": {
-    "com.google.android.apps.youtube.music": {
-      "App refresh rate": true,
-      "Bypass certificate checks": true,
-      "Change header": true,
-      "Change miniplayer color": true,
-      "Change start page": true,
-      "Check watch history domain name resolution": true,
-      "Crossfade": true,
-      "Custom branding": true,
-      "Disable DRC audio": true,
-      "Disable QUIC protocol": true,
-      "Disable dislike redirection": true,
-      "Downloads": true,
-      "Enable debugging": true,
-      "Enable exclusive audio playback": true,
-      "Enable forced miniplayer": true,
-      "Enable swipe to dismiss miniplayer": true,
-      "Force original audio": true,
-      "GmsCore support": true,
-      "Hide ads": true,
-      "Hide buttons": true,
-      "Hide filter bar": true,
-      "Hide flyout menu components": true,
-      "Hide layout components": true,
-      "Hide music action buttons": true,
-      "Miniplayer previous and next buttons": true,
-      "Navigation bar": true,
-      "Network proxy": true,
-      "Play albums songs": true,
-      "PoToken provider": true,
-      "Remember repeat state": true,
-      "Remember shuffle state": true,
-      "Remove background playback restrictions": true,
-      "Remove viewer discretion dialog": true,
-      "Return YouTube Dislike": true,
-      "Sanitize sharing links": true,
-      "Scrobbling": true,
-      "Settings menu filter": true,
-      "SponsorBlock": true,
-      "Spoof app version": true,
-      "Spoof video streams": true,
-      "Theme": true,
-      "Third-party lyrics": true
-    },
     "com.google.android.youtube": {
       "Add to queue": true,
       "Alternative thumbnails": true,
@@ -109,6 +65,7 @@
       "Playback speed": true,
       "PoToken provider": true,
       "Reload video": true,
+      "Remember live stream playback position": true,
       "Remove background playback restrictions": true,
       "Remove viewer discretion dialog": true,
       "Return YouTube Dislike": true,
@@ -127,7 +84,52 @@
       "Voice over translation": true,
       "Wide search bar": true
     },
+    "com.google.android.apps.youtube.music": {
+      "App refresh rate": true,
+      "Bypass certificate checks": true,
+      "Change header": true,
+      "Change miniplayer color": true,
+      "Change start page": true,
+      "Check watch history domain name resolution": true,
+      "Crossfade": true,
+      "Custom branding": true,
+      "Disable DRC audio": true,
+      "Disable QUIC protocol": true,
+      "Disable dislike redirection": true,
+      "Downloads": true,
+      "Enable debugging": true,
+      "Enable exclusive audio playback": true,
+      "Enable forced miniplayer": true,
+      "Enable swipe to dismiss miniplayer": true,
+      "Force original audio": true,
+      "GmsCore support": true,
+      "Hide ads": true,
+      "Hide buttons": true,
+      "Hide filter bar": true,
+      "Hide flyout menu components": true,
+      "Hide layout components": true,
+      "Hide music action buttons": true,
+      "Miniplayer previous and next buttons": true,
+      "Navigation bar": true,
+      "Network proxy": true,
+      "Play albums songs": true,
+      "PoToken provider": true,
+      "Remember repeat state": true,
+      "Remember shuffle state": true,
+      "Remove background playback restrictions": true,
+      "Remove viewer discretion dialog": true,
+      "Return YouTube Dislike": true,
+      "Sanitize sharing links": true,
+      "Scrobbling": true,
+      "Settings menu filter": true,
+      "SponsorBlock": true,
+      "Spoof app version": true,
+      "Spoof video streams": true,
+      "Theme": true,
+      "Third-party lyrics": true
+    },
     "com.reddit.frontpage": {
+      "App icon": true,
       "Custom branding name for Reddit": true,
       "Custom font": true,
       "Disable modern home": true,
@@ -148,16 +150,6 @@
       "Spoof signature": true
     }
   },
-  "heval99/morphe-patches": {
-    "com.sofascore.results": {
-      "Block marketing notifications": true,
-      "Disable Facebook SDK": true,
-      "Disable Play Integrity": true,
-      "Disable ads": true,
-      "Disable telemetry": false,
-      "Enable Premium": true
-    }
-  },
   "RookieEnough/De-Vanced": {
     "tv.twitch.android.app": {
       "Auto claim channel points": true,
@@ -169,25 +161,22 @@
     }
   },
   "rushiranpise/morphe-patches": {
+    "com.kevinforeman.nzb360": {
+      "Unlock All Access": true
+    },
     "com.finalwire.aida64": {
       "Remove ads": true
     },
     "com.flightradar24free": {
       "Unlock Business Premium": true
-    },
-    "com.kevinforeman.nzb360": {
-      "Unlock All Access": true
-    },
-    "eu.darken.sdmse": {
-      "Unlock Pro": true
     }
   },
   "hoo-dles/morphe-patches": {
+    "com.sofascore.results": {
+      "Disable ads": true
+    },
     "com.getmimo": {
       "Enable Pro": true
     }
-  },
-  "BlazeFTL/FTL-Patches": {
-    "abdelrahman.wifianalyzerpro": {}
   }
 }
