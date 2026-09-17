@@ -35,6 +35,11 @@ set -euo pipefail
 CONFIG_FILE="${CONFIG_FILE:-./config.json}"
 PATCHES_FILE="${PATCHES_FILE:-./patches.json}"
 RUNNER_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+# Resolve once so the merge-patches.js Node call is unambiguous even if
+# the caller is in a different working directory or invokes the script
+# via a relative path. Override via env for local testing.
+REPO_ROOT="${REPO_ROOT:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
+MERGE_HELPER="${REPO_ROOT}/scripts/merge-patches.js"
 
 if [ -z "${REPO_VERSIONS:-}" ]; then
   echo "::error::REPO_VERSIONS env var must be set (JSON object mapping owner/repo -> tag)"
@@ -46,6 +51,14 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 if ! command -v curl >/dev/null 2>&1; then
   echo "::error::curl is required for patches.json sync."
+  exit 1
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "::error::node is required for patches.json sync (drives scripts/merge-patches.js)."
+  exit 1
+fi
+if [ ! -f "$MERGE_HELPER" ]; then
+  echo "::error::merge helper not found at ${MERGE_HELPER}."
   exit 1
 fi
 
@@ -182,26 +195,23 @@ while IFS='|' read -r repo branch; do
   ' "$PATCHES_LIST" > "$WORK_DIR/defaults_${slug}.json"
 
   # Merge defaults with existing user toggles for this repo.
-  # Key rule: only upstream patch names survive (stale keys are dropped).
-  # For each patch name present in upstream, use the existing user toggle
-  # if it was explicitly set (including explicit `false`), otherwise
-  # default to true.
-  # jq's `//` falls back on both `null` AND `false`, so it would silently
-  # turn user-set `false` toggles back to `true`. `has()` is key-only.
-  jq -n \
+  #
+  # Delegated to scripts/merge-patches.js so the relocation fallback
+  # (apps whose patch repo moved in config.json) is unit-tested rather
+  # than buried inside jq. The helper:
+  #   - prefers user toggles under the same repo key in baseAllRepos,
+  #   - falls back to the first match in any OTHER repo's section, so
+  #     apps that have moved repos keep their existing toggles,
+  #   - keeps only upstream patch names (stale keys are dropped),
+  #   - preserves explicit `false` toggles (uses has(), not `//`,
+  #     because `//` falls back on both null AND false).
+  MERGE_REQUEST="$(jq -n \
+    --argjson defaults "$(cat "$WORK_DIR/defaults_${slug}.json")" \
+    --argjson base "$(cat "$WORK_DIR/patches_base.json")" \
     --arg repo "$repo" \
-    --slurpfile defaults "$WORK_DIR/defaults_${slug}.json" \
-    --slurpfile base "$WORK_DIR/patches_base.json" '
-    ($defaults[0] // {}) as $d
-    | ($base[0] // {}) as $existing
-    | ($existing[$repo] // {}) as $repo_existing
-    | reduce ($d | keys[]) as $pkg (.;
-        ($repo_existing[$pkg] // {}) as $pkg_existing
-        | .[$pkg] = reduce ($d[$pkg] | keys[]) as $pname ({};
-            .[$pname] = (if $pkg_existing | has($pname) then $pkg_existing[$pname] else true end)
-          )
-      )
-    ' > "$WORK_DIR/merged_${slug}.json"
+    '{ defaultsForTargetRepo: $defaults, baseAllRepos: $base, targetRepo: $repo }')"
+  node "$REPO_ROOT/scripts/merge-patches.js" <<<"$MERGE_REQUEST" \
+    | jq -c '.merged' > "$WORK_DIR/merged_${slug}.json"
 
   # Inject merged section back into base.
   jq --arg repo "$repo" \
