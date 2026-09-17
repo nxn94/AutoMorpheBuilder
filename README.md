@@ -25,7 +25,7 @@ Forking for personal use is encouraged. To add or remove an app, edit `config.js
 | YouTube | `com.google.android.youtube` | `MorpheApp/morphe-patches` |
 | YouTube Music | `com.google.android.apps.youtube.music` | `MorpheApp/morphe-patches` |
 | Reddit | `com.reddit.frontpage` | `MorpheApp/morphe-patches` |
-| Sofascore | `com.sofascore.results` | `heval99/morphe-patches` |
+| Sofascore | `com.sofascore.results` | `hoo-dles/morphe-patches` |
 | Twitch | `tv.twitch.android.app` | `RookieEnough/De-Vanced` |
 | NZB360 | `com.kevinforeman.nzb360` | `rushiranpise/morphe-patches` |
 | AIDA64 | `com.finalwire.aida64` | `rushiranpise/morphe-patches` |
