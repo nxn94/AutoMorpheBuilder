@@ -107,6 +107,16 @@ GitHub `owner/repo` slug pointing at a Morphe-compatible patches repository. The
 
 The repo **must** publish `.mpp` artifacts. If it does not, the per-app `Preflight per-app patch availability` step fails the workflow before the build matrix spins up.
 
+##### Moving an app to a different patch repo
+
+Edit the app's existing `patch_repos` entry and change `repo` (and `branch` / `pin_patch_tag` if needed) in the same commit. The next push to `main`:
+
+1. `update-patches.yml` detects the relocation — the destination repo *already exists* in `patches.json` (carrying other apps like `mimo` next to `hoo-dles/morphe-patches`) doesn't matter; the gate opens on a relocated app just as it does on a brand-new repo (`scripts/detect-new-repos.js`, unit-tested in `.github/scripts/__tests__/detect-new-repos.test.js`).
+2. `sync-patches.sh` rebuilds the section under the destination repo. For each app under that destination, it looks up the user's existing per-patch toggles — first in the destination's own entry, then falling back to the entry under any other repo where the app lives. Explicit `false` toggles (e.g. `Disable telemetry: false`) are preserved across the move.
+3. After merge, the trailing `ACTIVE_REPOS` filter drops the now-unreferenced source repo (`heval99/morphe-patches`), leaving the app's toggles intact under the new repo.
+
+Manual backstop: `workflow_dispatch` on `update-patches.yml` re-runs sync unconditionally; use it if a push trigger hasn't landed.
+
 #### `branch`
 
 | | |
@@ -243,7 +253,7 @@ Shape:
     "com.google.android.youtube":                { "name": "youtube", "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "google-inc/youtube" },
     "com.google.android.apps.youtube.music":     { "name": "ytmusic", "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "google-inc/youtube-music" },
     "com.reddit.frontpage":                      { "name": "reddit",  "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "redditinc/reddit" },
-    "com.sofascore.results":                     { "name": "sofascore","repo": "heval99/morphe-patches",      "branch": "main", "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore" },
+    "com.sofascore.results":                     { "name": "sofascore","repo": "hoo-dles/morphe-patches",    "branch": "main", "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore" },
     "tv.twitch.android.app":                     { "name": "twitch",  "repo": "RookieEnough/De-Vanced",       "branch": "main", "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming" },
     "com.kevinforeman.nzb360":                   { "name": "nzb360",  "repo": "rushiranpise/morphe-patches",  "branch": "main", "apkmirror_path": "kevin-foreman/nzb360",          "pin_patch_tag": "v1.18.3" },
     "com.finalwire.aida64":                      { "name": "aida64",  "repo": "rushiranpise/morphe-patches",  "branch": "main", "apkmirror_path": "finalwire-ltd/aida64",          "pin_patch_tag": "v1.18.3" },

@@ -124,6 +124,18 @@ The repo defends against this in three layers:
 
 ---
 
+## `update-patches` says "No new patch repos; skipping sync" after moving an app's `repo` in `config.json`
+
+**Symptom:** you changed one app's `patch_repos[*].repo` to a different `owner/repo` and pushed to `main`, but `update-patches.yml` logs "No new patch repos in config.json; skipping sync" and `patches.json` is unchanged. If the destination repo is brand-new, no commit at all is produced; if the destination already exists in `patches.json` (because another app lives under it), the "skipping" notice fires and you lose your existing per-patch toggles for the moved app on the next sync.
+
+**Cause:** `scripts/detect-new-repos.js` only flagged repos that did not yet appear in `patches.json`. Moving an app to a repo that already exists (e.g. re-pointing `com.sofascore.results` from `heval99/morphe-patches` to `hoo-dles/morphe-patches`, which already carries `com.getmimo`) didn't open the gate, so `sync-patches.sh` was skipped. Even when the gate did open, the old jq merge only read existing toggles from the destination repo's key and dropped any app moved across repos.
+
+**Fix on your current run:** trigger `update-patches.yml` via `workflow_dispatch` once. The script runs unconditionally on manual dispatch.
+
+**Fix in the repo:** the gate is now `scripts/detect-new-repos.js`'s pure `detectChanges` (case (a) — brand-new repo — *or* case (b) — relocated app), unit-tested in `.github/scripts/__tests__/detect-new-repos.test.js`. The merge is now `scripts/merge-patches.js` (`mergeRepoEntries`), unit-tested in `.github/scripts/__tests__/merge-patches.test.js`. Both fall back to existing toggles wherever they sit in `patches.json` so explicit `false` toggles survive the move. On the same push, `patches.json` syncs and the README tables regenerate.
+
+---
+
 ## Obtainium not finding updates
 
 **Symptom:** an Obtainium entry that points at this repo's Releases does not see a new release.
