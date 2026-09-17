@@ -43,12 +43,21 @@ export PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST
 SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CACHE_DIR="${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"
 
-needs_install=true
-if [ -d "$CACHE_DIR" ]; then
-  if find "$CACHE_DIR" -name 'chrome' 2>/dev/null | grep -q . \
-     || find "$CACHE_DIR" -name 'chrome-headless-shell' 2>/dev/null | grep -q .; then
-    needs_install=false
-  fi
+# Revision-aware `needs_install` check. Replaces the previous
+# `find "$CACHE_DIR" -name 'chrome'` heuristic, which incorrectly
+# reported "all installed" when actions/cache's restore-keys fallback
+# brought back a partial archive from a previous Playwright version
+# (e.g. chromium-1208 only, while playwright-core now requires
+# chromium_headless_shell-1234). Symptom: the smoke test fails because
+# Playwright Node API looks for chromium_headless_shell-1234/chrome-headless-shell
+# at the current revision and the install was skipped. Symptom in the
+# build: mimo's APK download chain uniquely relies on the Playwright
+# fallback (apkeep returns an arm64-incompatible split bundle, APKMirror
+# curl is Cloudflare-blocked, APKMirror API secrets are unset), so it
+# fails outright while every other app inherits a silent warning.
+needs_install=false
+if ! node "${SCRIPTS_DIR}/check-playwright-browsers.js" >/dev/null 2>&1; then
+  needs_install=true
 fi
 
 # --- optional SHA-256 verification (only when we'd actually download) -------
@@ -83,18 +92,25 @@ elif [ "$needs_install" = true ]; then
   log_warn "paste it into checksums/tools.sha256 to enable verification."
 fi
 
-# --- install if missing ---------------------------------------------------
+# --- install (always; install-playwright-browsers.js is per-browser idempotent) ---
+#
+# install-playwright-browsers.js reads playwright-core/browsers.json for the
+# expected revision of each browser it was asked to install and skips any
+# browser whose INSTALLATION_COMPLETE marker is already present at the
+# expected cache dir. Running unconditionally is the only safe posture when
+# actions/cache is in play: a stale partial archive can match one browser
+# (e.g. chromium-1208) without matching another (chromium_headless_shell-1234),
+# and there is no need_install=false branch that correctly describes that
+# state. Always re-run; the per-browser marker check makes the no-op case free.
 
-if [ "$needs_install" = true ]; then
-  log "Installing Playwright Chromium (best-effort)..."
-  set +e
-  NODE_OPTIONS="--require=${SCRIPTS_DIR}/patch-playwright-cft-path.js" \
-    timeout 300 node "${SCRIPTS_DIR}/install-playwright-browsers.js"
-  rc=$?
-  set -e
-  if [ "$rc" -ne 0 ]; then
-    log_warn "playwright install failed (rc=$rc); APKMirror Playwright fallback will be unavailable."
-  fi
+log "Syncing Playwright browsers (per-revision INSTALLATION_COMPLETE markers)..."
+set +e
+NODE_OPTIONS="--require=${SCRIPTS_DIR}/patch-playwright-cft-path.js" \
+  timeout 300 node "${SCRIPTS_DIR}/install-playwright-browsers.js"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  log_warn "playwright install failed (rc=$rc); APKMirror Playwright fallback will be unavailable."
 fi
 
 # --- restore execute bits -------------------------------------------------
