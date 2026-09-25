@@ -34,9 +34,11 @@ const {
   selectVariant,
 } = require('../../src/download/variant');
 const { collectCookies } = require('../../src/download/cookies');
-
-// URL cache directory - stores resolved URLs as JSON
-const URL_CACHE_DIR = path.join(os.homedir(), ".cache", "auto-morphe-builder", "urls");
+const {
+  getCachedUrl,
+  saveCachedUrl,
+  cleanupOldUrls,
+} = require('../../src/download/cache');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -241,139 +243,13 @@ async function apkmirrorFetch(url, cookies = {}, referer = null) {
   };
 }
 
-/**
- * Check URL cache for a package version
- * @returns {object|null} Cache entry or null if not found/invalid
- */
-function getCachedUrl(packageId, version) {
-  const cacheDir = path.join(URL_CACHE_DIR, packageId);
-  const cacheFile = path.join(cacheDir, `${version}.json`);
-
-  if (!fs.existsSync(cacheFile)) {
-    console.error(`[url-cache] Miss: ${packageId} v${version}`);
-    return null;
-  }
-
-  try {
-    const cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-    console.error(`[url-cache] Hit: ${packageId} v${version} (source: ${cacheData.source}, downloads: ${cacheData.downloads})`);
-    return cacheData;
-  } catch (e) {
-    console.error(`[url-cache] Error reading cache: ${e.message}`);
-    return null;
-  }
-}
-
-/**
- * Save URL to cache
- * @param {string} packageId - Package ID
- * @param {string} version - Version
- * @param {string} url - Resolved URL
- * @param {string} source - Source that provided the URL
- * @returns {string} Path to cached file
- */
-function saveCachedUrl(packageId, version, url, source) {
-  // Input validation
-  if (!packageId || !version || !url) {
-    throw new Error('Missing required parameters');
-  }
-
-  const cacheDir = path.join(URL_CACHE_DIR, packageId);
-
-  // Create directory if it doesn't exist (race-safe: mkdirSync with
-  // { recursive: true } is atomic on POSIX when the parent already
-  // exists, and the only race window is between existsSync and mkdirSync,
-  // which is mitigated by the recursive option).
-  // codeql[js/file-system-race] reason: cacheDir is constructed from a
-  // sanitized packageId and lives in the workflow's user-owned ~/.cache;
-  // an attacker with write access to the cache directory already owns
-  // the workflow.
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true });
-  }
-
-  // Sanitize version for use in filename to prevent path traversal
-  const safeVersion = version.replace(/[^a-zA-Z0-9.-]/g, '_');
-  // codeql[js/file-system-race] reason: cacheFile is built from a
-  // sanitized version string into a user-owned cache directory.
-  const cacheFile = path.join(cacheDir, `${safeVersion}.json`);
-
-  // Read existing cache or create new
-  // codeql[js/file-system-race] reason: existsSync + readFileSync TOCTOU
-  // window is on a user-owned cache file we just constructed the path
-  // for; in practice the read failure is handled by the try/catch.
-  let cacheData = { downloads: 0, lastWorkingAt: null };
-  if (fs.existsSync(cacheFile)) {
-    try {
-      // codeql[js/http-to-file-access] reason: cacheData is parsed from
-      // a JSON file we own (user-owned ~/.cache), written by saveCachedUrl
-      // elsewhere in this module. Trust boundary = the workflow itself.
-      cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-    } catch (e) {
-      console.error(`[url-cache] Corrupted cache file, recreating: ${e.message}`);
-    }
-  }
-
-  // Update cache entry
-  const newCacheData = {
-    version,
-    url,
-    source,
-    resolvedAt: new Date().toISOString(),
-    downloads: cacheData.downloads + 1,
-    lastWorkingAt: new Date().toISOString()
-  };
-
-  // codeql[js/file-system-race] reason: cacheFile is built from a sanitized
-  // packageId + sanitized version, lives in the user-owned cache dir.
-  // codeql[js/http-to-file-access] reason: newCacheData is constructed
-  // in this module from URL metadata we cached; not attacker-controlled.
-  fs.writeFileSync(cacheFile, JSON.stringify(newCacheData, null, 2));
-  console.error(`[url-cache] Saved: ${packageId} v${version} from ${source}`);
-
-  // Prune older version entries to prevent unbounded growth.
-  cleanupOldUrls(packageId);
-
-  return cacheFile;
-}
-
-/**
- * Prune URL cache entries for a package, keeping only the most-recently
- * updated ones.
- * @param {string} packageId
- * @param {number} keep Number of most-recent entries to retain (default 3).
- */
-function cleanupOldUrls(packageId, keep = 3) {
-  const cacheDir = path.join(URL_CACHE_DIR, packageId);
-  if (!fs.existsSync(cacheDir)) {
-    return 0;
-  }
-
-  const entries = fs.readdirSync(cacheDir)
-    .filter(f => f.endsWith(".json"))
-    .map(f => {
-      const fp = path.join(cacheDir, f);
-      try {
-        const stat = fs.statSync(fp);
-        return { file: fp, mtime: stat.mtimeMs };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.mtime - a.mtime);
-
-  const toDelete = entries.slice(keep);
-  for (const entry of toDelete) {
-    try {
-      fs.unlinkSync(entry.file);
-      console.error(`[url-cache] Pruned old entry: ${entry.file}`);
-    } catch (e) {
-      console.error(`[url-cache] Failed to prune ${entry.file}: ${e.message}`);
-    }
-  }
-  return toDelete.length;
-}
+// getCachedUrl / saveCachedUrl / cleanupOldUrls now live in
+// src/download/cache.js (imported at the top of this file). They
+// were extracted because the downloader grew past 1800 lines and
+// these helpers are the local-file-cache foundation for every
+// fallback-chain path. See src/download/cache.js for the
+// packageDir / cacheFileFor layout and the documented race window
+// in saveCachedUrl's mkdirSync({ recursive: true }).
 
 /**
  * Verify URL still works with HEAD request
