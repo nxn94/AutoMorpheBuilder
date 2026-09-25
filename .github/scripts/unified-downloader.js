@@ -29,6 +29,10 @@ const {
   apkmirrorReleaseTailCandidates,
   apkMirrorAuthHeader,
 } = require('../../src/download/url');
+const {
+  buildVariantPriorities,
+  selectVariant,
+} = require('../../src/download/variant');
 
 // URL cache directory - stores resolved URLs as JSON
 const URL_CACHE_DIR = path.join(os.homedir(), ".cache", "auto-morphe-builder", "urls");
@@ -198,77 +202,6 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
     console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
     return buildReleasePageUrl(apkmirrorPath, version);
   }
-}
-
-/**
- * Build ordered variant priority list from preferred arch.
- * Outer loop = DPI tier (outer is more important), inner loop = arch/type.
- * Within each DPI tier: preferred APK → preferred BUNDLE → universal APK
- * → universal BUNDLE → noarch APK.
- *
- * DPI preference is APKMirror-only. APKMirror exposes a variant table
- * with explicit DPI columns, so we can pick a precise target. APKPure
- * (via apkeep) doesn't expose DPI as a selectable axis — the apkeep
- * path takes whatever APKPure serves, then validates the resulting
- * .apk against `preferred_arch` post-download and falls back to the
- * next source if the ABI doesn't match.
- *
- * Tiers ordered by band tightness:
- *   nodpi        → no DPI-specific resources, runs on any density.
- *   120-640dpi   → assets-up to 640, asset-densities up to 480 — a
- *                  wide umbrella that covers every shipping device.
- *   480-640dpi   → upper-density-only, falls back to lower densities
- *                  visually (smaller assets on a phone but fine).
- *   120-480dpi   → explicit upper bound of 480 (xxxhdpi excluded).
- *   240-480dpi   → narrower band than 120-480dpi, last resort.
- */
-function buildVariantPriorities(preferredArch) {
-  const archs = [preferredArch, 'universal', 'noarch'];
-  const dpis  = ['nodpi', '120-640dpi', '480-640dpi', '120-480dpi', '240-480dpi'];
-  const priorities = [];
-  for (const dpi of dpis) {
-    for (const arch of archs) {
-      priorities.push({ arch, dpi, type: 'APK' });
-      if (arch !== 'noarch') priorities.push({ arch, dpi, type: 'BUNDLE' });
-    }
-  }
-  return priorities;
-}
-
-/**
- * Parse variant table rows from a cheerio-loaded release page.
- * Returns the href of the first row matching the priority list.
- * Throws with available variants if nothing matches.
- */
-function selectVariant($, priorities) {
-  const rows = [];
-  $('.table-row').each((_, row) => {
-    const cells = $(row).find('.table-cell');
-    if (cells.length < 4) return;
-    // Real APKMirror DOM: cells[0]=variant name+type+link, cells[1]=arch, cells[2]=minver, cells[3]=dpi
-    const href = $(cells[0]).find('a.accent_color[href], a[href*="/apk/"]').attr('href');
-    if (!href || href.includes('#')) return;  // Skip anchor-only sidebar links
-    const variantText = $(cells[0]).text().toUpperCase();
-    const type = variantText.includes('BUNDLE') ? 'BUNDLE' : 'APK';
-    rows.push({
-      dpi:  $(cells[3]).text().trim().toLowerCase(),
-      arch: $(cells[1]).text().trim().toLowerCase(),
-      type,
-      href,
-    });
-  });
-
-  for (const { arch, dpi, type } of priorities) {
-    const match = rows.find(r =>
-      r.arch.includes(arch.toLowerCase()) &&
-      r.dpi === dpi.toLowerCase() &&
-      r.type === type
-    );
-    if (match) return match.href;
-  }
-
-  const found = rows.map(r => `${r.arch}/${r.dpi}/${r.type}`).join(', ') || 'none';
-  throw new Error(`No matching variant found on APKMirror. Available: ${found}`);
 }
 
 /**
