@@ -20,10 +20,15 @@ const os = require("node:os");
 const cheerio = require('cheerio');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { detectApkShape } = require('./apk-selection');
-
-// APKMirror API credentials (from environment; no defaults — see apkMirrorAuthHeader).
-const APK_MIRROR_API_USER = process.env.APKMIRROR_API_USER;
-const APK_MIRROR_API_PASS = process.env.APKMIRROR_API_PASS;
+// Network-independent URL/auth helpers extracted to a pure module so
+// they can be unit-tested without standing up the downloader. The
+// downloader imports them and orchestrates them around the actual
+// HTTP/Playwright fetches below.
+const {
+  buildReleasePageUrl,
+  apkmirrorReleaseTailCandidates,
+  apkMirrorAuthHeader,
+} = require('../../src/download/url');
 
 // URL cache directory - stores resolved URLs as JSON
 const URL_CACHE_DIR = path.join(os.homedir(), ".cache", "auto-morphe-builder", "urls");
@@ -67,27 +72,6 @@ const TIMEOUTS = {
 };
 
 /**
- * Build the Authorization header for APKMirror's wp-json API.
- * Used by both the URL resolver and the (now-removed) legacy API download path;
- * kept centralized so the auth scheme stays in one place.
- *
- * Throws if either credential is unset. The caller's fallback chain
- * (apkeep → apkmirror Playwright) will then be used; the apkmirror-api
- * path is just one of several resolution sources.
- */
-function apkMirrorAuthHeader() {
-  if (!APK_MIRROR_API_USER || !APK_MIRROR_API_PASS) {
-    throw new Error(
-      'APKMIRROR_API_USER and/or APKMIRROR_API_PASS are not set. ' +
-      'Configure them as repo secrets to enable the APKMirror-API ' +
-      'resolution path; the fallback chain (apkeep → apkmirror Playwright) ' +
-      'will be used otherwise.'
-    );
-  }
-  return `Basic ${Buffer.from(`${APK_MIRROR_API_USER}:${APK_MIRROR_API_PASS}`).toString("base64")}`;
-}
-
-/**
  * Get APKMirror path for a package from config.json patch_repos.
  */
 function getApkmirrorPath(packageId) {
@@ -95,40 +79,12 @@ function getApkmirrorPath(packageId) {
   return config.patch_repos?.[packageId]?.apkmirror_path || null;
 }
 
-/**
- * Build APKMirror release page URL for a given version.
- * Slug is derived from the last path component of apkmirrorPath.
- * e.g. "google-inc/youtube" + "20.44.38" → ".../youtube-20-44-38-release/"
- */
-function buildReleasePageUrl(apkmirrorPath, version) {
-  const slug = apkmirrorPath.split('/').pop();
-  const versionSlug = version.replace(/\./g, '-');
-  return `https://www.apkmirror.com/apk/${apkmirrorPath}/${slug}-${versionSlug}-release/`;
-}
-
-/**
- * Pre-release suffixes APKMirror inserts between the version and the
- * trailing `-release/` segment when a developer uploads a release
- * candidate, beta, or alpha build. The upstream patch repo (and
- * `patches-list.json`) usually records the bare version (e.g. `2.0.2`),
- * but APKMirror's URL slug uses the pre-release form (`2.0.2-rc0`),
- * which our `<dashedVersion>-release/` selector would miss. We try the
- * exact match first, then progressively widen to common suffixes so
- * apps like SD Maid (2.0.2 → /sd-maid-2-se-system-cleaner-2-0-2-rc0-release/)
- * resolve without per-app configuration.
- *
- * Ordered by frequency on APKMirror; rc0..rc9 covers the full release
- * candidate sequence without skipping numbers (some devs ship rc1
- * straight to rc3, but listing the gaps cheaply).
- */
-function apkmirrorReleaseTailCandidates(version) {
-  const dashed = version.replace(/\./g, '-');
-  const tails = [`-${dashed}-release/`];
-  for (let i = 0; i < 10; i++) tails.push(`-${dashed}-rc${i}-release/`);
-  tails.push(`-${dashed}-beta-release/`, `-${dashed}-beta1-release/`);
-  tails.push(`-${dashed}-alpha-release/`, `-${dashed}-alpha1-release/`);
-  return tails;
-}
+// buildReleasePageUrl, apkmirrorReleaseTailCandidates, and
+// apkMirrorAuthHeader now live in src/download/url.js (imported at
+// the top of this file). They were extracted because the downloader
+// grew past 1800 lines and these helpers are pure network-
+// independent logic that the apkmirror-scraper test suite already
+// exercises; they're now reachable as a focused unit-test target.
 
 /**
  * Resolve APKMirror's actual release-page slug for a given (path, version).
