@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const {
   extractVersionFromString,
-  scoreApk,
+  filenameToCandidate,
   findCachedApk,
   findPackageCandidate,
   bestRankedApkInDir,
@@ -28,60 +28,78 @@ describe('extractVersionFromString', () => {
   });
 });
 
-describe('scoreApk', () => {
-  // The weights live in apk-selection.js and were lifted directly from the
-  // original inline awk score() function. These tests guard the scoring
-  // contract that findPackageCandidate / bestRankedApkInDir rely on.
+describe('filenameToCandidate', () => {
+  // filenameToCandidate is the directory-scan→candidate bridge that
+  // replaced the old regex-based `scoreApk`. These tests pin the
+  // extraction contract that findPackageCandidate/bestRankedApkInDir
+  // rely on; the actual ranking is exercised by those higher-level
+  // tests further down.
 
-  test('arm64-v8a .apk with no negatives scores very high', () => {
-    const s = scoreApk('/dir/app_arm64-v8a.apk');
-    // 2000 (.apk) + 800 (arm64) = 2800
-    expect(s).toBe(2800);
+  test('extracts arm64-v8a from a filename carrying the tag', () => {
+    const c = filenameToCandidate('/dir/something_arm64-v8a.apk');
+    expect(c.architecture).toBe('arm64-v8a');
+    expect(c.format).toBe('apk');
+    expect(c.source).toBe('directory-scan');
+    expect(c.url.endsWith('something_arm64-v8a.apk')).toBe(true);
   });
 
-  test('arm64-v8a base.apk is the absolute best candidate', () => {
-    // The +500 "base.apk" bonus only applies when the file is exactly
-    // named "base.apk" (the awk uses `b == "base.apk"`); the
-    // arm64 match adds 800.
-    const s = scoreApk('/dir/base.apk');
-    // 2000 (.apk) + 800 (arm64 doesn't match — filename has no arm64) = 2000
-    // Actually "base.apk" doesn't match arm64, so just 2000 + 500 (base.apk) = 2500.
-    expect(s).toBe(2500);
+  test('extracts x86_64 from an underscored/dashed filename', () => {
+    expect(filenameToCandidate('/dir/app_x86_64.apk').architecture).toBe('x86_64');
+    expect(filenameToCandidate('/dir/app_x86-64.apk').architecture).toBe('x86_64');
   });
 
-  test('arm64-v8a base.apk scores higher than arm64-v8a app.apk (base.apk bonus)', () => {
-    // Same dir, base.apk named with arm64 in some other file vs arm64-v8a app.apk.
-    // We assert ordering instead of exact numbers to keep the test robust.
-    const baseArm = scoreApk('/dir/base.apk');                  // 2500 (no arm64 in name)
-    const appArm = scoreApk('/dir/app_arm64-v8a.apk');          // 2800
-    expect(appArm).toBeGreaterThan(baseArm); // arm64 wins alone
-    // But a base_arm64-v8a.apk beats both:
-    const baseAndArm = scoreApk('/tmp/base_arm64-v8a.apk');     // 2000 + 800 = 2800 (no base.apk bonus — basename != "base.apk")
-    expect(baseAndArm).toBeGreaterThan(baseArm);
+  test('arm64 detection picks arm64-v8a over the x86 sibling', () => {
+    expect(filenameToCandidate('/dir/libx86_split_config.arm64_v8a.apk').architecture).toBe('arm64-v8a');
   });
 
-  test('xapk splits are heavily demoted vs .apk', () => {
-    const apk = scoreApk('/dir/something_arm64-v8a.apk');
-    const xapk = scoreApk('/dir/something_arm64-v8a.xapk');
-    expect(apk).toBeGreaterThan(xapk);
+  test('armeabi-v7a (v7a shorthand) is recognized', () => {
+    // lib_v7a.so is a v7a-tagged .so file — the arch tag is in the
+    // filename, so extraction picks it up just like the legacy
+    // scoreApk would have applied a v7a penalty.
+    expect(filenameToCandidate('/dir/lib_v7a.so').architecture).toBe('armeabi-v7a');
+    expect(filenameToCandidate('/dir/app_armeabi-v7a.apk').architecture).toBe('armeabi-v7a');
   });
 
-  test('x86 architecture is penalized heavily', () => {
-    const arm = scoreApk('/dir/app_arm64-v8a.apk');  // 2000 + 800 = 2800
-    const x86 = scoreApk('/dir/app_x86_64.apk');     // 2000 - 600 = 1400
-    expect(arm).toBeGreaterThan(x86);
-    expect(x86).toBeLessThan(arm);
+  test('arm64 detection accepts arm64 (without the v8a suffix)', () => {
+    expect(filenameToCandidate('/dir/app_arm64.apk').architecture).toBe('arm64-v8a');
   });
 
-  test('split_config / config. artifacts are severely demoted', () => {
-    const config = scoreApk('/dir/split_config.arm64_v8a.apk');  // 2000 + 800 - 1400 = 1400
-    const normal = scoreApk('/dir/app_arm64-v8a.apk');           // 2800
-    expect(normal).toBeGreaterThan(config);
-    expect(config).toBe(1400);
+  test('arm64-v8a in arm64_suffixed filename is parsed', () => {
+    expect(filenameToCandidate('/dir/lib_arm64_v8a.so').architecture).toBe('arm64-v8a');
   });
 
-  test('case-insensitive', () => {
-    expect(scoreApk('/dir/APP_ARM64-V8A.APK')).toBe(scoreApk('/dir/app_arm64-v8a.apk'));
+  test('universal APKs are recognized', () => {
+    expect(filenameToCandidate('/dir/app_universal.apk').architecture).toBe('universal');
+  });
+
+  test('architecture defaults to "unknown" when no tag is present', () => {
+    const c = filenameToCandidate('/dir/base.apk');
+    expect(c.architecture).toBe('unknown');
+    expect(c.format).toBe('apk');
+  });
+
+  test('unsupported extension maps to "unknown" format', () => {
+    const c = filenameToCandidate('/dir/whatever.zip');
+    expect(c.format).toBe('unknown');
+  });
+
+  test('case-insensitive parsing', () => {
+    const lower = filenameToCandidate('/dir/APP_ARM64-V8A.APK');
+    const mixed = filenameToCandidate('/dir/app_arm64-v8a.apk');
+    expect(lower.architecture).toBe(mixed.architecture);
+    expect(lower.format).toBe(mixed.format);
+  });
+
+  test('sizeBytes reflects stat when the file exists', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fname-cand-'));
+    const apk = path.join(tmp, 'app.apk');
+    fs.writeFileSync(apk, 'x'.repeat(12345));
+    expect(filenameToCandidate(apk).sizeBytes).toBe(12345);
+  });
+
+  test('sizeBytes falls back to null on stat failure', () => {
+    const c = filenameToCandidate('/nonexistent/path/file.apk');
+    expect(c.sizeBytes).toBeNull();
   });
 });
 
