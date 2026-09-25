@@ -1041,7 +1041,20 @@ function loadExistingUrl(packageId, version) {
 }
 
 /**
- * Run command with execFile and timeout
+ * Run command with execFile and timeout.
+ *
+ * Timeout enforcement is delegated to `execFile`'s built-in `timeout`
+ * option (verified at runtime against Node 24+: a 200ms deadline on a
+ * `sleep 5` child produces a `close` event with `code=null,
+ * signal='SIGTERM'` without an `error` event, exactly as documented).
+ * The Promise rejects on the resulting close by emitting the same
+ * custom `Command timed out after ${timeout}ms: ${cmd}` message
+ * callers previously relied on. Relying on `execFile`'s timeout
+ * removes the legacy manual `setTimeout` block, which used to leak
+ * its closure for the full timeout duration whenever the child
+ * exited early (issue #1) — the earlier code never captured or
+ * cleared the handle. Tests in `__tests__/unified-downloader-runcommand.test.js`
+ * pin both contracts (timeout behavior + no manual setTimeout leaks).
  */
 function runCommand(cmd, args, options = {}) {
   const { execFileImpl = execFile, ...commandOptions } = options;
@@ -1069,34 +1082,34 @@ function runCommand(cmd, args, options = {}) {
     }
 
     let settled = false;
-    const cleanup = () => {
-      if (!settled) {
-        settled = true;
-      }
+    const settle = (fn) => {
+      if (settled) return;
+      settled = true;
+      fn();
     };
 
-    proc.on("close", (code) => {
-      cleanup();
+    proc.on("close", (code, signal) => {
+      // execFile's built-in timeout kills the child with SIGTERM and
+      // surfaces the result via close (no error event). Map the
+      // (code=null, signal='SIGTERM') signature to the same timeout
+      // message callers saw with the legacy manual setTimeout path.
+      // Any other SIGTERM is treated as a normal failure — the
+      // downloader never sends SIGTERM itself, so this branch is
+      // only reachable via a Node-internal timeout.
+      if (signal === 'SIGTERM' && code === null) {
+        settle(() => reject(new Error(`Command timed out after ${timeout}ms: ${cmd}`)));
+        return;
+      }
       if (code === 0) {
-        resolve({ stdout, stderr, code });
+        settle(() => resolve({ stdout, stderr, code }));
       } else {
-        reject(new Error(`Command failed with code ${code}: ${stderr || cmd}`));
+        settle(() => reject(new Error(`Command failed with code ${code}: ${stderr || cmd}`)));
       }
     });
 
     proc.on("error", (err) => {
-      cleanup();
-      reject(err);
+      settle(() => reject(err));
     });
-
-    // Handle timeout
-    setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        proc.kill("SIGTERM");
-        reject(new Error(`Command timed out after ${timeout}ms: ${cmd}`));
-      }
-    }, timeout);
   });
 }
 
@@ -1849,6 +1862,12 @@ module.exports = {
   cleanupOldUrls,
   parallelResolveSources,
   download,
+  // For testing: runCommand is an internal helper used by
+  // downloadWithApkeep and the apkeep resolver, but it's exported
+  // here so __tests__/unified-downloader-runcommand.test.js can pin
+  // its timeout-cancellation + custom-error contracts without
+  // driving the full downloader.
+  runCommand,
   // Exported for the cleanup-on-failure unit tests
   // (__tests__/unified-downloader-cleanup.test.js). They exercise the
   // post-download validation paths in isolation rather than driving
