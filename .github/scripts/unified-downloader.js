@@ -33,6 +33,7 @@ const {
   buildVariantPriorities,
   selectVariant,
 } = require('../../src/download/variant');
+const { collectCookies } = require('../../src/download/cookies');
 
 // URL cache directory - stores resolved URLs as JSON
 const URL_CACHE_DIR = path.join(os.homedir(), ".cache", "auto-morphe-builder", "urls");
@@ -202,24 +203,6 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
     console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
     return buildReleasePageUrl(apkmirrorPath, version);
   }
-}
-
-/**
- * Collect cookies from a fetch Response's Set-Cookie headers into a plain object.
- * Uses getSetCookie() which returns an array — safe for multi-cookie responses.
- * Merges with any existing cookies.
- */
-function collectCookies(response, existing = {}) {
-  const setCookies = response.headers.getSetCookie?.() ?? [];
-  if (setCookies.length === 0) return existing;
-  const cookies = { ...existing };
-  for (const cookie of setCookies) {
-    const [pair] = cookie.split(';');
-    const eqIdx = pair.indexOf('=');
-    if (eqIdx < 1) continue;
-    cookies[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1).trim();
-  }
-  return cookies;
 }
 
 /**
