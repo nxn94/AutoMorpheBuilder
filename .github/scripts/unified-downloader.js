@@ -39,6 +39,8 @@ const {
   saveCachedUrl,
   cleanupOldUrls,
 } = require('../../src/download/cache');
+const { loadConfig, loadExistingUrl } = require('../../src/download/config');
+const { parseArgs } = require('../../src/download/cli-args');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -725,68 +727,12 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   throw new Error('All sources failed to resolve URL');
 }
 
-/**
- * Parse command-line arguments
- */
-function parseArgs() {
-  const args = process.argv.slice(2);
-  if (args.length < 3) {
-    return {
-      error: "Usage: unified-downloader.js <package_id> <version> <output_dir>",
-      example: "Example: unified-downloader.js com.google.android.youtube 20.40.45 ./downloads"
-    };
-  }
-
-  const [packageId, version, outputDir] = args;
-
-  // Validate inputs
-  if (!packageId || !packageId.includes(".")) {
-    return { error: "Invalid package_id. Expected format: com.example.app" };
-  }
-  if (!version || !/^\d+\.\d+/.test(version)) {
-    return { error: "Invalid version. Expected format: X.Y.Z" };
-  }
-  if (!outputDir) {
-    return { error: "Invalid output_dir" };
-  }
-
-  return { packageId, version, outputDir };
-}
-
-/**
- * Load config.json
- */
-function loadConfig() {
-  const configPath = path.join(process.cwd(), 'config.json');
-  if (!fs.existsSync(configPath)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (e) {
-    console.error(`Warning: Failed to parse config.json: ${e.message}`);
-    return {};
-  }
-}
-
-/**
- * Check config.json for existing URL matching the version
- */
-function loadExistingUrl(packageId, version) {
-  const config = loadConfig();
-
-  const downloadUrls = config.download_urls?.[packageId];
-  if (!downloadUrls) {
-    return null;
-  }
-
-  // Check for exact version match only — latest_supported is for a specific old version
-  // and cannot be used as a direct download URL for a different version
-  if (downloadUrls[version]) {
-    console.error(`Found existing URL for version ${version} in config.json`);
-    return downloadUrls[version];
-  }
-
-  return null;
-}
+// parseArgs / loadConfig / loadExistingUrl moved to src/download/:
+//   - parseArgs           → src/download/cli-args.js
+//   - loadConfig + loadExistingUrl → src/download/config.js
+// The original implementations are no longer inlined here; the
+// downloader imports them at the top and main() / parallelResolveSources
+// call them with the same arguments and get the same return shapes.
 
 /**
  * Run command with execFile and timeout.
