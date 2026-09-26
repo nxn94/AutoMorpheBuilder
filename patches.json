@@ -1,5 +1,49 @@
 {
   "MorpheApp/morphe-patches": {
+    "com.google.android.apps.youtube.music": {
+      "App refresh rate": true,
+      "Bypass certificate checks": true,
+      "Change header": true,
+      "Change miniplayer color": true,
+      "Change start page": true,
+      "Check watch history domain name resolution": true,
+      "Crossfade": true,
+      "Custom branding": true,
+      "Disable DRC audio": true,
+      "Disable QUIC protocol": true,
+      "Disable dislike redirection": true,
+      "Downloads": true,
+      "Enable debugging": true,
+      "Enable exclusive audio playback": true,
+      "Enable forced miniplayer": true,
+      "Enable swipe to dismiss miniplayer": true,
+      "Force original audio": true,
+      "GmsCore support": true,
+      "Hide ads": true,
+      "Hide buttons": true,
+      "Hide filter bar": true,
+      "Hide flyout menu components": true,
+      "Hide layout components": true,
+      "Hide music action buttons": true,
+      "Miniplayer previous and next buttons": true,
+      "Navigation bar": true,
+      "Network proxy": true,
+      "Play albums songs": true,
+      "PoToken provider": true,
+      "Remember repeat state": true,
+      "Remember shuffle state": true,
+      "Remove background playback restrictions": true,
+      "Remove viewer discretion dialog": true,
+      "Return YouTube Dislike": true,
+      "Sanitize sharing links": true,
+      "Scrobbling": true,
+      "Settings menu filter": true,
+      "SponsorBlock": true,
+      "Spoof app version": true,
+      "Spoof video streams": true,
+      "Theme": true,
+      "Third-party lyrics": true
+    },
     "com.google.android.youtube": {
       "Add to queue": true,
       "Alternative thumbnails": true,
@@ -84,50 +128,6 @@
       "Voice over translation": true,
       "Wide search bar": true
     },
-    "com.google.android.apps.youtube.music": {
-      "App refresh rate": true,
-      "Bypass certificate checks": true,
-      "Change header": true,
-      "Change miniplayer color": true,
-      "Change start page": true,
-      "Check watch history domain name resolution": true,
-      "Crossfade": true,
-      "Custom branding": true,
-      "Disable DRC audio": true,
-      "Disable QUIC protocol": true,
-      "Disable dislike redirection": true,
-      "Downloads": true,
-      "Enable debugging": true,
-      "Enable exclusive audio playback": true,
-      "Enable forced miniplayer": true,
-      "Enable swipe to dismiss miniplayer": true,
-      "Force original audio": true,
-      "GmsCore support": true,
-      "Hide ads": true,
-      "Hide buttons": true,
-      "Hide filter bar": true,
-      "Hide flyout menu components": true,
-      "Hide layout components": true,
-      "Hide music action buttons": true,
-      "Miniplayer previous and next buttons": true,
-      "Navigation bar": true,
-      "Network proxy": true,
-      "Play albums songs": true,
-      "PoToken provider": true,
-      "Remember repeat state": true,
-      "Remember shuffle state": true,
-      "Remove background playback restrictions": true,
-      "Remove viewer discretion dialog": true,
-      "Return YouTube Dislike": true,
-      "Sanitize sharing links": true,
-      "Scrobbling": true,
-      "Settings menu filter": true,
-      "SponsorBlock": true,
-      "Spoof app version": true,
-      "Spoof video streams": true,
-      "Theme": true,
-      "Third-party lyrics": true
-    },
     "com.reddit.frontpage": {
       "App icon": true,
       "Custom branding name for Reddit": true,
@@ -160,23 +160,24 @@
       "Show deleted messages": true
     }
   },
-  "rushiranpise/morphe-patches": {
-    "com.kevinforeman.nzb360": {
-      "Unlock All Access": true
+  "hoo-dles/morphe-patches": {
+    "com.getmimo": {
+      "Enable Pro": true
     },
+    "com.sofascore.results": {
+      "Disable ads": true
+    }
+  },
+  "rushiranpise/morphe-patches": {
     "com.finalwire.aida64": {
       "Remove ads": true
     },
     "com.flightradar24free": {
       "Unlock Business Premium": true
-    }
-  },
-  "hoo-dles/morphe-patches": {
-    "com.sofascore.results": {
-      "Disable ads": true
     },
-    "com.getmimo": {
-      "Enable Pro": true
+    "com.kevinforeman.nzb360": {
+      "Unlock All Access": true
     }
   }
 }
+
