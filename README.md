@@ -1,7 +1,7 @@
 # AutoMorpheBuilder
 
 <p align="center">
-  <img src="logo-wordmark.png" alt="AutoMorpheBuilder logo" width="320" />
+  <img src="assets/logo-wordmark.png" alt="AutoMorpheBuilder logo" width="320" />
 </p>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/ci.yml?branch=dev&label=CI)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/ci.yml)
