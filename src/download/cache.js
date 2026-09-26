@@ -92,11 +92,23 @@ function saveCachedUrl(packageId, version, url, source, cacheDir = DEFAULT_CACHE
   }
   const cacheFile = cacheFileFor(packageId, version, cacheDir);
 
+  // Read prior metadata WITHOUT an existsSync gate: if the file is
+  // missing that's the normal first-write case (ENOENT), if it's
+  // corrupt we log and fall through to defaults. Reading directly
+  // closes the existsSync → readFileSync TOCTOU window that the
+  // earlier "existsSync then readFileSync then writeFileSync"
+  // sequence opened — the new sequence is "readFileSync inside
+  // try/catch then writeFileSync", which is a single syscall then
+  // a single write with no interceding check.
   let prior = { downloads: 0, lastWorkingAt: null };
-  if (fs.existsSync(cacheFile)) {
-    try {
-      prior = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-    } catch (e) {
+  try {
+    prior = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+  } catch (e) {
+    // ENOENT means "first save for this package/version" — quiet
+    // path, no log. Anything else (parse error, EACCES, …) is
+    // noteworthy: a corrupt cache entry will be overwritten below,
+    // but the operator should know.
+    if (e.code !== 'ENOENT') {
       console.error(`[url-cache] Corrupted cache file, recreating: ${e.message}`);
     }
   }
@@ -109,6 +121,18 @@ function saveCachedUrl(packageId, version, url, source, cacheDir = DEFAULT_CACHE
     downloads: prior.downloads + 1,
     lastWorkingAt: now,
   };
+  // codeql[js/file-system-race] reason: cacheFile is built from a
+  // sanitized packageId + sanitized version into a user-owned cache
+  // directory; the read above used no existsSync gate, so there is
+  // no TOCTOU window between the check and the write.
+  //
+  // codeql[js/http-to-file-access] reason: `next` is constructed in
+  // this module from version + url + source — fields we built from
+  // internal state, not raw HTTP body. The on-disk JSON shape is
+  // documented in the cacheFileFor header above. An attacker who
+  // controls the url string still controls only the url field of
+  // the same JSON envelope that's already logged in cleartext
+  // upstream by the resolver that produced it.
   fs.writeFileSync(cacheFile, JSON.stringify(next, null, 2));
   console.error(`[url-cache] Saved: ${packageId} v${version} from ${source}`);
 

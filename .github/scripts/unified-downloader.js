@@ -755,6 +755,17 @@ function runCommand(cmd, args, options = {}) {
   const timeout = commandOptions.timeout || TIMEOUTS.commandDefault;
 
   return new Promise((resolve, reject) => {
+    // codeql[js/indirect-command-line-injection] reason: execFile's
+    // argv-form spawn doesn't invoke a shell — `cmd` is the binary
+    // name (passed to execvp(2)) and each `args[i]` becomes a
+    // separate argv entry (POSIX execve), so shell metacharacters
+    // in either field are not interpreted. Live callers pass
+    // hardcoded `cmd` literals (`"apkeep"`, `"apkeep-fail"`, …) and
+    // argv arrays the resolver built from filtered config fields.
+    // The non-network callers in `runCommand` are runCommand's own
+    // `unified-downloader-runcommand.test.js` tests, which run
+    // against `printf`/`echo`/`sleep` with explicit literal
+    // arguments — no shell expansion happens.
     const proc = execFileImpl(cmd, args, {
       timeout,
       stdio: commandOptions.stdio || ["pipe", "pipe", "pipe"],

@@ -116,6 +116,22 @@ describe('download/cache', () => {
       expect(entry).toBeTruthy();
       expect(entry.url).toBe('https://x/y.apk');
     });
+
+    test('first save (no prior file) does not warn about ENOENT', () => {
+      // saveCachedUrl's catch filter for non-ENOENT errors is what
+      // closes the existsSync → readFileSync TOCTOU window — the
+      // first write for any package hits the ENOENT branch, which
+      // is treated as the normal "no prior entry" path and must
+      // stay silent. Spying on console.error with a captured
+      // buffer would couple the test to console internals; instead
+      // we assert the post-condition (no error thrown, entry written)
+      // and rely on the dedicated corrupt-entry test to pin the
+      // warn-on-non-ENOENT branch.
+      saveCachedUrl('com.fresh', '1.0.0', 'https://x/y.apk', 'apkeep', tmpCache);
+      const entry = getCachedUrl('com.fresh', '1.0.0', tmpCache);
+      expect(entry).toBeTruthy();
+      expect(entry.downloads).toBe(1); // default prior; no ENOENT inflation
+    });
   });
 
   describe('cleanupOldUrls', () => {
