@@ -1,5 +1,9 @@
 # AutoMorpheBuilder
 
+<p align="center">
+  <img src="logo-wordmark.png" alt="AutoMorpheBuilder logo" width="320" />
+</p>
+
 [![CI](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/ci.yml?branch=dev&label=CI)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/ci.yml)
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/codeql.yml?branch=dev&label=CodeQL)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/codeql.yml)
 [![Build](https://img.shields.io/github/actions/workflow/status/nxn94/AutoMorpheBuilder/morphe-build.yml?branch=dev&label=Build)](https://github.com/nxn94/AutoMorpheBuilder/actions/workflows/morphe-build.yml)
