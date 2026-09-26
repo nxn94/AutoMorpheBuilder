@@ -20,13 +20,27 @@ const os = require("node:os");
 const cheerio = require('cheerio');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { detectApkShape } = require('./apk-selection');
-
-// APKMirror API credentials (from environment; no defaults — see apkMirrorAuthHeader).
-const APK_MIRROR_API_USER = process.env.APKMIRROR_API_USER;
-const APK_MIRROR_API_PASS = process.env.APKMIRROR_API_PASS;
-
-// URL cache directory - stores resolved URLs as JSON
-const URL_CACHE_DIR = path.join(os.homedir(), ".cache", "auto-morphe-builder", "urls");
+// Network-independent URL/auth helpers extracted to a pure module so
+// they can be unit-tested without standing up the downloader. The
+// downloader imports them and orchestrates them around the actual
+// HTTP/Playwright fetches below.
+const {
+  buildReleasePageUrl,
+  apkmirrorReleaseTailCandidates,
+  apkMirrorAuthHeader,
+} = require('../../src/download/url');
+const {
+  buildVariantPriorities,
+  selectVariant,
+} = require('../../src/download/variant');
+const { collectCookies } = require('../../src/download/cookies');
+const {
+  getCachedUrl,
+  saveCachedUrl,
+  cleanupOldUrls,
+} = require('../../src/download/cache');
+const { loadConfig, loadExistingUrl } = require('../../src/download/config');
+const { parseArgs } = require('../../src/download/cli-args');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -67,27 +81,6 @@ const TIMEOUTS = {
 };
 
 /**
- * Build the Authorization header for APKMirror's wp-json API.
- * Used by both the URL resolver and the (now-removed) legacy API download path;
- * kept centralized so the auth scheme stays in one place.
- *
- * Throws if either credential is unset. The caller's fallback chain
- * (apkeep → apkmirror Playwright) will then be used; the apkmirror-api
- * path is just one of several resolution sources.
- */
-function apkMirrorAuthHeader() {
-  if (!APK_MIRROR_API_USER || !APK_MIRROR_API_PASS) {
-    throw new Error(
-      'APKMIRROR_API_USER and/or APKMIRROR_API_PASS are not set. ' +
-      'Configure them as repo secrets to enable the APKMirror-API ' +
-      'resolution path; the fallback chain (apkeep → apkmirror Playwright) ' +
-      'will be used otherwise.'
-    );
-  }
-  return `Basic ${Buffer.from(`${APK_MIRROR_API_USER}:${APK_MIRROR_API_PASS}`).toString("base64")}`;
-}
-
-/**
  * Get APKMirror path for a package from config.json patch_repos.
  */
 function getApkmirrorPath(packageId) {
@@ -95,40 +88,12 @@ function getApkmirrorPath(packageId) {
   return config.patch_repos?.[packageId]?.apkmirror_path || null;
 }
 
-/**
- * Build APKMirror release page URL for a given version.
- * Slug is derived from the last path component of apkmirrorPath.
- * e.g. "google-inc/youtube" + "20.44.38" → ".../youtube-20-44-38-release/"
- */
-function buildReleasePageUrl(apkmirrorPath, version) {
-  const slug = apkmirrorPath.split('/').pop();
-  const versionSlug = version.replace(/\./g, '-');
-  return `https://www.apkmirror.com/apk/${apkmirrorPath}/${slug}-${versionSlug}-release/`;
-}
-
-/**
- * Pre-release suffixes APKMirror inserts between the version and the
- * trailing `-release/` segment when a developer uploads a release
- * candidate, beta, or alpha build. The upstream patch repo (and
- * `patches-list.json`) usually records the bare version (e.g. `2.0.2`),
- * but APKMirror's URL slug uses the pre-release form (`2.0.2-rc0`),
- * which our `<dashedVersion>-release/` selector would miss. We try the
- * exact match first, then progressively widen to common suffixes so
- * apps like SD Maid (2.0.2 → /sd-maid-2-se-system-cleaner-2-0-2-rc0-release/)
- * resolve without per-app configuration.
- *
- * Ordered by frequency on APKMirror; rc0..rc9 covers the full release
- * candidate sequence without skipping numbers (some devs ship rc1
- * straight to rc3, but listing the gaps cheaply).
- */
-function apkmirrorReleaseTailCandidates(version) {
-  const dashed = version.replace(/\./g, '-');
-  const tails = [`-${dashed}-release/`];
-  for (let i = 0; i < 10; i++) tails.push(`-${dashed}-rc${i}-release/`);
-  tails.push(`-${dashed}-beta-release/`, `-${dashed}-beta1-release/`);
-  tails.push(`-${dashed}-alpha-release/`, `-${dashed}-alpha1-release/`);
-  return tails;
-}
+// buildReleasePageUrl, apkmirrorReleaseTailCandidates, and
+// apkMirrorAuthHeader now live in src/download/url.js (imported at
+// the top of this file). They were extracted because the downloader
+// grew past 1800 lines and these helpers are pure network-
+// independent logic that the apkmirror-scraper test suite already
+// exercises; they're now reachable as a focused unit-test target.
 
 /**
  * Resolve APKMirror's actual release-page slug for a given (path, version).
@@ -245,95 +210,6 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
 }
 
 /**
- * Build ordered variant priority list from preferred arch.
- * Outer loop = DPI tier (outer is more important), inner loop = arch/type.
- * Within each DPI tier: preferred APK → preferred BUNDLE → universal APK
- * → universal BUNDLE → noarch APK.
- *
- * DPI preference is APKMirror-only. APKMirror exposes a variant table
- * with explicit DPI columns, so we can pick a precise target. APKPure
- * (via apkeep) doesn't expose DPI as a selectable axis — the apkeep
- * path takes whatever APKPure serves, then validates the resulting
- * .apk against `preferred_arch` post-download and falls back to the
- * next source if the ABI doesn't match.
- *
- * Tiers ordered by band tightness:
- *   nodpi        → no DPI-specific resources, runs on any density.
- *   120-640dpi   → assets-up to 640, asset-densities up to 480 — a
- *                  wide umbrella that covers every shipping device.
- *   480-640dpi   → upper-density-only, falls back to lower densities
- *                  visually (smaller assets on a phone but fine).
- *   120-480dpi   → explicit upper bound of 480 (xxxhdpi excluded).
- *   240-480dpi   → narrower band than 120-480dpi, last resort.
- */
-function buildVariantPriorities(preferredArch) {
-  const archs = [preferredArch, 'universal', 'noarch'];
-  const dpis  = ['nodpi', '120-640dpi', '480-640dpi', '120-480dpi', '240-480dpi'];
-  const priorities = [];
-  for (const dpi of dpis) {
-    for (const arch of archs) {
-      priorities.push({ arch, dpi, type: 'APK' });
-      if (arch !== 'noarch') priorities.push({ arch, dpi, type: 'BUNDLE' });
-    }
-  }
-  return priorities;
-}
-
-/**
- * Parse variant table rows from a cheerio-loaded release page.
- * Returns the href of the first row matching the priority list.
- * Throws with available variants if nothing matches.
- */
-function selectVariant($, priorities) {
-  const rows = [];
-  $('.table-row').each((_, row) => {
-    const cells = $(row).find('.table-cell');
-    if (cells.length < 4) return;
-    // Real APKMirror DOM: cells[0]=variant name+type+link, cells[1]=arch, cells[2]=minver, cells[3]=dpi
-    const href = $(cells[0]).find('a.accent_color[href], a[href*="/apk/"]').attr('href');
-    if (!href || href.includes('#')) return;  // Skip anchor-only sidebar links
-    const variantText = $(cells[0]).text().toUpperCase();
-    const type = variantText.includes('BUNDLE') ? 'BUNDLE' : 'APK';
-    rows.push({
-      dpi:  $(cells[3]).text().trim().toLowerCase(),
-      arch: $(cells[1]).text().trim().toLowerCase(),
-      type,
-      href,
-    });
-  });
-
-  for (const { arch, dpi, type } of priorities) {
-    const match = rows.find(r =>
-      r.arch.includes(arch.toLowerCase()) &&
-      r.dpi === dpi.toLowerCase() &&
-      r.type === type
-    );
-    if (match) return match.href;
-  }
-
-  const found = rows.map(r => `${r.arch}/${r.dpi}/${r.type}`).join(', ') || 'none';
-  throw new Error(`No matching variant found on APKMirror. Available: ${found}`);
-}
-
-/**
- * Collect cookies from a fetch Response's Set-Cookie headers into a plain object.
- * Uses getSetCookie() which returns an array — safe for multi-cookie responses.
- * Merges with any existing cookies.
- */
-function collectCookies(response, existing = {}) {
-  const setCookies = response.headers.getSetCookie?.() ?? [];
-  if (setCookies.length === 0) return existing;
-  const cookies = { ...existing };
-  for (const cookie of setCookies) {
-    const [pair] = cookie.split(';');
-    const eqIdx = pair.indexOf('=');
-    if (eqIdx < 1) continue;
-    cookies[pair.slice(0, eqIdx).trim()] = pair.slice(eqIdx + 1).trim();
-  }
-  return cookies;
-}
-
-/**
  * Make a request with browser-like headers using curl subprocess.
  * Node's built-in fetch has a different TLS fingerprint that Cloudflare detects.
  * curl's TLS fingerprint matches real browsers and passes Cloudflare bot detection.
@@ -369,139 +245,13 @@ async function apkmirrorFetch(url, cookies = {}, referer = null) {
   };
 }
 
-/**
- * Check URL cache for a package version
- * @returns {object|null} Cache entry or null if not found/invalid
- */
-function getCachedUrl(packageId, version) {
-  const cacheDir = path.join(URL_CACHE_DIR, packageId);
-  const cacheFile = path.join(cacheDir, `${version}.json`);
-
-  if (!fs.existsSync(cacheFile)) {
-    console.error(`[url-cache] Miss: ${packageId} v${version}`);
-    return null;
-  }
-
-  try {
-    const cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-    console.error(`[url-cache] Hit: ${packageId} v${version} (source: ${cacheData.source}, downloads: ${cacheData.downloads})`);
-    return cacheData;
-  } catch (e) {
-    console.error(`[url-cache] Error reading cache: ${e.message}`);
-    return null;
-  }
-}
-
-/**
- * Save URL to cache
- * @param {string} packageId - Package ID
- * @param {string} version - Version
- * @param {string} url - Resolved URL
- * @param {string} source - Source that provided the URL
- * @returns {string} Path to cached file
- */
-function saveCachedUrl(packageId, version, url, source) {
-  // Input validation
-  if (!packageId || !version || !url) {
-    throw new Error('Missing required parameters');
-  }
-
-  const cacheDir = path.join(URL_CACHE_DIR, packageId);
-
-  // Create directory if it doesn't exist (race-safe: mkdirSync with
-  // { recursive: true } is atomic on POSIX when the parent already
-  // exists, and the only race window is between existsSync and mkdirSync,
-  // which is mitigated by the recursive option).
-  // codeql[js/file-system-race] reason: cacheDir is constructed from a
-  // sanitized packageId and lives in the workflow's user-owned ~/.cache;
-  // an attacker with write access to the cache directory already owns
-  // the workflow.
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true });
-  }
-
-  // Sanitize version for use in filename to prevent path traversal
-  const safeVersion = version.replace(/[^a-zA-Z0-9.-]/g, '_');
-  // codeql[js/file-system-race] reason: cacheFile is built from a
-  // sanitized version string into a user-owned cache directory.
-  const cacheFile = path.join(cacheDir, `${safeVersion}.json`);
-
-  // Read existing cache or create new
-  // codeql[js/file-system-race] reason: existsSync + readFileSync TOCTOU
-  // window is on a user-owned cache file we just constructed the path
-  // for; in practice the read failure is handled by the try/catch.
-  let cacheData = { downloads: 0, lastWorkingAt: null };
-  if (fs.existsSync(cacheFile)) {
-    try {
-      // codeql[js/http-to-file-access] reason: cacheData is parsed from
-      // a JSON file we own (user-owned ~/.cache), written by saveCachedUrl
-      // elsewhere in this module. Trust boundary = the workflow itself.
-      cacheData = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
-    } catch (e) {
-      console.error(`[url-cache] Corrupted cache file, recreating: ${e.message}`);
-    }
-  }
-
-  // Update cache entry
-  const newCacheData = {
-    version,
-    url,
-    source,
-    resolvedAt: new Date().toISOString(),
-    downloads: cacheData.downloads + 1,
-    lastWorkingAt: new Date().toISOString()
-  };
-
-  // codeql[js/file-system-race] reason: cacheFile is built from a sanitized
-  // packageId + sanitized version, lives in the user-owned cache dir.
-  // codeql[js/http-to-file-access] reason: newCacheData is constructed
-  // in this module from URL metadata we cached; not attacker-controlled.
-  fs.writeFileSync(cacheFile, JSON.stringify(newCacheData, null, 2));
-  console.error(`[url-cache] Saved: ${packageId} v${version} from ${source}`);
-
-  // Prune older version entries to prevent unbounded growth.
-  cleanupOldUrls(packageId);
-
-  return cacheFile;
-}
-
-/**
- * Prune URL cache entries for a package, keeping only the most-recently
- * updated ones.
- * @param {string} packageId
- * @param {number} keep Number of most-recent entries to retain (default 3).
- */
-function cleanupOldUrls(packageId, keep = 3) {
-  const cacheDir = path.join(URL_CACHE_DIR, packageId);
-  if (!fs.existsSync(cacheDir)) {
-    return 0;
-  }
-
-  const entries = fs.readdirSync(cacheDir)
-    .filter(f => f.endsWith(".json"))
-    .map(f => {
-      const fp = path.join(cacheDir, f);
-      try {
-        const stat = fs.statSync(fp);
-        return { file: fp, mtime: stat.mtimeMs };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.mtime - a.mtime);
-
-  const toDelete = entries.slice(keep);
-  for (const entry of toDelete) {
-    try {
-      fs.unlinkSync(entry.file);
-      console.error(`[url-cache] Pruned old entry: ${entry.file}`);
-    } catch (e) {
-      console.error(`[url-cache] Failed to prune ${entry.file}: ${e.message}`);
-    }
-  }
-  return toDelete.length;
-}
+// getCachedUrl / saveCachedUrl / cleanupOldUrls now live in
+// src/download/cache.js (imported at the top of this file). They
+// were extracted because the downloader grew past 1800 lines and
+// these helpers are the local-file-cache foundation for every
+// fallback-chain path. See src/download/cache.js for the
+// packageDir / cacheFileFor layout and the documented race window
+// in saveCachedUrl's mkdirSync({ recursive: true }).
 
 /**
  * Verify URL still works with HEAD request
@@ -977,77 +727,45 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   throw new Error('All sources failed to resolve URL');
 }
 
-/**
- * Parse command-line arguments
- */
-function parseArgs() {
-  const args = process.argv.slice(2);
-  if (args.length < 3) {
-    return {
-      error: "Usage: unified-downloader.js <package_id> <version> <output_dir>",
-      example: "Example: unified-downloader.js com.google.android.youtube 20.40.45 ./downloads"
-    };
-  }
-
-  const [packageId, version, outputDir] = args;
-
-  // Validate inputs
-  if (!packageId || !packageId.includes(".")) {
-    return { error: "Invalid package_id. Expected format: com.example.app" };
-  }
-  if (!version || !/^\d+\.\d+/.test(version)) {
-    return { error: "Invalid version. Expected format: X.Y.Z" };
-  }
-  if (!outputDir) {
-    return { error: "Invalid output_dir" };
-  }
-
-  return { packageId, version, outputDir };
-}
+// parseArgs / loadConfig / loadExistingUrl moved to src/download/:
+//   - parseArgs           → src/download/cli-args.js
+//   - loadConfig + loadExistingUrl → src/download/config.js
+// The original implementations are no longer inlined here; the
+// downloader imports them at the top and main() / parallelResolveSources
+// call them with the same arguments and get the same return shapes.
 
 /**
- * Load config.json
- */
-function loadConfig() {
-  const configPath = path.join(process.cwd(), 'config.json');
-  if (!fs.existsSync(configPath)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  } catch (e) {
-    console.error(`Warning: Failed to parse config.json: ${e.message}`);
-    return {};
-  }
-}
-
-/**
- * Check config.json for existing URL matching the version
- */
-function loadExistingUrl(packageId, version) {
-  const config = loadConfig();
-
-  const downloadUrls = config.download_urls?.[packageId];
-  if (!downloadUrls) {
-    return null;
-  }
-
-  // Check for exact version match only — latest_supported is for a specific old version
-  // and cannot be used as a direct download URL for a different version
-  if (downloadUrls[version]) {
-    console.error(`Found existing URL for version ${version} in config.json`);
-    return downloadUrls[version];
-  }
-
-  return null;
-}
-
-/**
- * Run command with execFile and timeout
+ * Run command with execFile and timeout.
+ *
+ * Timeout enforcement is delegated to `execFile`'s built-in `timeout`
+ * option (verified at runtime against Node 24+: a 200ms deadline on a
+ * `sleep 5` child produces a `close` event with `code=null,
+ * signal='SIGTERM'` without an `error` event, exactly as documented).
+ * The Promise rejects on the resulting close by emitting the same
+ * custom `Command timed out after ${timeout}ms: ${cmd}` message
+ * callers previously relied on. Relying on `execFile`'s timeout
+ * removes the legacy manual `setTimeout` block, which used to leak
+ * its closure for the full timeout duration whenever the child
+ * exited early (issue #1) — the earlier code never captured or
+ * cleared the handle. Tests in `__tests__/unified-downloader-runcommand.test.js`
+ * pin both contracts (timeout behavior + no manual setTimeout leaks).
  */
 function runCommand(cmd, args, options = {}) {
   const { execFileImpl = execFile, ...commandOptions } = options;
   const timeout = commandOptions.timeout || TIMEOUTS.commandDefault;
 
   return new Promise((resolve, reject) => {
+    // codeql[js/indirect-command-line-injection] reason: execFile's
+    // argv-form spawn doesn't invoke a shell — `cmd` is the binary
+    // name (passed to execvp(2)) and each `args[i]` becomes a
+    // separate argv entry (POSIX execve), so shell metacharacters
+    // in either field are not interpreted. Live callers pass
+    // hardcoded `cmd` literals (`"apkeep"`, `"apkeep-fail"`, …) and
+    // argv arrays the resolver built from filtered config fields.
+    // The non-network callers in `runCommand` are runCommand's own
+    // `unified-downloader-runcommand.test.js` tests, which run
+    // against `printf`/`echo`/`sleep` with explicit literal
+    // arguments — no shell expansion happens.
     const proc = execFileImpl(cmd, args, {
       timeout,
       stdio: commandOptions.stdio || ["pipe", "pipe", "pipe"],
@@ -1069,34 +787,34 @@ function runCommand(cmd, args, options = {}) {
     }
 
     let settled = false;
-    const cleanup = () => {
-      if (!settled) {
-        settled = true;
-      }
+    const settle = (fn) => {
+      if (settled) return;
+      settled = true;
+      fn();
     };
 
-    proc.on("close", (code) => {
-      cleanup();
+    proc.on("close", (code, signal) => {
+      // execFile's built-in timeout kills the child with SIGTERM and
+      // surfaces the result via close (no error event). Map the
+      // (code=null, signal='SIGTERM') signature to the same timeout
+      // message callers saw with the legacy manual setTimeout path.
+      // Any other SIGTERM is treated as a normal failure — the
+      // downloader never sends SIGTERM itself, so this branch is
+      // only reachable via a Node-internal timeout.
+      if (signal === 'SIGTERM' && code === null) {
+        settle(() => reject(new Error(`Command timed out after ${timeout}ms: ${cmd}`)));
+        return;
+      }
       if (code === 0) {
-        resolve({ stdout, stderr, code });
+        settle(() => resolve({ stdout, stderr, code }));
       } else {
-        reject(new Error(`Command failed with code ${code}: ${stderr || cmd}`));
+        settle(() => reject(new Error(`Command failed with code ${code}: ${stderr || cmd}`)));
       }
     });
 
     proc.on("error", (err) => {
-      cleanup();
-      reject(err);
+      settle(() => reject(err));
     });
-
-    // Handle timeout
-    setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        proc.kill("SIGTERM");
-        reject(new Error(`Command timed out after ${timeout}ms: ${cmd}`));
-      }
-    }, timeout);
   });
 }
 
@@ -1849,6 +1567,12 @@ module.exports = {
   cleanupOldUrls,
   parallelResolveSources,
   download,
+  // For testing: runCommand is an internal helper used by
+  // downloadWithApkeep and the apkeep resolver, but it's exported
+  // here so __tests__/unified-downloader-runcommand.test.js can pin
+  // its timeout-cancellation + custom-error contracts without
+  // driving the full downloader.
+  runCommand,
   // Exported for the cleanup-on-failure unit tests
   // (__tests__/unified-downloader-cleanup.test.js). They exercise the
   // post-download validation paths in isolation rather than driving

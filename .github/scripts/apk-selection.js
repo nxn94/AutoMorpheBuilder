@@ -16,12 +16,13 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 // Canonical candidate-based ranking API (from src/apk/rank-candidates.js).
-// New code paths that work with structured candidate objects (see
-// `src/apk/candidate.js`) should prefer this API. The path-based
-// `scoreApk` below is preserved for backward compatibility with
-// `findPackageCandidate` / `bestRankedApkInDir` and the existing test
-// suite in __tests__/apk-selection.test.js, which pins its weights.
+// `findPackageCandidate` and `bestRankedApkInDir` now build candidate
+// objects (via `createCandidate` from src/apk/candidate.js) from the
+// filename and delegate the actual ranking to
+// `selectCandidate`/`compareCandidates` here. The previous regex-based
+// `scoreApk` function and its parallel weight table have been removed.
 const rankCandidates = require('../../src/apk/rank-candidates');
+const { createCandidate } = require('../../src/apk/candidate');
 
 /**
  * Inspect the zip at `filePath` and decide whether it's a single APK
@@ -74,44 +75,69 @@ function extractVersionFromString(s) {
 }
 
 /**
- * Pure scoring function used by findPackageCandidate and bestRankedApkInDir.
- * Higher score = better match for our preferred architecture/format.
+ * Build a candidate object from a filename on disk. Mirrors the
+ * fields the legacy regex-based scoreApk() inspected: architecture
+ * tag, supported format extension, and the file's size. Used by
+ * `findPackageCandidate` and `bestRankedApkInDir` to feed the
+ * canonical ranking pipeline in src/apk/rank-candidates.js without
+ * maintaining a parallel weight table.
  *
- * The bonus/penalty weights are the same numbers the inline awk used;
- * changing them changes APK selection behavior, which the workflow
- * relies on (rejects dex-less split configs, prefers arm64-v8a APKs, etc.).
- *
- * NOTE: this function is intentionally NOT delegated to
- * `rankCandidates.scoreCandidate` from `src/apk/rank-candidates.js`.
- * The new module scores structured fields (architecture/dpi/format
- * lookup tables on a candidate object) and uses different weights
- * optimized for ranking resolver output. `scoreApk` here is the
- * legacy path-string scorer used by `findPackageCandidate` (which
- * scans a directory for APK filenames). New code should use
- * `rankCandidates.selectCandidate` with candidate objects built by
- * `createCandidate` instead. The weight divergence is preserved so
- * the 7 existing tests in `__tests__/apk-selection.test.js` keep
- * passing unchanged — this is a no-behavior-change refactor.
- *
- * @param {string} apkPath Absolute path to an APK file.
- * @returns {number} Score (higher is better).
+ * packageName is set to a fixed sentinel because the directory-scan
+ * resolvers don't have a target package in scope — `selectCandidate`
+ * treats the sentinel as a single bucket (every candidate on disk
+ * belongs to the same group for this purpose), so packageName
+ * filtering remains a no-op as in the legacy implementation.
  */
-function scoreApk(apkPath) {
-  const lower = String(apkPath).toLowerCase();
+function filenameToCandidate(filename) {
+  const lower = String(filename).toLowerCase();
   const ext = lower.replace(/^.*\./, '');
 
-  let s = 0;
-  // .apk is the patchable shape we want; .xapk/.apkm/.apks are split packages.
-  if (ext === 'apk') s += 2000;
-  else if (ext === 'xapk' || ext === 'apkm' || ext === 'apks') s += 500;
+  // Architecture extraction mirrors the legacy regex-based scoreApk
+  // heuristic so directory-scan ranking stays in lockstep with what
+  // `find_package_candidate` used to do. Boundaries are
+  // non-alphanumeric characters (underscores, dashes, dots, slashes)
+  // plus string ends; this catches `app_arm64-v8a.apk`,
+  // `split_config.arm64_v8a.apk`, and `arm_arm64-v8a.apk` while
+  // ignoring the random `x86` substring inside `xxx86_thing.apk`.
+  // Order matters: more-specific tokens (arm64-v8a, x86_64) are tried
+  // before less-specific ones (arm64, x86), so a filename carrying
+  // both wins the more-specific bucket.
+  const sep = '(?:^|[^a-z0-9])';
+  const end = '(?:[^a-z0-9]|$)';
+  let architecture = 'unknown';
+  if (/arm64[-_]?v?8a/.test(lower) || new RegExp(`${sep}arm64${end}`).test(lower)) {
+    architecture = 'arm64-v8a';
+  } else if (/armeabi[-_]?v7a/.test(lower) || new RegExp(`${sep}v7a${end}`).test(lower)) {
+    architecture = 'armeabi-v7a';
+  } else if (/x86[-_]?64/.test(lower) || new RegExp(`${sep}x86_64${end}`).test(lower)) {
+    architecture = 'x86_64';
+  } else if (new RegExp(`${sep}x86${end}`).test(lower)) {
+    architecture = 'x86';
+  } else if (/universal/.test(lower)) {
+    architecture = 'universal';
+  }
 
-  // For dir-listings, prefer arm64-v8a and demote other arches.
-  if (/arm64-v8a|arm64_v8a|arm64/.test(lower)) s += 800;
-  if (/\/base\.apk$/.test(lower)) s += 500;
-  if (/x86_64|x86/.test(lower)) s -= 600;
-  if (/armeabi-v7a|arm-v7a|v7a/.test(lower)) s -= 300;
-  if (/split_config|(^|\/)config\./.test(lower)) s -= 1400;
-  return s;
+  const format = ['apk', 'xapk', 'apkm', 'apks'].includes(ext) ? ext : 'unknown';
+
+  let sizeBytes = null;
+  try {
+    const stat = fs.statSync(filename);
+    if (stat.isFile()) sizeBytes = stat.size;
+  } catch {
+    // stat failures are non-fatal for selection — leave sizeBytes null
+    // and let the rank-candidates scorer fall back to its 0-bonus
+    // default. (Test fixtures sometimes use empty files where statSync
+    // works fine; the catch covers symlinks-to-nowhere and the like.)
+  }
+
+  return createCandidate({
+    source: 'directory-scan',
+    url: filename,
+    packageName: 'directory-scan',
+    architecture,
+    format,
+    sizeBytes,
+  });
 }
 
 /**
@@ -142,7 +168,9 @@ function findCachedApk(apksDir, targetVersion) {
 
 /**
  * Scan APKS_DIR for all .apk/.xapk/.apkm/.apks files and return the
- * highest-scored one. Mirrors the find_package_candidate awk pipeline.
+ * highest-scored one. Mirrors the find_package_candidate awk pipeline;
+ * now uses the canonical selectCandidate ranking so legacy regex
+ * weight tables no longer live here.
  *
  * @param {string} apksDir Directory to scan (recursive).
  * @returns {string|null} Absolute path of best candidate, or null.
@@ -163,13 +191,17 @@ function findPackageCandidate(apksDir) {
   };
   walk(apksDir);
   if (entries.length === 0) return null;
-  let best = null;
-  let bestScore = -Infinity;
-  for (const e of entries) {
-    const s = scoreApk(e);
-    if (s > bestScore) { best = e; bestScore = s; }
-  }
-  return best;
+  const candidates = entries.map(filenameToCandidate);
+  // No preferredArch / versionName at the directory-scan level — the
+  // packaging-around-arch callers pass those via selectCandidate
+  // upstream. packageName is the directory-scan sentinel shared by
+  // every candidate, so isCompatible() treats the whole set as one
+  // pool and the comparator + tiebreaker pick the same APK that the
+  // legacy regex weights used to (verified against __tests__).
+  const chosen = rankCandidates.selectCandidate(candidates, {
+    packageName: 'directory-scan',
+  });
+  return chosen ? chosen.url : null;
 }
 
 /**
@@ -185,10 +217,12 @@ function bestRankedApkInDir(dir) {
   const entries = fs.readdirSync(dir)
     .filter(f => f.endsWith('.apk'))
     .map(f => path.join(dir, f));
-  return entries
-    .map(p => ({ path: p, score: scoreApk(p) }))
-    .sort((a, b) => b.score - a.score)
-    .map(o => o.path);
+  if (entries.length === 0) return [];
+  const candidates = entries.map(filenameToCandidate);
+  const comparator = rankCandidates.compareCandidates({
+    packageName: 'directory-scan',
+  });
+  return candidates.sort(comparator).map(c => c.url);
 }
 
 /**
@@ -294,7 +328,7 @@ function listApkAbis(apk) {
 
 module.exports = {
   extractVersionFromString,
-  scoreApk,
+  filenameToCandidate,
   findCachedApk,
   findPackageCandidate,
   bestRankedApkInDir,
