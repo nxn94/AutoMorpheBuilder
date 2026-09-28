@@ -679,6 +679,10 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
  */
 async function parallelResolveSources(packageId, version, opts = {}) {
   const sourceResolvers = opts.sourceResolvers || {};
+  // Source list is in priority order (apkeep > apkmirror-api >
+  // apkmirror). This order is the single source of truth for which
+  // resolver wins when several succeed — see the "Fixed priority
+  // order" comment below.
   const sources = [
     {
       name: 'apkeep',
@@ -705,14 +709,56 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   console.error(`[parallel-resolve] Starting parallel resolution for ${packageId} v${version}`);
   const startTime = Date.now();
 
-  const results = await Promise.allSettled(
-    sources.map(async (source) => {
-      // Per-source timeout timer is captured so it can be cleared
-      // when the source's own promise wins the race. Without this,
-      // a fast source (e.g. apkeep returning in 200ms) leaves the
-      // 60s `SOURCE_TIMEOUT` timer armed for the full window — a
-      // slow leak across every parallel-resolve invocation.
-      let timer;
+  // Fixed priority order, NOT first-arrives-wins.
+  //
+  // The README phrasing "first valid URL wins" is misleading — the
+  // actual contract is "the highest-priority source whose promise
+  // resolved with a valid URL wins, with fall-through to the next
+  // source on failure." apkeep at index 0 is always preferred over
+  // apkmirror-api at index 1 even when apkmirror-api returns faster,
+  // because the apkeep URL is trusted to match the package/version
+  // semantically (apkeep is the canonical APKPure resolver; the
+  // apkmirror path is a Cloudflare-bypass fallback).
+  //
+  // Implementation: kick off every source's Promise.race
+  // (source.fn() vs SOURCE_TIMEOUT) in parallel up front so the JS
+  // event loop interleaves their I/O. Then iterate the resulting
+  // promises IN PRIORITY ORDER, awaiting each one. As soon as the
+  // highest-priority source settles with a valid URL we return it.
+  // If it fails (no URL, rejection, timeout) we fall through to
+  // the next-priority source.
+  //
+  // Why not Promise.any: Promise.any resolves to whichever promise
+  // fulfills first — that loses the priority order (apkmirror-api
+  // could win over apkeep just by being faster). The existing
+  // fallback-chain test suite pins apkeep-first ordering, so we
+  // keep allSettled semantics and just don't wait for all of them
+  // to settle before returning the priority-first winner.
+  //
+  // Why not the prior Promise.allSettled: that waited for every
+  // source to settle (or time out at SOURCE_TIMEOUT) before
+  // returning, so a hung low-priority source would delay the
+  // winner by up to SOURCE_TIMEOUT. The new shape consumes the
+  // priority-ordered promises one at a time — once the
+  // highest-priority source settles (success or failure), we
+  // either return or move on. Lower-priority sources that are
+  // still running are abandoned at function exit (their timers
+  // are cleared in the per-source finally block below).
+
+  // Per-source promise: each races source.fn() against SOURCE_TIMEOUT,
+  // clears its own timer in the finally block (no orphan setTimeouts
+  // when a source resolves fast — same fix as commit 93c42e0).
+  //
+  // Rejections are caught and converted into a `{__rejected, ...}`
+  // sentinel so the caller's `await promises[i]` always resolves
+  // uniformly. Without this catch, an abandoned loser (its promise
+  // was kicked off in parallel but we returned early on a higher-
+  // priority winner) would surface as an unhandled rejection — the
+  // old Promise.allSettled shape absorbed those because allSettled
+  // never lets a rejection escape.
+  const promises = sources.map((source, index) => {
+    let timer;
+    return (async () => {
       const timeoutPromise = new Promise((_, reject) => {
         timer = setTimeout(
           () => reject(new Error(`${source.name} timeout`)),
@@ -722,29 +768,35 @@ async function parallelResolveSources(packageId, version, opts = {}) {
       try {
         return await Promise.race([source.fn(), timeoutPromise]);
       } finally {
-        // clearTimeout is a no-op when the timer already fired
-        // (timeout-rejected race), so this is safe in both
-        // branches of the race.
         clearTimeout(timer);
       }
-    })
-  );
+    })().catch((reason) => ({
+      __rejected: true,
+      index,
+      name: source.name,
+      reason,
+    }));
+  });
 
-  const elapsed = Date.now() - startTime;
-  console.error(`[parallel-resolve] All sources completed in ${elapsed}ms`);
-
-  // Find first successful resolution
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
+  // Iterate in priority order. Awaiting each promise sequentially
+  // consumes results in priority order; the underlying I/O runs in
+  // parallel because the promises were kicked off above.
+  for (let i = 0; i < sources.length; i += 1) {
     const sourceName = sources[i].name;
-
-    if (result.status === 'fulfilled' && result.value?.url) {
-      console.error(`[parallel-resolve] Winner: ${sourceName}`);
-      return { ...result.value, source: result.value.source || sourceName };
+    const result = await promises[i];
+    if (result && result.__rejected) {
+      const error = result.reason?.message || 'Unknown error';
+      console.error(`[parallel-resolve] ${sourceName} failed: ${error}`);
+      continue;
     }
-
-    const error = result.reason?.message || 'Unknown error';
-    console.error(`[parallel-resolve] ${sourceName} failed: ${error}`);
+    if (result && result.url) {
+      const elapsed = Date.now() - startTime;
+      console.error(`[parallel-resolve] Winner: ${sourceName} (after ${elapsed}ms)`);
+      return { ...result, source: result.source || sourceName };
+    }
+    // Result lacked a URL — treat as a failure of this source and
+    // fall through.
+    console.error(`[parallel-resolve] ${sourceName} failed: returned no URL`);
   }
 
   throw new Error('All sources failed to resolve URL');
@@ -1430,7 +1482,9 @@ async function resolveApkmirrorUrl(apkmirrorPath, version) {
  * Main download function with improved reliability:
  * 1. Check URL cache -> if valid, use directly
  * 2. Check patches.json -> if has URL, verify and use
- * 3. Parallel resolution -> first valid URL wins
+ * 3. Parallel resolution (priority-ordered: apkeep → apkmirror-api →
+ *    apkmirror; first valid URL wins, fall through on failure or
+ *    timeout — see parallelResolveSources header comment)
  * 4. Download from URL
  * 5. Save to cache on success
  * 6. Fallback to sequential on all parallel fail
