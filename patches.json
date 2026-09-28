@@ -11,6 +11,7 @@
       "Change form factor": true,
       "Change header": true,
       "Change start page": true,
+      "Channel search": true,
       "Check watch history domain name resolution": true,
       "Copy video link": true,
       "Custom branding": true,
@@ -32,6 +33,7 @@
       "Downloads": true,
       "Enable debugging": true,
       "Exit fullscreen mode": true,
+      "Force fullscreen landscape": true,
       "Force original audio": true,
       "Fullscreen video scale": true,
       "GmsCore support": true,
@@ -147,7 +149,8 @@
       "Remove subreddit dialog": true,
       "Sanitize sharing links": true,
       "Show view count": true,
-      "Spoof signature": true
+      "Spoof signature": true,
+      "Start as guest": true
     }
   },
   "RookieEnough/De-Vanced": {
@@ -164,9 +167,6 @@
     "com.kevinforeman.nzb360": {
       "Unlock All Access": true
     },
-    "com.finalwire.aida64": {
-      "Remove ads": true
-    },
     "com.flightradar24free": {
       "Unlock Business Premium": true
     }
@@ -174,9 +174,6 @@
   "hoo-dles/morphe-patches": {
     "com.sofascore.results": {
       "Disable ads": true
-    },
-    "com.getmimo": {
-      "Enable Pro": true
     }
   }
 }
