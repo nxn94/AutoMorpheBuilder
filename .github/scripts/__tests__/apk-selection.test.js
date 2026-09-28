@@ -154,6 +154,23 @@ describe('findPackageCandidate', () => {
     expect(findPackageCandidate(tmp)).toBe(path.join(tmp, 'arm_arm64-v8a.apk'));
   });
 
+  // The legacy regex-based scoreApk used a hardcoded weight table
+  // (arm64 +800, x86_64/x86 -600, armeabi-v7a -300) with no
+  // preferred_arch parameter at all. config.json's preferred_arch
+  // is enforced DOWNSTREAM in download-supported-apk.js via
+  // apkHasNativeLibsForArch — the directory scan keeps the same
+  // fixed arm64-v8a bias it always had. This test pins that
+  // contract so a future "let's thread preferred_arch through here"
+  // refactor is forced to update this test alongside.
+  test('arm64-v8a beats armeabi-v7a even when the only armeabi-v7a is universal-like', () => {
+    fs.writeFileSync(path.join(tmp, 'app_arm64-v8a.apk'), 'fake');
+    // "universal" in the filename isn't enough — armeabi-v7a still
+    // outranks it because the ARCHITECTURE_SCORE table puts
+    // armeabi-v7a=60 ahead of unknown/universal-likely=50.
+    fs.writeFileSync(path.join(tmp, 'app_armeabi-v7a-universal.apk'), 'fake');
+    expect(findPackageCandidate(tmp)).toBe(path.join(tmp, 'app_arm64-v8a.apk'));
+  });
+
   test('rejects split_config in favor of regular .apk', () => {
     fs.writeFileSync(path.join(tmp, 'split_config.apk'), 'fake');
     fs.writeFileSync(path.join(tmp, 'base.apk'), 'fake');
