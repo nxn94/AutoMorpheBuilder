@@ -42,6 +42,7 @@ const {
 const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
+const { findApkFile } = require('../../src/download/scan');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -892,27 +893,6 @@ function runCommand(cmd, args, options = {}) {
       settle(() => reject(err));
     });
   });
-}
-
-/**
- * Find downloaded APK in output directory
- */
-function findApkFile(outputDir) {
-  if (!fs.existsSync(outputDir)) {
-    return null;
-  }
-  const extensions = [".apk", ".xapk", ".apkm"];
-  const files = fs.readdirSync(outputDir);
-
-  for (const file of files) {
-    const lower = file.toLowerCase();
-    for (const ext of extensions) {
-      if (lower.endsWith(ext)) {
-        return path.join(outputDir, file);
-      }
-    }
-  }
-  return null;
 }
 
 /**
