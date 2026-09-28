@@ -41,6 +41,7 @@ const {
 } = require('../../src/download/cache');
 const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
+const { validateApkVersion } = require('../../src/download/aapt');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -891,57 +892,6 @@ function runCommand(cmd, args, options = {}) {
       settle(() => reject(err));
     });
   });
-}
-
-/**
- * Validate APK version matches expected version using aapt
- * Returns { valid: boolean, actualVersion: string }
- */
-function validateApkVersion(apkPath, expectedVersion, opts = {}) {
-  try {
-    const { execFileSync } = require("child_process");
-    const execFileSyncImpl = opts.execFileSyncImpl || execFileSync;
-
-    // Try using aapt or aapt2. Use execFileSync with argv arrays
-    // (matching the pattern already used in download-supported-apk.js
-    // and apk-abi-validator.js) so apkPath is never interpolated into
-    // a shell string — defense-in-depth for an untrusted download
-    // whose final filename originates upstream.
-    const aaptCmd = "aapt";
-    let output;
-    try {
-      output = execFileSyncImpl(aaptCmd, ["dump", "badging", apkPath], { encoding: "utf8" });
-    } catch (_e) {
-      // Try aapt2
-      try {
-        output = execFileSyncImpl("aapt2", ["dump", "badging", apkPath], { encoding: "utf8" });
-      } catch (e2) {
-        console.error(`[validate] No aapt available: ${e2.message}`);
-        return { valid: false, actualVersion: "unknown", error: "aapt not available - cannot validate version" };
-      }
-    }
-
-    // Extract versionName from output
-    const match = output.match(/versionName='([^']+)'/);
-    const actualVersion = match ? match[1] : null;
-
-    if (!actualVersion) {
-      console.error(`[validate] Could not extract version from APK`);
-      return { valid: false, actualVersion: "unknown", error: "could not extract version from APK" };
-    }
-
-    console.error(`[validate] APK version: ${actualVersion}, expected: ${expectedVersion}`);
-
-    if (actualVersion !== expectedVersion) {
-      console.error(`[validate] VERSION MISMATCH! Got ${actualVersion} but wanted ${expectedVersion}`);
-      return { valid: false, actualVersion, error: `version mismatch: got ${actualVersion}, wanted ${expectedVersion}` };
-    }
-
-    return { valid: true, actualVersion };
-  } catch (e) {
-    console.error(`[validate] Error validating APK: ${e.message}`);
-    return { valid: false, actualVersion: "unknown", error: e.message };
-  }
 }
 
 /**
