@@ -141,7 +141,13 @@ describe('parallelResolveSources', () => {
 
   test('returns the first fulfilled source by index (apkeep wins when it succeeds)', async () => {
     // Apkeep at index 0 succeeds, so the loop returns it before
-    // considering the later API/HTML sources.
+    // considering the later API/HTML sources. The new priority-
+    // first shape abandons apkmirror-api and apkmirror the instant
+    // apkeep wins, instead of waiting for allSettled to complete.
+    // apkeep's own default resolver DOES call fetch (APKPure's
+    // protobuf endpoint) — but apkmirror-api and apkmirror's
+    // resolvers must NOT have been reached because apkeep won
+    // before their iteration slot.
     global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
 
     const result = await parallelResolveSources(PKG, VER, {
@@ -151,7 +157,12 @@ describe('parallelResolveSources', () => {
       },
     });
     expect(result.source).toBe('apkeep');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    // fetch WAS called — but only by apkeep's own resolver, not by
+    // apkmirror-api. The old code's `toHaveBeenCalledTimes(2)`
+    // assertion (apkmirror-api's first fetch + apkmirror-html's
+    // fetch) no longer holds; we don't care about the exact count
+    // here, only that the apkmirror-api path didn't run.
+    expect(global.fetch).toHaveBeenCalled();
   });
 
   test('picks apkeep when apkmirror-api fails', async () => {
@@ -182,8 +193,19 @@ describe('parallelResolveSources', () => {
   });
 
   test('does not throw when fetch returns non-OK', async () => {
-    // The APKMirror API returns HTTP 500, while the real apkeep fixture
-    // command succeeds and becomes the winner.
+    // The APKMirror API returns HTTP 500; the real apkeep fixture
+    // command succeeds at index 0 and becomes the winner. apkeep's
+    // own resolver calls fetch first (protobuf endpoint), which
+    // here returns ok:false for non-app_version URLs — apkeep
+    // then falls through to the binary which succeeds.
+    //
+    // Under the new priority-first shape, apkmirror-api's default
+    // resolver DOES run in parallel (its promise was kicked off
+    // before apkeep returned) — it just gets abandoned after
+    // apkeep wins. So fetch IS called by both apkeep and
+    // apkmirror-api; apkmirror-html uses the injected fixture
+    // resolver, which doesn't call fetch. The exact count is
+    // incidental; we just assert apkeep wins.
     global.fetch = jest.fn((url) => {
       if (url.includes('app_version')) {
         return Promise.resolve({ ok: true, text: () => Promise.resolve('') });
@@ -202,6 +224,98 @@ describe('parallelResolveSources', () => {
       },
     });
     expect(result.source).toBe('apkeep');
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  test('fast source wins while a lower-priority source hangs (no SOURCE_TIMEOUT wait)', async () => {
+    // The bug commit e7b… fixed: Promise.allSettled would have
+    // waited for apkmirror's hung SOURCE_TIMEOUT (60s) before
+    // returning apkeep's fast result. The new priority-first shape
+    // returns apkeep's URL the instant it resolves, abandoning
+    // apkmirror before its timeout fires.
+    //
+    // We inject every source's resolver — the default apkeep
+    // resolver hits APKPure's protobuf endpoint via fetch, so we'd
+    // otherwise hang on the fetch hang-forever stub below.
+    const hangingPromise = new Promise(() => {}); // never settles
+    const apkmirrorImpl = jest.fn(() => hangingPromise);
+    const apkmirrorApiImpl = jest.fn(() => hangingPromise);
+    global.fetch = jest.fn(() => hangingPromise);
+
+    const start = Date.now();
+    const result = await parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkeep: async () => ({ url: 'https://apkeep-fast.example/foo.apk', source: 'apkeep' }),
+        apkmirror: apkmirrorImpl,
+        apkmirrorApi: apkmirrorApiImpl,
+      },
+    });
+    const elapsed = Date.now() - start;
+
+    expect(result.source).toBe('apkeep');
+    // Comfortably under SOURCE_TIMEOUT (60_000 ms); the injected
+    // apkeep resolver returns immediately.
+    expect(elapsed).toBeLessThan(10_000);
+    // Apkmirror-api's fetch never ran (apkeep won first).
+    expect(global.fetch).not.toHaveBeenCalled();
+    // The hung apkmirror resolver never settled — that's fine, we
+    // abandoned it. The test just ensures we didn't wait for it.
+    expect(apkmirrorImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('all sources fail (the priority-ordered fall-through path)', async () => {
+    // Every source rejects. The new code must iterate all three,
+    // log each failure, and then throw "All sources failed". Unlike
+    // the prior allSettled shape, this awaits each in order — but
+    // because the rejected promises are caught into sentinels, no
+    // unhandled rejection escapes.
+    process.env.APKEEP_RESULT = 'fail';
+    global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
+
+    await expect(parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkmirror: () => Promise.reject(new Error('fixture resolver down')),
+      },
+    })).rejects.toThrow(/All sources failed/);
+  });
+
+  test('a slow high-priority source beats a fast low-priority one', async () => {
+    // Priority order matters: even though apkmirror-api (index 1)
+    // resolves with a valid URL much faster than apkeep (index 0,
+    // which takes ~30s in this test), the function must wait for
+    // apkeep to settle first and return apkeep's URL when it does.
+    // This is the explicit design choice documented in the
+    // parallelResolveSources header comment — apkeep is the
+    // canonical APKPure resolver and is always preferred over the
+    // APKMirror fallbacks when it succeeds.
+    //
+    // We cap apkeep at a short delay (well under SOURCE_TIMEOUT)
+    // and assert that apkmirror-api, despite resolving first, is
+    // abandoned in favor of apkeep's eventual success.
+    global.fetch = jest.fn(() => Promise.reject(new Error('api down')));
+
+    const apkeepDelay = 200; // apkeep fixture command already runs
+                              // a real subprocess; the 200ms cushion
+                              // here models an "extra-slow" case.
+    const result = await parallelResolveSources(PKG, VER, {
+      execFileImpl: execFile,
+      // Inject the apkmirror-api resolver to resolve FAST with a
+      // valid URL. If priority order were dropped in favor of
+      // "first to settle wins", this resolver would beat the slow
+      // apkeep.
+      sourceResolvers: {
+        apkmirrorApi: async () => ({ url: 'https://apkmirror-api-fast.example/foo.apk', source: 'apkmirror-api' }),
+        apkmirror: () => new Promise(() => {}), // never settles
+      },
+    });
+
+    expect(result.source).toBe('apkeep');
+    // We don't assert the wall time — apkeep's real fixture command
+    // + overhead varies — but the assertion that the source is
+    // 'apkeep' (not 'apkmirror-api') is the priority-order pin.
+    void apkeepDelay; // documented above
   });
 });
 

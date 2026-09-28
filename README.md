@@ -95,7 +95,7 @@ Signed builds are enforced — missing `KEYSTORE_BASE64` or `KEYSTORE_PASSWORD` 
 
 ## APK download
 
-Multi-source fallback (first valid result wins): pre-downloaded `tools/*.apk` → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via **apkeep** (APKPure), **APKMirror-API** (if creds set), **APKMirror scraper** (curl → Chromium fallback for `/all-versions/` slug when Cloudflare blocks).
+Multi-source fallback (highest-priority valid result wins): pre-downloaded `tools/*.apk` → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via **apkeep** (APKPure), **APKMirror-API** (if creds set), **APKMirror scraper** (curl → Chromium fallback for `/all-versions/` slug when Cloudflare blocks). Within the parallel pass, sources are tried in fixed priority order (`apkeep` → `apkmirror-api` → `apkmirror`); the first source to return a valid URL is used, and lower-priority sources are abandoned at function exit (no `SOURCE_TIMEOUT` wait for a hung loser when a higher-priority winner has emerged).
 
 Split packages (XAPK/APKM/APKS) are saved as `.apk` on disk and detected by **content**, not extension — aapt validation is skipped on the outer zip-of-zips, the inner `base.apk` is validated post-merge. Sofascore's 57MB arm64-v8a XAPK wins over the 93MB universal by size.
 

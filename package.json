@@ -6,7 +6,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "jest --forceExit",
+    "test": "jest --forceExit --coverage",
     "lint": "eslint .github/scripts src scripts",
     "validate:config": "node scripts/validate-config.js",
     "validate:agent-docs": "node scripts/check-agents-doc.js",

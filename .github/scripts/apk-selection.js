@@ -192,12 +192,34 @@ function findPackageCandidate(apksDir) {
   walk(apksDir);
   if (entries.length === 0) return null;
   const candidates = entries.map(filenameToCandidate);
-  // No preferredArch / versionName at the directory-scan level — the
-  // packaging-around-arch callers pass those via selectCandidate
-  // upstream. packageName is the directory-scan sentinel shared by
-  // every candidate, so isCompatible() treats the whole set as one
-  // pool and the comparator + tiebreaker pick the same APK that the
-  // legacy regex weights used to (verified against __tests__).
+  // Intentional fixed arm64-v8a bias, NOT driven by config.preferred_arch.
+  //
+  // The legacy regex scoreApk() that this function replaces used
+  // hardcoded weights: +800 for any filename carrying `arm64`,
+  // -600 for x86_64/x86, -300 for armeabi-v7a. Those weights baked
+  // in "arm64 wins, everything else loses, x86 loses hardest" — a
+  // fixed priority, not a configurable one. config.json's
+  // preferred_arch was never consulted by the directory scan; it
+  // shows up downstream in download-supported-apk.js as the ABI
+  // guardrail (`apkHasNativeLibsForArch` and the post-merge
+  // `validateDownloadedApkAbi`).
+  //
+  // Keeping the same fixed bias here means operators who pin a
+  // preferred_arch still get correct selection via the guardrail:
+  //   - On a universal APK, the dir-scan picks arm64 (matches the
+  //     preferred_arch), the guardrail is happy.
+  //   - On a single-arm non-arm64 APK, the dir-scan still picks arm64
+  //     if present; if arm64 is missing, the BUNDLE-vs-single-APK
+  //     preference block in download-supported-apk.js:629-645
+  //     swaps to the bundle instead, and the post-merge ABI check at
+  //     line 743 rejects any merged APK that lacks the preferred
+  //     architecture's .so libs.
+  //
+  // packageName uses the directory-scan sentinel so isCompatible()
+  // treats the whole set as one pool — there's no versionName to
+  // filter on (findPackageCandidate is called after the version
+  // has already been resolved, so all candidates here belong to
+  // the same version of the same package, by construction).
   const chosen = rankCandidates.selectCandidate(candidates, {
     packageName: 'directory-scan',
   });

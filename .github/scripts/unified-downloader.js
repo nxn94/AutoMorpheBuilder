@@ -41,6 +41,9 @@ const {
 } = require('../../src/download/cache');
 const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
+const { validateApkVersion } = require('../../src/download/aapt');
+const { findApkFile } = require('../../src/download/scan');
+const { pickSmallestMatchingVariant } = require('../../src/download/apkeep-variant');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -270,10 +273,9 @@ async function verifyUrl(url) {
   // direct URL from patches.json that the user authored). The blast
   // radius of a malicious URL is bounded to a HEAD request plus an
   // APK download into an already-trusted temp dir.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
-
     // codeql[js/file-access-to-http] reason: `url` is a HEAD-probe for
     // a cached APK download URL from Morphe's patches-list.json or the
     // user's own patches.json. Blast radius is bounded to a HEAD
@@ -284,13 +286,21 @@ async function verifyUrl(url) {
       redirect: 'follow'
     });
 
-    clearTimeout(timeout);
     const isValid = response.ok;
     console.error(`[url-cache] URL verify: ${isValid ? 'valid' : 'invalid'} (${response.status})`);
     return isValid;
   } catch (e) {
     console.error(`[url-cache] URL verify failed: ${e.message}`);
     return false;
+  } finally {
+    // clearTimeout must run on every path: success, fetch rejection,
+    // AND the `return isValid` short-circuit above. Without the
+    // finally, a successful early return leaves the AbortController
+    // timer armed for the full `urlVerify` ceiling (5s default) — a
+    // slow leak across every cache hit. clearTimeout on an already-
+    // fired timer is a no-op, so this is also safe when the
+    // timeout itself fired and aborted fetch.
+    clearTimeout(timeout);
   }
 }
 
@@ -344,63 +354,35 @@ async function resolveApkeepVariant(packageId, version) {
 
   const body = await response.text();
 
-  // Extract every XAPK download URL APKPure returned for this package.
-  // The protobuf body is ~400KB of mixed metadata; the URLs are
-  // embedded inline (verified by greping the actual response bytes).
-  const allUrls = body.match(/https?:\/\/download\.pureapk\.com\/b\/XAPK\/[^"\s\\]+/g) || [];
-
-  // APKPure's URLs encode the version INSIDE the `c` query param as
-  // pipe-separated base64-encoded URL-encoded params. The outer param
-  // shape is `c=<counter>|<category>|<base64(rest)>` where the base64
-  // decodes to `dev=<name>&t=<type>&s=<size>&vn=<version>&vc=<version_code>`.
-  // Example inner payload:
-  //   c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXhhcGsmcz01NzcwMzk2MyZ2bj0yNi4wOC4wMyZ2Yz0yNjA4MDMwMDI
-  //   → base64 decode → "dev=Sofascore&t=xxapk&s=57703963&vn=26.08.03&vc=260803002"
-  //
-  // The matcher strips any non-printable bytes that leak past the URL
-  // boundary (the protobuf response is binary — the URL is followed by
-  // framing bytes like `d2 01 f8 01 0a` that the regex preserves).
-  const cleanedUrls = allUrls.map((u) => u.replace(/[^\x20-\x7e]/g, ''));
-  const matching = cleanedUrls.filter((u) => {
-    try {
-      const parsed = new URL(u);
-      const c = parsed.searchParams.get('c');
-      if (!c) return false;
-      const parts = c.split('|');
-      // parts[0] = counter, parts[1] = category, parts[2] = base64 rest
-      if (parts.length < 3) return false;
-      const decoded = Buffer.from(parts[2], 'base64').toString('utf8');
-      const innerParams = new URLSearchParams(decoded);
-      return innerParams.get('vn') === version;
-    } catch {
-      return false;
-    }
-  });
-
-  if (matching.length === 0) {
+  // URL/variant-selection logic (regex match, base64 `c` param
+  // decode, version filter, size-based pick) lives in
+  // src/download/apkeep-variant.js so it can be unit-tested
+  // without standing up the protobuf endpoint. The downloader
+  // keeps only the network call and the size logging here.
+  const chosenUrl = pickSmallestMatchingVariant(body, version);
+  if (!chosenUrl) {
     throw new Error(`No APKPure XAPK URLs found for ${packageId}@${version}`);
   }
 
-  // Sort by declared size (smallest first). The arm64-v8a variant is
-  // consistently the smallest of the three per-app variants.
-  const withSize = matching.map((u) => {
-    try {
-      const parsed = new URL(u);
-      const c = parsed.searchParams.get('c');
-      const innerParams = new URLSearchParams(Buffer.from(c.split('|')[2], 'base64').toString('utf8'));
-      return {
-        url: u,
-        size: parseInt(innerParams.get('s') || '0', 10),
-      };
-    } catch {
-      return { url: u, size: 0 };
+  // Log the chosen size for observability — this mirrors the
+  // pre-extraction log line operators used to grep for.
+  try {
+    const parsed = new URL(chosenUrl);
+    const c = parsed.searchParams.get('c');
+    if (c) {
+      const parts = c.split('|');
+      if (parts.length >= 3) {
+        const decoded = Buffer.from(parts[2], 'base64').toString('utf8');
+        const inner = new URLSearchParams(decoded);
+        const size = inner.get('s') || '0';
+        console.error(`[apkeep-resolve] APKPure arm64-v8a variant for ${packageId}@${version}: ${size} bytes`);
+      }
     }
-  });
-  withSize.sort((a, b) => a.size - b.size);
+  } catch {
+    /* size logging is best-effort — never block on it */
+  }
 
-  const chosen = withSize[0];
-  console.error(`[apkeep-resolve] APKPure arm64-v8a variant for ${packageId}@${version}: ${chosen.size} bytes`);
-  return chosen.url;
+  return chosenUrl;
 }
 
 /**
@@ -672,6 +654,10 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
  */
 async function parallelResolveSources(packageId, version, opts = {}) {
   const sourceResolvers = opts.sourceResolvers || {};
+  // Source list is in priority order (apkeep > apkmirror-api >
+  // apkmirror). This order is the single source of truth for which
+  // resolver wins when several succeed — see the "Fixed priority
+  // order" comment below.
   const sources = [
     {
       name: 'apkeep',
@@ -698,30 +684,94 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   console.error(`[parallel-resolve] Starting parallel resolution for ${packageId} v${version}`);
   const startTime = Date.now();
 
-  const results = await Promise.allSettled(
-    sources.map(async (source) => {
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`${source.name} timeout`)), SOURCE_TIMEOUT)
-      );
-      return Promise.race([source.fn(), timeout]);
-    })
-  );
+  // Fixed priority order, NOT first-arrives-wins.
+  //
+  // The README phrasing "first valid URL wins" is misleading — the
+  // actual contract is "the highest-priority source whose promise
+  // resolved with a valid URL wins, with fall-through to the next
+  // source on failure." apkeep at index 0 is always preferred over
+  // apkmirror-api at index 1 even when apkmirror-api returns faster,
+  // because the apkeep URL is trusted to match the package/version
+  // semantically (apkeep is the canonical APKPure resolver; the
+  // apkmirror path is a Cloudflare-bypass fallback).
+  //
+  // Implementation: kick off every source's Promise.race
+  // (source.fn() vs SOURCE_TIMEOUT) in parallel up front so the JS
+  // event loop interleaves their I/O. Then iterate the resulting
+  // promises IN PRIORITY ORDER, awaiting each one. As soon as the
+  // highest-priority source settles with a valid URL we return it.
+  // If it fails (no URL, rejection, timeout) we fall through to
+  // the next-priority source.
+  //
+  // Why not Promise.any: Promise.any resolves to whichever promise
+  // fulfills first — that loses the priority order (apkmirror-api
+  // could win over apkeep just by being faster). The existing
+  // fallback-chain test suite pins apkeep-first ordering, so we
+  // keep allSettled semantics and just don't wait for all of them
+  // to settle before returning the priority-first winner.
+  //
+  // Why not the prior Promise.allSettled: that waited for every
+  // source to settle (or time out at SOURCE_TIMEOUT) before
+  // returning, so a hung low-priority source would delay the
+  // winner by up to SOURCE_TIMEOUT. The new shape consumes the
+  // priority-ordered promises one at a time — once the
+  // highest-priority source settles (success or failure), we
+  // either return or move on. Lower-priority sources that are
+  // still running are abandoned at function exit (their timers
+  // are cleared in the per-source finally block below).
 
-  const elapsed = Date.now() - startTime;
-  console.error(`[parallel-resolve] All sources completed in ${elapsed}ms`);
+  // Per-source promise: each races source.fn() against SOURCE_TIMEOUT,
+  // clears its own timer in the finally block (no orphan setTimeouts
+  // when a source resolves fast — same fix as commit 93c42e0).
+  //
+  // Rejections are caught and converted into a `{__rejected, ...}`
+  // sentinel so the caller's `await promises[i]` always resolves
+  // uniformly. Without this catch, an abandoned loser (its promise
+  // was kicked off in parallel but we returned early on a higher-
+  // priority winner) would surface as an unhandled rejection — the
+  // old Promise.allSettled shape absorbed those because allSettled
+  // never lets a rejection escape.
+  const promises = sources.map((source, index) => {
+    let timer;
+    return (async () => {
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${source.name} timeout`)),
+          SOURCE_TIMEOUT,
+        );
+      });
+      try {
+        return await Promise.race([source.fn(), timeoutPromise]);
+      } finally {
+        clearTimeout(timer);
+      }
+    })().catch((reason) => ({
+      __rejected: true,
+      index,
+      name: source.name,
+      reason,
+    }));
+  });
 
-  // Find first successful resolution
-  for (let i = 0; i < results.length; i++) {
-    const result = results[i];
+  // Iterate in priority order. Awaiting each promise sequentially
+  // consumes results in priority order; the underlying I/O runs in
+  // parallel because the promises were kicked off above.
+  for (let i = 0; i < sources.length; i += 1) {
     const sourceName = sources[i].name;
-
-    if (result.status === 'fulfilled' && result.value?.url) {
-      console.error(`[parallel-resolve] Winner: ${sourceName}`);
-      return { ...result.value, source: result.value.source || sourceName };
+    const result = await promises[i];
+    if (result && result.__rejected) {
+      const error = result.reason?.message || 'Unknown error';
+      console.error(`[parallel-resolve] ${sourceName} failed: ${error}`);
+      continue;
     }
-
-    const error = result.reason?.message || 'Unknown error';
-    console.error(`[parallel-resolve] ${sourceName} failed: ${error}`);
+    if (result && result.url) {
+      const elapsed = Date.now() - startTime;
+      console.error(`[parallel-resolve] Winner: ${sourceName} (after ${elapsed}ms)`);
+      return { ...result, source: result.source || sourceName };
+    }
+    // Result lacked a URL — treat as a failure of this source and
+    // fall through.
+    console.error(`[parallel-resolve] ${sourceName} failed: returned no URL`);
   }
 
   throw new Error('All sources failed to resolve URL');
@@ -816,78 +866,6 @@ function runCommand(cmd, args, options = {}) {
       settle(() => reject(err));
     });
   });
-}
-
-/**
- * Validate APK version matches expected version using aapt
- * Returns { valid: boolean, actualVersion: string }
- */
-function validateApkVersion(apkPath, expectedVersion, opts = {}) {
-  try {
-    const { execFileSync } = require("child_process");
-    const execFileSyncImpl = opts.execFileSyncImpl || execFileSync;
-
-    // Try using aapt or aapt2. Use execFileSync with argv arrays
-    // (matching the pattern already used in download-supported-apk.js
-    // and apk-abi-validator.js) so apkPath is never interpolated into
-    // a shell string — defense-in-depth for an untrusted download
-    // whose final filename originates upstream.
-    const aaptCmd = "aapt";
-    let output;
-    try {
-      output = execFileSyncImpl(aaptCmd, ["dump", "badging", apkPath], { encoding: "utf8" });
-    } catch (_e) {
-      // Try aapt2
-      try {
-        output = execFileSyncImpl("aapt2", ["dump", "badging", apkPath], { encoding: "utf8" });
-      } catch (e2) {
-        console.error(`[validate] No aapt available: ${e2.message}`);
-        return { valid: false, actualVersion: "unknown", error: "aapt not available - cannot validate version" };
-      }
-    }
-
-    // Extract versionName from output
-    const match = output.match(/versionName='([^']+)'/);
-    const actualVersion = match ? match[1] : null;
-
-    if (!actualVersion) {
-      console.error(`[validate] Could not extract version from APK`);
-      return { valid: false, actualVersion: "unknown", error: "could not extract version from APK" };
-    }
-
-    console.error(`[validate] APK version: ${actualVersion}, expected: ${expectedVersion}`);
-
-    if (actualVersion !== expectedVersion) {
-      console.error(`[validate] VERSION MISMATCH! Got ${actualVersion} but wanted ${expectedVersion}`);
-      return { valid: false, actualVersion, error: `version mismatch: got ${actualVersion}, wanted ${expectedVersion}` };
-    }
-
-    return { valid: true, actualVersion };
-  } catch (e) {
-    console.error(`[validate] Error validating APK: ${e.message}`);
-    return { valid: false, actualVersion: "unknown", error: e.message };
-  }
-}
-
-/**
- * Find downloaded APK in output directory
- */
-function findApkFile(outputDir) {
-  if (!fs.existsSync(outputDir)) {
-    return null;
-  }
-  const extensions = [".apk", ".xapk", ".apkm"];
-  const files = fs.readdirSync(outputDir);
-
-  for (const file of files) {
-    const lower = file.toLowerCase();
-    for (const ext of extensions) {
-      if (lower.endsWith(ext)) {
-        return path.join(outputDir, file);
-      }
-    }
-  }
-  return null;
 }
 
 /**
@@ -1407,7 +1385,9 @@ async function resolveApkmirrorUrl(apkmirrorPath, version) {
  * Main download function with improved reliability:
  * 1. Check URL cache -> if valid, use directly
  * 2. Check patches.json -> if has URL, verify and use
- * 3. Parallel resolution -> first valid URL wins
+ * 3. Parallel resolution (priority-ordered: apkeep → apkmirror-api →
+ *    apkmirror; first valid URL wins, fall through on failure or
+ *    timeout — see parallelResolveSources header comment)
  * 4. Download from URL
  * 5. Save to cache on success
  * 6. Fallback to sequential on all parallel fail
@@ -1573,6 +1553,12 @@ module.exports = {
   // its timeout-cancellation + custom-error contracts without
   // driving the full downloader.
   runCommand,
+  // For testing: verifyUrl is called internally by download() to
+  // HEAD-probe a cached URL. Exported here so
+  // __tests__/unified-downloader-timers.test.js can pin that the
+  // urlVerify AbortController timer is cleared on every exit path
+  // (success, fetch rejection, timeout).
+  verifyUrl,
   // Exported for the cleanup-on-failure unit tests
   // (__tests__/unified-downloader-cleanup.test.js). They exercise the
   // post-download validation paths in isolation rather than driving
