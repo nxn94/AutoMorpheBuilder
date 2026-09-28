@@ -270,10 +270,9 @@ async function verifyUrl(url) {
   // direct URL from patches.json that the user authored). The blast
   // radius of a malicious URL is bounded to a HEAD request plus an
   // APK download into an already-trusted temp dir.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
-
     // codeql[js/file-access-to-http] reason: `url` is a HEAD-probe for
     // a cached APK download URL from Morphe's patches-list.json or the
     // user's own patches.json. Blast radius is bounded to a HEAD
@@ -284,13 +283,21 @@ async function verifyUrl(url) {
       redirect: 'follow'
     });
 
-    clearTimeout(timeout);
     const isValid = response.ok;
     console.error(`[url-cache] URL verify: ${isValid ? 'valid' : 'invalid'} (${response.status})`);
     return isValid;
   } catch (e) {
     console.error(`[url-cache] URL verify failed: ${e.message}`);
     return false;
+  } finally {
+    // clearTimeout must run on every path: success, fetch rejection,
+    // AND the `return isValid` short-circuit above. Without the
+    // finally, a successful early return leaves the AbortController
+    // timer armed for the full `urlVerify` ceiling (5s default) — a
+    // slow leak across every cache hit. clearTimeout on an already-
+    // fired timer is a no-op, so this is also safe when the
+    // timeout itself fired and aborted fetch.
+    clearTimeout(timeout);
   }
 }
 
@@ -700,10 +707,26 @@ async function parallelResolveSources(packageId, version, opts = {}) {
 
   const results = await Promise.allSettled(
     sources.map(async (source) => {
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`${source.name} timeout`)), SOURCE_TIMEOUT)
-      );
-      return Promise.race([source.fn(), timeout]);
+      // Per-source timeout timer is captured so it can be cleared
+      // when the source's own promise wins the race. Without this,
+      // a fast source (e.g. apkeep returning in 200ms) leaves the
+      // 60s `SOURCE_TIMEOUT` timer armed for the full window — a
+      // slow leak across every parallel-resolve invocation.
+      let timer;
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${source.name} timeout`)),
+          SOURCE_TIMEOUT,
+        );
+      });
+      try {
+        return await Promise.race([source.fn(), timeoutPromise]);
+      } finally {
+        // clearTimeout is a no-op when the timer already fired
+        // (timeout-rejected race), so this is safe in both
+        // branches of the race.
+        clearTimeout(timer);
+      }
     })
   );
 
@@ -1573,6 +1596,12 @@ module.exports = {
   // its timeout-cancellation + custom-error contracts without
   // driving the full downloader.
   runCommand,
+  // For testing: verifyUrl is called internally by download() to
+  // HEAD-probe a cached URL. Exported here so
+  // __tests__/unified-downloader-timers.test.js can pin that the
+  // urlVerify AbortController timer is cleared on every exit path
+  // (success, fetch rejection, timeout).
+  verifyUrl,
   // Exported for the cleanup-on-failure unit tests
   // (__tests__/unified-downloader-cleanup.test.js). They exercise the
   // post-download validation paths in isolation rather than driving
