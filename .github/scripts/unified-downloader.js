@@ -43,6 +43,7 @@ const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
+const { pickSmallestMatchingVariant } = require('../../src/download/apkeep-variant');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -353,63 +354,35 @@ async function resolveApkeepVariant(packageId, version) {
 
   const body = await response.text();
 
-  // Extract every XAPK download URL APKPure returned for this package.
-  // The protobuf body is ~400KB of mixed metadata; the URLs are
-  // embedded inline (verified by greping the actual response bytes).
-  const allUrls = body.match(/https?:\/\/download\.pureapk\.com\/b\/XAPK\/[^"\s\\]+/g) || [];
-
-  // APKPure's URLs encode the version INSIDE the `c` query param as
-  // pipe-separated base64-encoded URL-encoded params. The outer param
-  // shape is `c=<counter>|<category>|<base64(rest)>` where the base64
-  // decodes to `dev=<name>&t=<type>&s=<size>&vn=<version>&vc=<version_code>`.
-  // Example inner payload:
-  //   c=1|SPORTS|ZGV2PVNvZmFzY29yZSZ0PXhhcGsmcz01NzcwMzk2MyZ2bj0yNi4wOC4wMyZ2Yz0yNjA4MDMwMDI
-  //   → base64 decode → "dev=Sofascore&t=xxapk&s=57703963&vn=26.08.03&vc=260803002"
-  //
-  // The matcher strips any non-printable bytes that leak past the URL
-  // boundary (the protobuf response is binary — the URL is followed by
-  // framing bytes like `d2 01 f8 01 0a` that the regex preserves).
-  const cleanedUrls = allUrls.map((u) => u.replace(/[^\x20-\x7e]/g, ''));
-  const matching = cleanedUrls.filter((u) => {
-    try {
-      const parsed = new URL(u);
-      const c = parsed.searchParams.get('c');
-      if (!c) return false;
-      const parts = c.split('|');
-      // parts[0] = counter, parts[1] = category, parts[2] = base64 rest
-      if (parts.length < 3) return false;
-      const decoded = Buffer.from(parts[2], 'base64').toString('utf8');
-      const innerParams = new URLSearchParams(decoded);
-      return innerParams.get('vn') === version;
-    } catch {
-      return false;
-    }
-  });
-
-  if (matching.length === 0) {
+  // URL/variant-selection logic (regex match, base64 `c` param
+  // decode, version filter, size-based pick) lives in
+  // src/download/apkeep-variant.js so it can be unit-tested
+  // without standing up the protobuf endpoint. The downloader
+  // keeps only the network call and the size logging here.
+  const chosenUrl = pickSmallestMatchingVariant(body, version);
+  if (!chosenUrl) {
     throw new Error(`No APKPure XAPK URLs found for ${packageId}@${version}`);
   }
 
-  // Sort by declared size (smallest first). The arm64-v8a variant is
-  // consistently the smallest of the three per-app variants.
-  const withSize = matching.map((u) => {
-    try {
-      const parsed = new URL(u);
-      const c = parsed.searchParams.get('c');
-      const innerParams = new URLSearchParams(Buffer.from(c.split('|')[2], 'base64').toString('utf8'));
-      return {
-        url: u,
-        size: parseInt(innerParams.get('s') || '0', 10),
-      };
-    } catch {
-      return { url: u, size: 0 };
+  // Log the chosen size for observability — this mirrors the
+  // pre-extraction log line operators used to grep for.
+  try {
+    const parsed = new URL(chosenUrl);
+    const c = parsed.searchParams.get('c');
+    if (c) {
+      const parts = c.split('|');
+      if (parts.length >= 3) {
+        const decoded = Buffer.from(parts[2], 'base64').toString('utf8');
+        const inner = new URLSearchParams(decoded);
+        const size = inner.get('s') || '0';
+        console.error(`[apkeep-resolve] APKPure arm64-v8a variant for ${packageId}@${version}: ${size} bytes`);
+      }
     }
-  });
-  withSize.sort((a, b) => a.size - b.size);
+  } catch {
+    /* size logging is best-effort — never block on it */
+  }
 
-  const chosen = withSize[0];
-  console.error(`[apkeep-resolve] APKPure arm64-v8a variant for ${packageId}@${version}: ${chosen.size} bytes`);
-  return chosen.url;
+  return chosenUrl;
 }
 
 /**
