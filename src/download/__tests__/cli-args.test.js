@@ -22,7 +22,32 @@ describe('download/cli-args', () => {
       example: USAGE_EXAMPLE,
     });
     expect(parseArgs([])).toMatchObject({ error: USAGE_ERROR });
+  });
+
+  test('falls back to process.argv when called with no argument', () => {
+    // parseArgs() with no argument defaults to process.argv.slice(2),
+    // which under Jest is Jest's own CLI flags. The test must stub
+    // process.argv explicitly so the default-branch contract is
+    // exercised deterministically — without the stub, the assertion
+    // below would either pass or fail depending on how Jest itself
+    // was launched (e.g. `npx jest foo.test.js` has 2 trailing args,
+    // which trips the "fewer than 3 args" usage error).
+    jest.replaceProperty(process, 'argv', ['node', 'script']);
+
+    // Empty argv → usage error (the default branch reached the
+    // fallback slice, found nothing, returned the error envelope).
     expect(parseArgs()).toMatchObject({ error: USAGE_ERROR });
+
+    // Three valid args → parsed normally through the same fallback
+    // path. This pins that the default-branch code path matches the
+    // explicit-argv path on real CLI input shape.
+    jest.replaceProperty(process, 'argv',
+      ['node', 'script', 'com.x', '1.0.0', './downloads']);
+    expect(parseArgs()).toEqual({
+      packageId: 'com.x',
+      version: '1.0.0',
+      outputDir: './downloads',
+    });
   });
 
   test('rejects a package_id without a dot', () => {
