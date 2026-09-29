@@ -31,7 +31,6 @@ const execFile = jest.fn((file, args, ...rest) => {
     : file;
   return childProcess.execFile(command, args, ...rest);
 });
-const spawn = jest.fn((...args) => childProcess.spawn(...args));
 const execFileSync = jest.fn((file, args, ...rest) => {
   if (file === 'aapt') {
     return fs.readFileSync(
@@ -70,7 +69,7 @@ function installFixtureTools() {
 }
 
 function fixtureUrl(fileName) {
-  return `file://${path.join(fixtureRoot, 'apk-metadata', fileName)}`;
+  return `https://example.invalid/fixtures/${fileName}`;
 }
 
 function fixtureApiResponse() {
@@ -352,24 +351,40 @@ describe('download() fallback chain', () => {
     );
 
     // verifyUrl is HEAD-based; make it return true (url is "valid").
+    // verifyUrl now requires protocol=https: (CodeQL file-access-to-http
+    // sanitisation — see comment in verifyUrl's body). The URL above is
+    // already https so this stub still approves it; only file:// would
+    // be rejected now.
     global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200 }));
 
-    // downloadWithUrl uses a real curl subprocess. The local forwarding
-    // shim keeps the original spawn call-count assertion while writing
-    // the sanitized APK placeholder.
+    // downloadWithUrl shells out to curl with the cached URL. The
+    // contract under test is "cache hit short-circuits the rest", not
+    // curl semantics — replace the spawnImpl with a shim that copies
+    // the placeholder to the expected target so the test doesn't
+    // depend on real network egress or curl's file:// support.
     const cachedFixture = path.join(fixtureRoot, 'apk-metadata', 'placeholder.apk');
     const target = path.join(apksDir, `${PKG}_${VER}.apk`);
     const resultOfCopy = childProcess.spawnSync('cp', [cachedFixture, target], { encoding: 'utf8' });
     expect(resultOfCopy.status).toBe(0);
 
+    const cachedSpawn = jest.fn((cmd, args, opts) => {
+      // Mimic curl -o <target>: copy the fixture into place, then fire
+      // the close event with exit code 0 so downloadWithUrl proceeds.
+      fs.copyFileSync(cachedFixture, target);
+      const child = childProcess.spawn('true', [], { ...opts });
+      // childProcess.spawn's return is a ChildProcess; we don't need its
+      // stdout/stderr here because downloadWithUrl only watches 'close'.
+      return child;
+    });
+
     const result = await download(PKG, VER, apksDir, {
-      spawnImpl: spawn,
+      spawnImpl: cachedSpawn,
       execFileSyncImpl: execFileSync,
     });
     expect(result.success).toBe(true);
     // A real spawn was called exactly once (cache-hit download), not for
     // any other path.
-    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(cachedSpawn).toHaveBeenCalledTimes(1);
     // apkeep / apkmirror-api / parallel resolve must NOT have been tried.
     expect(execFile).not.toHaveBeenCalled();
     // fetch was used for verifyUrl HEAD only (one call); the parallel

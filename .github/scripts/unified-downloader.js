@@ -267,20 +267,43 @@ async function verifyUrl(url) {
     throw new Error('URL is required');
   }
 
-  // codeql[js/file-access-to-http] reason: `url` is a HEAD-probe for a
-  // cached APK download URL. The cache file itself is written only by
-  // this module from Morphe's published morphe-patches releases (or
-  // direct URL from patches.json that the user authored). The blast
-  // radius of a malicious URL is bounded to a HEAD request plus an
-  // APK download into an already-trusted temp dir.
+  // Sanitize the URL string before it leaves the local trust boundary.
+  //
+  // verifyUrl is called with a URL string that originates from a
+  // file read (cache.js reads ~/.cache/auto-morphe-builder/urls/*.json,
+  // config.js reads config.json download_urls). CodeQL flags the
+  // file → fetch edge as `js/file-access-to-http` even though the
+  // cache file is only ever written by this module from a successful
+  // resolver round-trip — the taint flow is real (file data reaches
+  // a network sink) and defense-in-depth wants a sanitiser here
+  // anyway.
+  //
+  // The fix is to round-trip the URL through the WHATWG URL parser
+  // (new URL()) and require protocol=https:, then pass
+  // `parsed.toString()` (not the raw input) into fetch. new URL()
+  // is the recognised CodeQL sanitiser for the
+  // js/file-access-to-http query — the flow becomes
+  // "string → parsed URL → re-stringified URL → fetch" instead of
+  // "string → fetch", and the protocol gate blocks any non-https
+  // scheme that might have landed there via a tampered cache file
+  // or a misauthored config.json entry.
+  let safeUrl;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      console.error(`[url-cache] URL verify rejected: non-https scheme "${parsed.protocol}"`);
+      return false;
+    }
+    safeUrl = parsed.toString();
+  } catch (e) {
+    console.error(`[url-cache] URL verify rejected: unparseable URL (${e.message})`);
+    return false;
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUTS.urlVerify);
   try {
-    // codeql[js/file-access-to-http] reason: `url` is a HEAD-probe for
-    // a cached APK download URL from Morphe's patches-list.json or the
-    // user's own patches.json. Blast radius is bounded to a HEAD
-    // request plus an APK download into a user-owned temp dir.
-    const response = await fetch(url, {
+    const response = await fetch(safeUrl, {
       method: 'HEAD',
       signal: controller.signal,
       redirect: 'follow'
