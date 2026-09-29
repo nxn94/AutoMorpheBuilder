@@ -76,6 +76,54 @@ describe('unified-downloader timer hygiene', () => {
     });
   });
 
+  describe('verifyUrl URL validation (CodeQL file-access-to-http fix)', () => {
+    // verifyUrl now sanitises the URL through `new URL()` and requires
+    // protocol === 'https:' before issuing the HEAD probe. This breaks
+    // the file → fetch taint flow that CodeQL flagged as alert #37.
+    // The four cases pin the contract: only https URLs reach fetch(),
+    // every other shape is rejected up-front (no HEAD request, no
+    // orphan timer — clearTimeout runs in the implicit finally).
+    //
+    // The outer describe's afterEach resets jest timers and globalThis.fetch
+    // between tests, so we don't redeclare it here.
+
+    test('rejects non-https schemes (http://) without calling fetch', async () => {
+      globalThis.fetch = jest.fn();
+      const result = await verifyUrl('http://example.com/foo.apk');
+      expect(result).toBe(false);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    test('rejects non-https schemes (file://) without calling fetch', async () => {
+      globalThis.fetch = jest.fn();
+      const result = await verifyUrl('file:///etc/passwd');
+      expect(result).toBe(false);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    test('rejects malformed URLs without calling fetch', async () => {
+      globalThis.fetch = jest.fn();
+      // Missing scheme + unparseable by WHATWG.
+      const result = await verifyUrl('not a url with spaces');
+      expect(result).toBe(false);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    test('accepts https URLs and passes the re-stringified form to fetch', async () => {
+      // Verify the URL that reaches fetch is parsed-and-reserialised
+      // (the canonicalised form), not the raw input. This is the
+      // CodeQL-recognised sanitisation: new URL() → toString() → fetch.
+      globalThis.fetch = jest.fn(async () => ({ ok: true, status: 200 }));
+      await verifyUrl('https://example.com/foo.apk');
+      expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+      const calledUrl = globalThis.fetch.mock.calls[0][0];
+      // WHATWG normalises trivial cases; the key invariant is that
+      // the URL passed to fetch starts with https:// and contains
+      // the original host.
+      expect(calledUrl.startsWith('https://example.com/')).toBe(true);
+    });
+  });
+
   describe('parallelResolveSources', () => {
     test('clears the per-source timer when a fast source wins the race', async () => {
       // The pre-fix bug: a fast apkeep resolution (a few ms) would

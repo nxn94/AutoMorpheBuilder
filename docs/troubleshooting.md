@@ -233,6 +233,26 @@ If you see this symptom on a deployment that hasn't picked up this version of `f
 
 ---
 
+## `verifyUrl` rejects the cached URL
+
+**Symptom:** the build skips a known-good cached APK with a log line like `[url-cache] URL verify rejected: non-https scheme "http:"` or `[url-cache] URL verify rejected: unparseable URL (...)`, and the resolver falls through to the next source.
+
+**Cause:** `verifyUrl()` (in `.github/scripts/unified-downloader.js`) now sanitises the URL through `new URL()` and requires `protocol === 'https:'` before issuing the HEAD probe. Any cached URL written before this change — or written by a manual edit to `config.json` `download_urls` — is rejected if it is not a parseable `https://` URL.
+
+**Fix:**
+
+1. Delete the stale cache entry so the resolver rebuilds it on the next run:
+
+   ```bash
+   rm -f ~/.cache/auto-morphe-builder/urls/<pkg>_<ver>.json
+   ```
+
+2. If `config.json` `download_urls` is the source of the bad URL, edit it to use `https://` (the resolver only writes `https://` URLs on its own, so a non-https here was almost certainly hand-edited).
+
+The HEAD probe will not run on any non-https URL — even a tampered cache file can't redirect the downloader to `http://internal-server/...`. CodeQL alert #37 (`js/file-access-to-http` on `unified-downloader.js`) is the audit trail for this contract.
+
+---
+
 ## Reporting a new failure
 
 If you hit a failure not listed here:
