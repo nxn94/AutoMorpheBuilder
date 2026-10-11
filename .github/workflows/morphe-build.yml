@@ -59,14 +59,11 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '24'
+          cache: npm
 
       - name: Install dependencies
         # PR 3: npm ci installs ajv (devDep) used by the validate
-        # step below. Gated nowhere — a bad config must fail here
-        # before any morphe-desktop or APK download. The later
-        # `should-build`-gated npm ci (and node_modules artifact
-        # upload) downstream remain for the build matrix; this
-        # install is local-only for validation.
+        # step below. Installed once and reused throughout this job.
         run: npm ci
 
       - name: Validate configuration
@@ -125,14 +122,6 @@ jobs:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
         run: bash .github/scripts/pipeline/download_morphe_tools.sh
 
-      - name: Cache patches .mpp
-        # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: |
-            tools/*.mpp
-          key: morphe-patches-${{ steps.check.outputs.cli-version }}-repos-${{ hashFiles('config.json') }}
-
       - name: Compat probe (per-app runtime check)
         # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
         id: compat
@@ -156,30 +145,9 @@ jobs:
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           TOOLS_DIR: tools
+          CLI_VERSION: ${{ steps.check.outputs.cli-version }}
           FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' }}
         run: bash .github/scripts/pipeline/check_existing_releases.sh
-
-      - name: Setup Node.js
-        if: steps.filter.outputs.should-build == 'true'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        if: steps.filter.outputs.should-build == 'true'
-        run: npm ci
-
-      - name: Upload node_modules for build jobs
-        # Avoids re-running npm ci in each build matrix entry. The
-        # lockfile content is identical for every matrix entry so this
-        # is a safe shortcut.
-        if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
-        with:
-          name: node-modules
-          path: node_modules
-          retention-days: 1
-          if-no-files-found: error
 
       - name: Cache Playwright browsers
         if: steps.filter.outputs.should-build == 'true'
@@ -195,14 +163,6 @@ jobs:
         env:
           PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
         run: bash .github/scripts/pipeline/install_playwright.sh
-
-      - name: Upload Playwright browsers for build jobs
-        if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
-        with:
-          name: playwright-browsers
-          path: ~/.cache/ms-playwright
-          retention-days: 1
 
       - name: Cache apkeep
         id: cache-apkeep
@@ -231,11 +191,21 @@ jobs:
           ANDROID_HOME: /tmp/android-sdk
         run: bash .github/scripts/pipeline/install_aapt.sh
 
+      - name: Cache resolved APK URLs
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/auto-morphe-builder/urls
+          key: apk-urls-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: apk-urls-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+
       - name: Pre-download APKs (parallel)
         id: download-apks
         if: steps.filter.outputs.should-build == 'true'
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+          APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
+          APKMIRROR_API_PASS: ${{ secrets.APKMIRROR_API_PASS }}
           SKIP_LIST: ${{ steps.filter.outputs.skip-list }}
           ANDROID_HOME: /tmp/android-sdk
           ANDROID_BUILD_TOOLS_VERSION: ${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
@@ -247,10 +217,10 @@ jobs:
         with:
           name: pre-downloaded-apks
           path: |
-            tools/apks/*.apk
-            tools/apks/*.xapk
-            tools/apks/*.apkm
-            tools/apks/*.apks
+            tools/apks/**/*.apk
+            tools/apks/**/*.xapk
+            tools/apks/**/*.apkm
+            tools/apks/**/*.apks
           retention-days: 1
           if-no-files-found: ignore
 
@@ -290,10 +260,6 @@ jobs:
       CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
       CLI_REPO: ${{ needs.check-versions.outputs.cli-repo }}
       KEYSTORE_FILE: tools/source.keystore
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
     steps:
       - name: Checkout
@@ -318,7 +284,7 @@ jobs:
             echo "✓ $tool found: $(command -v "$tool")"
           done
 
-      - name: Restore apkeep + Playwright from check-versions
+      - name: Restore apkeep from check-versions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: apkeep-binary
@@ -329,21 +295,8 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
           name: pre-downloaded-apks
-          # The artifact zip has a `tools/apks/` path prefix (uploaded as
-          # `tools/apks/*.apk` from check-versions). Downloading to
-          # `$TOOLS_DIR` would extract to `./tools/tools/apks/*` (double
-          # prefix) and neither findCachedApk(APKS_DIR) at line 333 nor
-          # findCachedApk(TOOLS_DIR) at line 364 would see them.
-          # Downloading to `$TOOLS_DIR/apks` strips the prefix and lands
-          # the files where download-supported-apk.js expects them.
+          # Preserve package subdirectories beneath tools/apks/.
           path: ${{ env.TOOLS_DIR }}/apks
-        continue-on-error: true
-
-      - name: Restore Playwright browsers from check-versions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
-        with:
-          name: playwright-browsers
-          path: ~/.cache/ms-playwright
         continue-on-error: true
 
       - name: Prepare build dirs
@@ -353,25 +306,10 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
         with:
           node-version: '24'
+          cache: npm
 
-      - name: Restore node_modules from check-versions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
-        with:
-          name: node-modules
-          path: node_modules
-        continue-on-error: true
-
-      - name: Install Node dependencies (fallback if restore failed)
-        run: |
-          if [ ! -d node_modules ] || [ ! -d node_modules/playwright ]; then
-            echo "::warning::node_modules restore failed; running npm ci as fallback"
-            npm ci
-          fi
-
-      - name: Install Playwright browsers (fallback if missing)
-        env:
-          PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
-        run: bash .github/scripts/pipeline/install_playwright.sh
+      - name: Install runtime dependencies
+        run: npm ci --omit=dev
 
       - name: Ensure apkeep is available
         run: |
@@ -429,6 +367,7 @@ jobs:
           PATCH_REPO: ${{ matrix.patchRepo }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
           PINNED_VERSION: ${{ steps.targetver_prep.outputs.pinned }}
+          RESOLVED_VERSION: ${{ matrix.targetVersion }}
         run: bash scripts/resolve-target-version.sh
 
       - name: Cache APK for ${{ matrix.appId }}
@@ -445,10 +384,38 @@ jobs:
           ANDROID_HOME: /tmp/android-sdk
         run: bash .github/scripts/pipeline/install_aapt.sh
 
+      - name: Restore resolved APK URLs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/auto-morphe-builder/urls
+          key: apk-urls-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Check local download inputs
+        id: local-apk
+        env:
+          TARGET_VERSION: ${{ steps.targetver.outputs.version }}
+          APP_ID: ${{ matrix.appId }}
+        run: node .github/scripts/local-download-input.js
+
+      - name: Cache fallback browsers
+        if: steps.local-apk.outputs.present != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-chromium-${{ hashFiles('package.json', 'package-lock.json') }}
+
+      - name: Install fallback browsers
+        if: steps.local-apk.outputs.present != 'true'
+        env:
+          PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST: https://storage.googleapis.com/chrome-for-testing-public
+        run: bash .github/scripts/pipeline/install_playwright.sh
+
       - name: Download supported APK for ${{ matrix.appId }}
         id: getapk
         env:
           APP_ID: ${{ matrix.appId }}
+          APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
+          APKMIRROR_API_PASS: ${{ secrets.APKMIRROR_API_PASS }}
           TARGET_VERSION: ${{ steps.targetver.outputs.version }}
           TARGET_VERSIONS: ${{ steps.targetver.outputs.versions }}
           APKS_DIR: ${{ env.APKS_DIR }}
@@ -511,10 +478,12 @@ jobs:
           OUT_DIR: ${{ env.OUT_DIR }}
           APKS_DIR: ${{ env.APKS_DIR }}
           RUNNER_TEMP: ${{ runner.temp }}
+          ANDROID_HOME: /tmp/android-sdk
+          ANDROID_BUILD_TOOLS_VERSION: ${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
           KEYSTORE_FILE: ${{ env.KEYSTORE_FILE }}
-          KEYSTORE_PASSWORD: ${{ env.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ env.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ env.KEY_PASSWORD }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: bash .github/scripts/pipeline/patch_apk.sh
 
       - name: Upload signed patched ${{ matrix.name }}
@@ -527,6 +496,8 @@ jobs:
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
           path: out/${{ steps.patch.outputs.output }}
+          retention-days: 3
+          compression-level: 0
 
   create-release:
     needs: [check-versions, build]

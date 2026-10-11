@@ -1,30 +1,7 @@
 #!/usr/bin/env bash
-#
-# scripts/create_release.sh — group patched APKs by app and publish one
-# GitHub Release per app via `gh release`.
-#
-# Replaces the ~80-line `run:` block in the workflow's "Create per-app
-# releases" step. Behaviour is identical:
-#   1. Group downloaded APKs by app prefix (everything before "-v").
-#   2. For each app, derive the release tag from the APK filename:
-#        <app>-<base-version>-<patches-version>
-#      e.g. youtube-v20.44.38-v1.24.0-dev.8
-#   3. Generate the release notes (title, version block, Obtainium
-#      instructions with the required -v filter).
-#   4. If the release exists, upload any new assets with retry + skip
-#      already-attached. If it doesn't, create it.
-#   5. Generate a SHA256SUMS file next to the APKs, verify it via
-#      `sha256sum --check`, and upload it alongside the APK assets.
-#      Downstream consumers (Obtainium, manual curators) can use this
-#      to confirm the APK they downloaded matches the one the workflow
-#      built (see docs/checksums.md).
-#
-# Environment:
-#   APKS_DIR         required  where patched APKs land (download-artifact dest)
-#   CLI_VERSION      required  CLI tag (e.g. v1.9.1)
-#   CLI_BRANCH       required  CLI branch (main or dev)
-#   REPO_VERSIONS    required  JSON object {repo: tag} for the notes
-#   GH_TOKEN         required  GitHub token with release permissions
+# Publish per-app signed APKs, SHA256SUMS and build-inputs.json.
+# Existing assets are replaced, including on forced builds. The build-input
+# marker is restored only after all replacement uploads succeed.
 
 set -Eeuo pipefail
 
@@ -71,6 +48,8 @@ PATCHES_SUMMARY="$(
   printf '%s' "$REPO_VERSIONS" | jq -r 'to_entries | map("- \(.key): \(.value)") | join("\n")'
 )"
 
+FINGERPRINTS="$(node "$(dirname "$0")/../build-fingerprint.js")"
+
 # --- publish each app's release -------------------------------------------
 
 for app_name in "${APPS[@]}"; do
@@ -78,7 +57,7 @@ for app_name in "${APPS[@]}"; do
   first_apk="${apk_files[0]}"
   apk_basename="$(basename "$first_apk" .apk)"
   # version_str = everything after "<name>-": e.g. "v20.44.38-v1.24.0-dev.8"
-  version_str="$(printf '%s' "$apk_basename" | sed -E 's/^[^-]+-//')"
+  version_str="${apk_basename#"$app_name"-}"
 
   TAG="${app_name}-${version_str}"
   TITLE="${app_name} ${version_str}"
@@ -97,16 +76,15 @@ for app_name in "${APPS[@]}"; do
     "- **Release tag filter:** \`^${app_name}\`" \
   )"
 
+  digest="$(jq -r --arg name "$app_name" '.[$name] // empty' <<<"$FINGERPRINTS")"
+  [ -n "$digest" ] || { log_error "No fingerprint for $app_name"; exit 1; }
+  RELEASE_NOTES+=$'\n'"<!-- build-input:${digest} -->"
+
   if gh release view "$TAG" >/dev/null 2>&1; then
-    log "Release $TAG exists; uploading assets."
+    log "Release $TAG exists; replacing assets."
+    gh release edit "$TAG" --notes "Build replacement in progress; provenance will be restored after all uploads succeed."
     for apk in "${apk_files[@]}"; do
       apk_name="$(basename "$apk")"
-      # Skip if already attached; --clobber would 422 in that case.
-      if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null \
-        | grep -Fxq "$apk_name"; then
-        log "  $apk_name already attached; skipping."
-        continue
-      fi
       uploaded=false
       for try in 1 2 3 4 5; do
         if gh release upload "$TAG" "$apk" --clobber; then
@@ -121,12 +99,11 @@ for app_name in "${APPS[@]}"; do
         exit 1
       fi
     done
-    gh release edit "$TAG" --title "$TITLE" --notes "$RELEASE_NOTES"
   else
     log "Creating release $TAG..."
     gh release create "$TAG" "${apk_files[@]}" \
       --title "$TITLE" \
-      --notes "$RELEASE_NOTES"
+      --notes "Build publication in progress; provenance will be attached after all uploads succeed."
   fi
 
   # Per-release integrity manifest. Generate SHA256SUMS in the APK
@@ -155,26 +132,26 @@ for app_name in "${APPS[@]}"; do
       log_error "SHA256SUMS self-test failed for $TAG"
       exit 1
     fi
-    if gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null \
-      | grep -Fxq "SHA256SUMS"; then
-      log "  SHA256SUMS already attached; skipping."
-    else
-      uploaded=false
-      for try in 1 2 3 4 5; do
-        if gh release upload "$TAG" "$sha256_dir/SHA256SUMS" --clobber; then
-          uploaded=true
-          break
-        fi
-        log_warn "  SHA256SUMS upload attempt $try failed; retrying in 3s..."
-        sleep 3
-      done
-      if [ "$uploaded" != "true" ]; then
-        log_error "Failed to upload SHA256SUMS to release $TAG after 5 attempts."
-        exit 1
+    uploaded=false
+    for try in 1 2 3 4 5; do
+      if gh release upload "$TAG" "$sha256_dir/SHA256SUMS" --clobber; then
+        uploaded=true
+        break
       fi
-      log "  SHA256SUMS uploaded"
+      log_warn "  SHA256SUMS upload attempt $try failed; retrying in 3s..."
+      sleep 3
+    done
+    if [ "$uploaded" != "true" ]; then
+      log_error "Failed to upload SHA256SUMS to release $TAG after 5 attempts."
+      exit 1
     fi
+    log "  SHA256SUMS uploaded"
   fi
 
+  provenance="$APKS_DIR/build-inputs.json"
+  jq -n --arg fingerprint "$digest" --arg cli "$CLI_VERSION" --arg tag "$TAG" \
+    '{fingerprint: $fingerprint, cliVersion: $cli, releaseTag: $tag}' > "$provenance"
+  with_retry 5 3 gh release upload "$TAG" "$provenance" --clobber
+  gh release edit "$TAG" --title "$TITLE" --notes "$RELEASE_NOTES"
   log "::notice::Published release: ${TAG}"
 done

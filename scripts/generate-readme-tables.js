@@ -54,7 +54,7 @@ function main() {
     // byte-identical to the current README, we are in sync.
     const expected = spliceReadmeBlocks(readme, testedApps, obtainium);
     if (expected === readme) {
-      process.stdout.write('README tables are up to date.\n');
+      fs.writeSync(process.stdout.fd, 'README tables are up to date.\n');
       process.exit(0);
     }
     process.stderr.write('README tables are OUT OF DATE. Regenerate with:\n');

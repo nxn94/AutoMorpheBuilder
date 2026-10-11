@@ -37,7 +37,7 @@ done
 pin="$(pinned_version "$APP_ID" 2>/dev/null || true)"
 if [ -z "$pin" ] || [ "$pin" = "null" ]; then pin=""; fi
 
-jar="$(ls -1 "$TOOLS_DIR"/morphe-desktop-*-all.jar 2>/dev/null | head -n1 || true)"
+jar="$TOOLS_DIR/morphe-desktop.jar"
 if [ -z "$jar" ]; then jar=""; fi
 
 url="$(jq -r --arg pkg "$APP_ID" '.download_urls?[$pkg]?["latest_supported"] // empty' "$CONFIG_FILE" 2>/dev/null || true)"

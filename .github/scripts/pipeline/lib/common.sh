@@ -73,8 +73,9 @@ with_retry() {
   while true; do
     if "$@"; then
       return 0
+    else
+      local rc=$?
     fi
-    local rc=$?
     if [ "$attempt" -ge "$max_attempts" ]; then
       return "$rc"
     fi

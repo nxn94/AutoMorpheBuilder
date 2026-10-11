@@ -263,3 +263,15 @@ Shape:
   "download_urls":   { /* see file */ }
 }
 ```
+
+## Independent release selectors
+
+Each app resolves its own `(repo, branch, pin_patch_tag)` selection. Apps sharing
+an upstream repository can use `main`, `dev`, and explicit tags simultaneously.
+Only apps with the same resolved repository/tag share a downloaded patches bundle.
+Patch synchronization uses the same selection and preserves existing Boolean
+choices, including when an app moves repositories or upstream metadata is unavailable.
+Adding a package under an existing repository also triggers initial toggle seeding.
+
+`auto_update_urls: false` disables config URL write-back. The separate bounded URL
+cache can still speed up resolution; cached URLs and the final APK remain validated.

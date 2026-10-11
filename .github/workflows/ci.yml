@@ -13,24 +13,15 @@ name: CI
 # user's commit (which doesn't have the update yet) and fail — a brief
 # red run that's later overwritten by a green run on the auto-commit.
 #
-# Two changes eliminate that race entirely:
-#   1. `paths-ignore: ['config.json']` on the `push` trigger — CI does
-#      NOT run from `push` when `config.json` is in the diff; the
-#      workflow is then picked up by the `workflow_run` listener below.
-#   2. `workflow_run` trigger listening for `update-patches.yml`
-#      completion on main. It checks out the branch TIP (which already
-#      includes the auto-commit when update-patches succeeded) and runs
-#      the full check. So CI never sees an out-of-sync README.
-#
-# `paths-ignore` only excludes pushes where `config.json` changed; pure
-# code or docs pushes still go through the normal `push` path. For PRs
-# (which don't trigger update-patches), the strict `check:readme` runs
-# as usual and forces authors to commit a regen themselves.
+# A config-only push is deferred to workflow_run after table generation.
+# Mixed config/code pushes still run normal CI and must include regenerated
+# README tables. The follow-up run checks the trusted main branch tip, including
+# generated changes; it is a validation of that tip, not the original head SHA.
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
     paths-ignore:
       - 'config.json'
   workflow_run:
@@ -67,7 +58,7 @@ jobs:
         # the runner; `zip` is not — without this step several tests
         # skip with "no zip" warnings instead of actually exercising
         # the path-stripping bug fix.
-        run: sudo apt-get update && sudo apt-get install -y zip
+        run: sudo apt-get update && sudo apt-get install -y zip shellcheck
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
@@ -97,6 +88,19 @@ jobs:
         # and forces a `npm run generate:readme` commit on top of any
         # config.json change.
         run: npm run check:readme
+
+      - name: Validate contributor instructions
+        run: npm run validate:agent-docs
+
+      - name: Validate shell scripts and workflows
+        run: |
+          shellcheck -x -P SCRIPTDIR .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh scripts/*.sh
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" .github/workflows/*.yml
 
       - name: Test
         run: npm test
@@ -129,7 +133,7 @@ jobs:
         # the runner; `zip` is not — without this step several tests
         # skip with "no zip" warnings instead of actually exercising
         # the path-stripping bug fix.
-        run: sudo apt-get update && sudo apt-get install -y zip
+        run: sudo apt-get update && sudo apt-get install -y zip shellcheck
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
@@ -159,6 +163,19 @@ jobs:
         # and forces a `npm run generate:readme` commit on top of any
         # config.json change.
         run: npm run check:readme
+
+      - name: Validate contributor instructions
+        run: npm run validate:agent-docs
+
+      - name: Validate shell scripts and workflows
+        run: |
+          shellcheck -x -P SCRIPTDIR .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh scripts/*.sh
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" .github/workflows/*.yml
 
       - name: Test
         run: npm test

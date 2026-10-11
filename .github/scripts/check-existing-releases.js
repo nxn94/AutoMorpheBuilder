@@ -50,6 +50,8 @@
  *   should-build     "true" | "false"  (overrides the value set by check-versions)
  */
 
+const { appFingerprint, pipelineDigest, releaseIsCurrent } = require('./build-fingerprint');
+const { buildMatrix } = require('./build-plan');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -81,7 +83,7 @@ function decide(matrix, apkVersions, releaseExists) {
       continue;
     }
     const tag = `${entry.name}-v${version}-${entry.patchTag}`;
-    if (releaseExists(tag)) {
+    if (releaseExists(tag, entry)) {
       skipList.push(entry.appId);
     } else {
       filtered.push(entry);
@@ -129,24 +131,12 @@ function resolveApkVersion(appId, jarPath, mppPath, config) {
   }
 }
 
-function checkReleaseExists(tag) {
+function checkReleaseExists(tag, entry) {
   try {
-    execFileSync('gh', ['release', 'view', tag], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function buildMatrix(config, repoVersions) {
-  return Object.entries(config.patch_repos).map(([appId, cfg]) => ({
-    name: cfg.name,
-    appId,
-    patchRepo: cfg.repo,
-    patchBranch: (cfg.branch || 'main').toLowerCase(),
-    patchSlug: cfg.repo.replace(/\//g, '-'),
-    patchTag: repoVersions[cfg.repo] || '',
-  }));
+    const release = JSON.parse(execFileSync('gh', ['release', 'view', tag, '--json', 'body,assets'],
+      { encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'ignore'] }));
+    return releaseIsCurrent(release, tag, entry.buildFingerprint);
+  } catch { return false; }
 }
 
 function isTruthyEnv(name) {
@@ -166,8 +156,14 @@ function main() {
 
   const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
   const repoVersions = JSON.parse(REPO_VERSIONS);
+  const patches = JSON.parse(fs.readFileSync(process.env.PATCHES_FILE || 'patches.json', 'utf8'));
+  const pipeline = pipelineDigest();
   const jarPath = path.join(TOOLS_DIR, 'morphe-desktop.jar');
-  const matrix = buildMatrix(config, repoVersions);
+  const resolvedVersions = fs.existsSync(path.join(TOOLS_DIR, 'supported-versions.json'))
+    ? JSON.parse(fs.readFileSync(path.join(TOOLS_DIR, 'supported-versions.json'), 'utf8')) : {};
+  const matrix = buildMatrix(config, repoVersions).map((entry) => ({
+    ...entry, buildFingerprint: appFingerprint(config, patches, entry.appId, process.env.CLI_VERSION || '', pipeline), targetVersion: config.patch_repos[entry.appId].pin_version || resolvedVersions[entry.appId]?.[0] || '',
+  }));
 
   // Manual trigger (workflow_dispatch): the workflow sets FORCE_BUILD so
   // a manual run always patches + releases, regardless of whether the
@@ -203,8 +199,10 @@ function main() {
   const apkVersions = {};
   for (const entry of matrix) {
     const mppPath = path.join(TOOLS_DIR, `${entry.patchSlug}.mpp`);
-    apkVersions[entry.appId] = resolveApkVersion(entry.appId, jarPath, mppPath, config);
+    apkVersions[entry.appId] = entry.targetVersion || resolveApkVersion(entry.appId, jarPath, mppPath, config);
   }
+
+  for (const entry of matrix) entry.targetVersion = apkVersions[entry.appId];
 
   // Decide.
   const result = decide(matrix, apkVersions, checkReleaseExists);

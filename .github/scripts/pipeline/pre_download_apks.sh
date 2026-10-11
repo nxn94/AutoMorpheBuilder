@@ -1,39 +1,8 @@
 #!/usr/bin/env bash
-#
-# scripts/pre_download_apks.sh — pre-download APKs for every configured
-# app before the build matrix spins up. Runs once per app in parallel.
-#
-# Replaces the ~70-line `run:` block in the workflow's "Download APKs
-# using unified-downloader" step. The previous block ran the downloader
-# in a subshell per app using `&` + `wait`. This version is structured
-# identically but pulls all the parameter extraction into the helper
-# library so the script is short enough to read.
-#
-# Behaviour matches the original step:
-#   1. For each app:
-#        - If pin_version is set, use it directly.
-#        - Otherwise, run `morphe-desktop list-versions -f <pkg>` and pick
-#          the first X.Y.Z version.
-#        - Call unified-downloader.js with (pkg, version, APK_DIR).
-#        - On failure with a pinned version, retry with the head of
-#          morphe-desktop list-versions (emergency fallback).
-#   2. Merge results and write them to config.json via
-#      update-download-urls.js.
-#
-# The whole step is best-effort: a single failure doesn't abort the
-# build matrix. We log errors with ::warning:: so they're visible in
-# the UI but don't gate the rest of the pipeline.
-#
-# Environment:
-#   REPO_VERSIONS  required  JSON object {repo:tag}
-#   TOOLS_DIR      required  where morphe-desktop.jar and *.mpp live
-#   APK_DIR        required  where APKs land (default ./tools/apks)
-#   RESULTS_DIR    optional  scratch dir for per-app results
-#                            (default $RUNNER_TEMP/download_results)
-#   SKIP_LIST      optional  JSON array of appIds to skip (already-built apps
-#                            that have a current release). Emitted by
-#                            check_existing_releases.sh and threaded in by
-#                            the workflow. Empty / unset ⇒ no skip.
+# Download required apps in parallel into tools/apks/<package-id>/.
+# Reuse supported-versions.json from the compatibility probe. Pins stay exact.
+# Download failures are warnings here; the matrix retries and validates the
+# final APK. SKIP_LIST omits apps with complete matching releases.
 
 set -Eeuo pipefail
 
@@ -63,10 +32,13 @@ resolve_version_for() {
     return 0
   fi
 
+  local resolved
+  resolved="$(jq -r --arg pkg "$pkg" '.[$pkg][0] // empty' "$TOOLS_DIR/supported-versions.json" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then printf '%s' "$resolved"; return 0; fi
+
   # Resolve the patch repo for this app and find its .mpp file.
-  local repo slug mpp
-  repo="$(app_config "$pkg" '.repo')"
-  slug="$(repo_slug "$repo")"
+  local slug mpp
+  slug="$(node "$(dirname "$0")/../build-plan.js" | jq -r --arg pkg "$pkg" '.[] | select(.appId == $pkg) | .patchSlug')"
   mpp="$TOOLS_DIR/${slug}.mpp"
   if [ ! -f "$mpp" ] || [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
     log_warn "  [$pkg] no .mpp or morphe-desktop.jar; cannot resolve version"
@@ -103,6 +75,8 @@ download_for() {
     echo "FAILED:no-version" > "$RESULTS_DIR/${pkg}.failed"
     return 0
   fi
+  local APK_DIR="${APK_DIR}/${pkg}"
+  mkdir -p "$APK_DIR"
   log "  [$pkg] downloading v${version}..."
   local result err stderr_log
   stderr_log="$(mktemp)"
@@ -148,48 +122,7 @@ download_for() {
         done
   fi
 
-  # Pinned-version emergency fallback: retry with the head of
-  # morphe-desktop list-versions.
-  local pin
-  pin="$(pinned_version "$pkg")"
-  if [ -z "$pin" ] || [ "$pin" = "null" ] || [ "$pin" != "$version" ]; then
-    echo "FAILED:download-error" > "$RESULTS_DIR/${pkg}.failed"
-    return 0
-  fi
-  local fallback
-  fallback="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$TOOLS_DIR/patches.mpp" 2>/dev/null \
-    | grep -oE '[0-9]+(\.[0-9]+)+' | sort -Vr | head -n1 || true)"
-  if [ -z "$fallback" ]; then
-    echo "FAILED:no-fallback-version" > "$RESULTS_DIR/${pkg}.failed"
-    return 0
-  fi
-  log "  [$pkg] emergency fallback to v${fallback}..."
-  # Same stderr separation for the fallback attempt. Reassigning
-  # $stderr_log updates which file the RETURN trap cleans up.
-  stderr_log="$(mktemp)"
-  result="$(node "$(dirname "$0")/../unified-downloader.js" "$pkg" "$fallback" "$APK_DIR" 2>"$stderr_log" || true)"
-  if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
-    local url
-    url="$(printf '%s' "$result" | jq -r '.url // empty')"
-    if [ -n "$url" ] && [ "$url" != "null" ]; then
-      printf '%s:%s:%s\n' "$pkg" "$fallback" "$url" > "$RESULTS_DIR/${pkg}.txt"
-      return 0
-    fi
-  fi
-  log_warn "  [$pkg] unified-downloader failed for fallback v${fallback}"
-  err="$(printf '%s' "$result" | jq -r '.error // empty' 2>/dev/null || true)"
-  if [ -n "$err" ] && [ "$err" != "null" ]; then
-    log_warn "  [$pkg]   reason: ${err}"
-  fi
-  if [ -s "$stderr_log" ]; then
-    log_warn "  [$pkg]   stderr:"
-    sed 's/^/    /' "$stderr_log" \
-      | grep -E '^\s+\[(apkeep-resolve|apkmirror-api-resolve|apkmirror-resolve|parallel-resolve|apkeep|apkmirror-api|apkmirror-pw|apkmirror|download)\] ' \
-      | while IFS= read -r line; do
-          log_warn "  [$pkg]   ${line}"
-        done
-  fi
-  echo "FAILED:fallback-error" > "$RESULTS_DIR/${pkg}.failed"
+  echo "FAILED:download" > "$RESULTS_DIR/${pkg}.failed"
   return 0
 }
 

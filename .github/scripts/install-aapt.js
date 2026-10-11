@@ -24,6 +24,7 @@
  * After this script, `aapt` and `aapt2` are on PATH.
  */
 
+const { verifyArchiveDigest } = require('./verify-browser-archive');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -40,7 +41,7 @@ function log(msg) {
 function alreadyInstalled() {
   // If `aapt` is already on PATH (e.g. apt-installed, or a previous
   // run cached the SDK), don't redo the work.
-  const r = spawnSync('aapt', ['version'], { stdio: 'ignore' });
+  const r = spawnSync(path.join(SDK_ROOT, 'build-tools', BUILD_TOOLS_VERSION, 'aapt'), ['version'], { stdio: 'ignore' });
   return r.status === 0;
 }
 
@@ -84,6 +85,7 @@ function ensureCmdlineTools() {
   log(`Installing Android cmdline-tools to ${SDK_ROOT}...`);
   const zip = path.join(os.tmpdir(), 'cmdline-tools.zip');
   download(CMDLINE_TOOLS_URL, zip);
+  verifyArchiveDigest(fs.readFileSync(zip), process.env.EXPECTED_AAPT_CMDLINE_TOOLS_SHA256);
 
   // The zip extracts to a top-level "cmdline-tools/" directory; we need it
   // at $SDK_ROOT/cmdline-tools/latest/ (the layout sdkmanager expects).

@@ -1,35 +1,7 @@
 #!/usr/bin/env bash
-#
-# scripts/download_morphe_tools.sh — download the morphe-desktop .jar and
-# per-repo .mpp files needed by the build matrix.
-#
-# Replaces the ~50-line `run:` block in the workflow's "Resolve latest
-# APK versions from APKMirror" step. The new layout reads REPO_VERSIONS
-# (from $GITHUB_OUTPUT of check-versions) and CLI_TAG/CLI_REPO from the
-# workflow environment and downloads the right artifacts to $TOOLS_DIR.
-#
-# Behaviour matches the original step:
-#   - mkdir tools/ (idempotent)
-#   - gh release download <CLI_TAG> --pattern '*.jar' → tools/morphe-desktop.jar
-#   - For each unique patch_repo at its resolved tag:
-#       gh release download <tag> --pattern 'patches-*.mpp' → tools/<slug>.mpp
-#
-# After this script, $TOOLS_DIR contains:
-#   morphe-desktop.jar       (always, if CLI release download succeeded)
-#   <repo-slug>.mpp          (one per unique patch_repo)
-#
-# Hard-fails if the CLI .jar or any required .mpp cannot be obtained.
-# The previous workflow exited 0 when the CLI .jar was missing; this
-# preserves that behaviour because the subsequent APK-resolution step
-# also depends on it. We log a warning so the absence is visible.
-#
-# SHA-256 verification (see checksums/tools.sha256 + docs/checksums.md):
-#   When the manifest contains a real SHA for `morphe-desktop.jar`, the
-#   downloaded jar is also checked against that digest. A mismatch hard-
-#   fails the build. Per-repo `.mpp` files are NOT pinned in the global
-#   manifest (their SHAs change per release tag); the existing
-#   `gh release download <tag>` + tag check is the primary gate for
-#   those — see `fetch_morphe_tools.sh` for the per-matrix path.
+# Download a fresh CLI and one patches archive per distinct repository/tag.
+# Archives use tag-derived identities and must match the release API SHA-256
+# before the compatibility probe or release filter can invoke them.
 
 set -Eeuo pipefail
 
@@ -179,32 +151,22 @@ fi
 
 # --- patches .mpp files ---------------------------------------------------
 
-while IFS='|' read -r repo _; do
-  # branch is unused here; we already have the tag in REPO_VERSIONS.
-  slug="$(repo_slug "$repo")"
-  tag="$(jq -r --arg r "$repo" '.[$r] // empty' <<<"$REPO_VERSIONS")"
-  if [ -z "$tag" ]; then
-    log_error "No resolved tag for repo ${repo}. Cannot download .mpp."
-    exit 1
-  fi
+while IFS='|' read -r repo tag slug; do
   mpp_dest="$TOOLS_DIR/${slug}.mpp"
-  if [ -f "$mpp_dest" ]; then
-    log "Using cached ${mpp_dest}"
-    continue
-  fi
-  log "Downloading patches .mpp from ${repo}@${tag}..."
-  gh_release_download "$repo" "$tag" "patches-*.mpp" "$TOOLS_DIR" >/dev/null || true
-  # The download may land as tools/patches-X.Y.Z.mpp; rename to slug-named file.
-  for f in "$TOOLS_DIR"/patches-*.mpp; do
-    [ -f "$f" ] || continue
-    if [ "$f" != "$mpp_dest" ]; then
-      mv "$f" "$mpp_dest"
-      log "  moved $(basename "$f") -> ${slug}.mpp"
-    fi
-    break
-  done
-  if [ ! -f "$mpp_dest" ]; then
-    log_error "Failed to obtain ${mpp_dest} from ${repo}@${tag}."
+  scratch="$(mktemp -d "${RUNNER_TEMP:-/tmp}/patches.XXXXXX")"
+  gh_release_download "$repo" "$tag" 'patches-*.mpp' "$scratch" >/dev/null
+  assets=("$scratch"/*.mpp)
+  if [ "${#assets[@]}" -ne 1 ] || [ ! -f "${assets[0]}" ]; then
+    log_error "Expected one patches archive for ${repo}@${tag}"
     exit 1
   fi
-done <<< "$(list_repo_branches)"
+  asset_name="$(basename "${assets[0]}")"
+  api_sha="$(gh_asset_sha256 "$repo" "$tag" "$asset_name")"
+  actual_sha="$(sha256sum "${assets[0]}" | awk '{print $1}')"
+  if [ -z "$api_sha" ] || [ "$actual_sha" != "$api_sha" ]; then
+    log_error "Patches SHA-256 verification failed for ${repo}@${tag}"
+    exit 1
+  fi
+  mv "${assets[0]}" "$mpp_dest"
+  rm -rf "$scratch"
+done < <(node "$(dirname "$0")/../build-plan.js" | jq -r 'unique_by(.patchSlug)[] | "\(.patchRepo)|\(.patchTag)|\(.patchSlug)"')

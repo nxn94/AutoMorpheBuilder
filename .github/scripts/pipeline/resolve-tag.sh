@@ -44,13 +44,13 @@ resolve_release_tag() {
       ' || true
     )"
     if [ -z "$selected_tag" ]; then
-      echo "No dev-style release found for ${repo}; falling back to latest."
+      log_warn "No dev-style release found for ${repo}; falling back to latest."
       selected_tag="$stable_tag"
     fi
   fi
 
   if [ -z "$selected_tag" ]; then
-    echo "::error::Could not resolve release tag for ${repo} (branch=${branch})."
+    log_error "Could not resolve release tag for ${repo} (branch=${branch})."
     exit 1
   fi
 

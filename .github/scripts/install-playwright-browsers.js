@@ -37,6 +37,7 @@
  * Playwright uses to skip re-installing.
  */
 
+const { verifyArchiveDigest } = require('./verify-browser-archive');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -142,7 +143,10 @@ function install(name) {
   const targetDir = path.join(CACHE_DIR, `${name.replace(/-/g, '_')}-${revision}`);
 
   const marker = path.join(targetDir, 'INSTALLATION_COMPLETE');
-  if (fs.existsSync(marker)) {
+  const expectedSha = name === 'chromium-headless-shell'
+    ? process.env.EXPECTED_PLAYWRIGHT_HEADLESS_SHA256 : process.env.EXPECTED_PLAYWRIGHT_CHROMIUM_SHA256;
+  const digestMarker = path.join(targetDir, 'VERIFIED_SHA256');
+  if (fs.existsSync(marker) && (!expectedSha || (fs.existsSync(digestMarker) && fs.readFileSync(digestMarker, 'utf8').trim() === expectedSha))) {
     console.error(`[install] ${name} r${revision} already installed (${marker} present)`);
     return;
   }
@@ -161,6 +165,7 @@ function install(name) {
   const t0 = Date.now();
   try {
     download(url, tmpZip);
+    verifyArchiveDigest(fs.readFileSync(tmpZip), expectedSha);
     console.error(`[install] ${name} downloaded in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
     const t1 = Date.now();
@@ -190,6 +195,7 @@ function install(name) {
   // codeql[js/file-system-race] reason: marker path is constructed
   // by Playwright in targetDir (user-owned); the file is a zero-byte
   // sentinel, not attacker-controlled content.
+  if (expectedSha) fs.writeFileSync(digestMarker, expectedSha);
   fs.writeFileSync(marker, '');
   console.error(`[install] ${name} r${revision} installed at ${targetDir}`);
 }

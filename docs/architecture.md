@@ -21,12 +21,11 @@ flowchart TD
     B1 --> B2[Set up Java 21]
     B2 --> B3[Preflight per-app patch availability<br/>preflight-apps.js]
     B3 --> B4[Download morphe-desktop + per-repo .mpp<br/>download_morphe_tools.sh]
-    B4 --> B5[Cache patches .mpp<br/>morphe-desktop.jar is intentionally NOT cached]
-    B5 --> B6[Compat probe per app<br/>compat-probe.js runs list-versions, classifies stderr<br/>for NoSuchMethodError / NoClassDefFoundError / VerifyError]
-    B6 --> B7[Filter matrix by existing releases<br/>check_existing_releases.sh]
+    B4 --> B6[Compat probe per app<br/>compat-probe.js runs list-versions, classifies stderr<br/>for NoSuchMethodError / NoClassDefFoundError / VerifyError]
+    B6 --> B7[Filter matrix by complete matching releases<br/>check_existing_releases.sh]
     B7 --> B8{should-build?}
     B8 -->|false| Z1[build + create-release skipped<br/>no-op day]
-    B8 -->|true| B9[Setup Node 24 + npm ci]
+    B8 -->|true| B9[Reuse validated Node dependencies]
     B9 --> B10[Cache + install Playwright Chromium]
     B10 --> B11[Cache + install apkeep]
     B11 --> B12[Install aapt]
@@ -34,11 +33,14 @@ flowchart TD
     B13 --> C[build job matrix per app<br/>environment: signing<br/>holds keystore secrets]
 
     C --> C1[Checkout + Java 21]
-    C1 --> C2[Restore apkeep / Playwright<br/>from check-versions artifacts]
+    C1 --> C2[Restore apkeep artifact]
     C2 --> C3[Restore pre-downloaded APKs]
     C3 --> C4[Cache + fetch morphe tools<br/>fetch_morphe_tools.sh<br/>morphe-desktop.jar always re-downloaded]
     C4 --> C5[Resolve supported version<br/>prepare_target_version.sh]
-    C5 --> C6[Download supported APK<br/>download-supported-apk.js<br/>multi-source fallback chain]
+    C5 --> CF{Usable local APK?}
+    CF -->|no| CB[Cache + install fallback browsers]
+    CB --> C6
+    CF -->|yes| C6[Download supported APK<br/>download-supported-apk.js<br/>multi-source fallback chain]
     C6 --> C7[Decode signing keystore<br/>printf '$KEYSTORE_BASE64' | base64 -d<br/>to $TOOLS_DIR/source.keystore]
     C7 --> C8[Patch and sign APK<br/>patch_apk.sh runs morphe-desktop patch --keystore]
     C8 --> C9[Upload signed APK as artifact<br/>per-app <name>-v<ver>-<patches>]
@@ -49,7 +51,6 @@ flowchart TD
     D1 --> D2[Publish per-app releases<br/>create_release.sh<br/>tag = name-v apk -v patches]
     D2 --> D3[Prune old releases per app<br/>prune_old_releases.sh<br/>keep KEEP_COUNT = 2 by default]
 
-    style B5 stroke-dasharray: 4 4
     style B6 stroke-dasharray: 4 4
     style C4 stroke-dasharray: 4 4
     style C stroke:#c00,stroke-width:3px
@@ -66,11 +67,10 @@ Runs first. Failures here short-circuit the rest of the workflow.
 | Resolve latest Morphe + CLI versions | `pipeline/check_versions.sh` | Emits the optimistic default (`should-build=true`, full matrix) — the downstream filter overrides it. |
 | Set up Java 21 | `actions/setup-java@v5` | Required for `java -jar morphe-desktop.jar`. Default runner Java is older and fails to invoke the jar. |
 | Preflight per-app patch availability | `scripts/preflight-apps.js` | Hits each patch repo's `patches-list.json` at the resolved tag and confirms the app's package id is in `compatiblePackages`. Fail-fast per-app table on upstream rename or typo'd package id. |
-| Download morphe-desktop + patches `.mpp` | `pipeline/download_morphe_tools.sh` | Provides the jar + per-repo `.mpp` files the filter step needs. Runs **unconditionally** so the filter step runs before the expensive Playwright / apkeep / aapt installs. |
-| Cache patches `.mpp` | `actions/cache@v5` | Caches only the per-repo `.mpp` files. **The CLI jar is intentionally NOT cached** — see "Notes" below. |
+| Download morphe-desktop + patches `.mpp` | `pipeline/download_morphe_tools.sh` | Provides the jar + per-repository/tag `.mpp` files the filter step needs. Runs **unconditionally** so the filter step runs before the expensive Playwright / apkeep / aapt installs. |
 | Compat probe | `scripts/compat-probe.js` | Actually invokes `morphe-desktop list-versions` per app to catch runtime API mismatches the static preflight can't see (e.g. hoo-dles/morphe-patches using `BytecodePatchBuilder.extendWithAll(Supplier)` added to morphe-patcher 2026-07-27, which only morphe-desktop v1.13.2+ carries). |
-| Filter matrix by existing releases | `pipeline/check_existing_releases.sh` | For each app, resolves the APK version (pinned or via `morphe-desktop list-versions`) and drops entries whose `<name>-v<apk>-<patches>` release already exists. **Fail-open**: if version resolution or `gh release view` errors, the app is kept in the matrix. `FORCE_BUILD=1` on `workflow_dispatch` skips the check. |
-| Setup Node 24 + `npm ci` | `actions/setup-node@v6` + `npm ci` | Gated on `should-build == 'true'`. |
+| Filter matrix by existing releases | `pipeline/check_existing_releases.sh` | For each app, resolves the APK version (pinned or via `morphe-desktop list-versions`) and drops entries whose release has matching build-input provenance and all required assets. **Fail-open**: if version resolution or `gh release view` errors, the app is kept in the matrix. `FORCE_BUILD=1` on `workflow_dispatch` skips the check. |
+| Node dependencies | `actions/setup-node` + `npm ci` | Installed once before configuration validation; matrix jobs use the npm cache with `npm ci --omit=dev`. |
 | Cache + install Playwright | `actions/cache@v5` + `pipeline/install_playwright.sh` | The custom installer bypasses a yauzl extraction bug in Playwright 1.58. |
 | Install apkeep + aapt | `pipeline/install_apkeep.sh` + `pipeline/install_aapt.sh` | apkeep is pinned to SHA-256 against `APKEEP_VERSION`. |
 | Pre-download APKs in parallel | `pipeline/pre_download_apks.sh` | Per-app `&` + `wait`. Honours `SKIP_LIST` from the filter step. Calls `update-download-urls.js` per app (writes back only when `auto_update_urls=true` and no `pin_version` is set). |
@@ -89,8 +89,8 @@ Gated by the `signing` GitHub environment so `KEYSTORE_BASE64` / `KEYSTORE_PASSW
 | Step | Purpose |
 |------|---------|
 | Checkout + Java 21 | Standard runner setup. |
-| Restore apkeep / Playwright / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
-| Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with **exact-key match only** — no `restore-keys` fallback. A `restore-keys: morphe-patches-<slug>-` would silently restore an `.mpp` from an older patch tag when the matrix moves forward (e.g. Twitch `v1.3.1` → `v1.3.2`), which `morphe-desktop list-versions` would then read to produce a stale APK version; the build would silently re-create an already-released APK and `create_release.sh` would skip the upload. Forcing an exact-key match forces `fetch_morphe_tools.sh` to re-download the `.mpp` from `gh release download` whenever the patch tag moves. The `.mpp` is verified against the per-asset digest served by the GitHub release API (`gh_asset_sha256`) before the build continues — a stale cache entry that survived a matrix-tag move fails the SHA check, is deleted, and re-downloaded, so the next `actions/cache` save replaces it with the correct bytes. |
+| Restore apkeep / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
+| Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with **exact-key match only** — no `restore-keys` fallback. A `restore-keys: morphe-patches-<slug>-` would silently restore an `.mpp` from an older patch tag when the matrix moves forward (e.g. Twitch `v1.3.1` → `v1.3.2`), which `morphe-desktop list-versions` would then read to produce a stale APK version; the build would silently re-create an already-released APK and the former publisher would skip the upload. Forcing an exact-key match forces `fetch_morphe_tools.sh` to re-download the `.mpp` from `gh release download` whenever the patch tag moves. The `.mpp` is verified against the per-asset digest served by the GitHub release API (`gh_asset_sha256`) before the build continues — a stale cache entry that survived a matrix-tag move fails the SHA check, is deleted, and re-downloaded, for the current run. Exact-key entries are immutable; delete a corrupt entry or advance its key to repair storage. |
 | Resolve supported version | `prepare_target_version.sh` + inline `list-versions` invocation. Pinned apps skip the CLI call. The `sort -Vr` head-pick handles `list-versions` not guaranteeing "latest first" (Twitch's RookieEnough/De-Vanced prints `16.9.1` before `25.3.0`). |
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
@@ -149,3 +149,29 @@ Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` 
 ## Failure model
 
 The workflow is **fail-open** on version resolution (per app) and **fail-closed** on signing and on patch availability. See `docs/troubleshooting.md` for the catalogue of common failure modes and their remediation.
+
+## Shared build state and validation
+
+`build-plan.js` constructs each app's resolved tag and tag-derived bundle slug.
+The compatibility probe writes `tools/supported-versions.json`; filtering,
+pre-download, and matrix resolution reuse those versions. The check job never
+restores archives over freshly verified tools. Signing secrets are scoped to
+decode and patch/sign steps. The final selected/merged APK must pass archive,
+package ID, exact version, dex, and native ABI checks. Pure Java APKs need no
+native ABI. Patched output must appear at the declared path and pass
+`apksigner verify` before artifact upload.
+
+URL metadata is cached separately, bounded to three recent versions per app.
+Matrix jobs restore it after the check job completes. Every cached URL still
+requires an HTTPS HEAD probe; every APK still passes the final validation.
+
+## Further performance measurements
+
+This revision removes the observed stale check-stage restore, duplicate dependency
+install, `node_modules` artifact, and approximately 536 MiB browser artifact.
+Measure both no-change schedules and full manual builds on GitHub before claiming
+wall-clock savings. Pre-downloaded APKs still use a combined artifact with isolated
+package subdirectories. Per-app artifact delivery, lazy APKEditor provisioning,
+and cancellation/reuse of losing resolver results remain follow-up optimizations;
+the current source priority is preserved. Resolver API requests and curl downloads
+have explicit deadlines, and APKMirror curl requests no longer block Node's event loop.

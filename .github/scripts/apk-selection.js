@@ -57,7 +57,7 @@ function detectApkShape(filePath) {
       if (/^lib\/[^/]+\//.test(line)) { hasTopLevelLib = true; continue; }
       if (line === 'AndroidManifest.xml') { hasManifest = true; continue; }
     }
-    if (hasInnerApk && !hasTopLevelLib && !hasManifest) return 'bundle';
+    if (hasInnerApk && !lines.some((line) => /^classes(?:\d+)?\.dex$/.test(line))) return 'bundle';
     if (hasTopLevelLib || hasManifest) return 'apk';
     return 'unknown';
   } catch {
@@ -70,7 +70,7 @@ function detectApkShape(filePath) {
  * an APK filename). Returns the matched substring, or ''.
  */
 function extractVersionFromString(s) {
-  const m = String(s).match(/\d+(?:\.\d+){2,}/);
+  const m = String(s).match(/\d+(?:\.\d+)+/);
   return m ? m[0] : '';
 }
 

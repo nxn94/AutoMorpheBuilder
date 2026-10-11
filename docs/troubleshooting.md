@@ -227,7 +227,7 @@ then re-run the workflow.
 
 **Fix:**
 
-`fetch_morphe_tools.sh` now resolves the per-asset digest from the GitHub release API and verifies the on-disk bytes before letting the build continue. A stale cache entry fails the SHA check; the script logs the mismatch, deletes the stale file, re-downloads the correct `.mpp`, re-verifies, and only then exits 0. The next `actions/cache` save replaces the polluted entry with the correct bytes, so subsequent runs hit a clean cache. No manual `gh cache delete` is needed.
+`fetch_morphe_tools.sh` now resolves the per-asset digest from the GitHub release API and verifies the on-disk bytes before letting the build continue. A stale cache entry fails the SHA check; the script logs the mismatch, deletes the stale file, re-downloads the correct `.mpp`, re-verifies, and only then exits 0. This repairs the current run. GitHub cache entries are immutable, so delete the corrupt exact-key entry with `gh cache delete <key>` or advance its key to avoid repeating recovery.
 
 If you see this symptom on a deployment that hasn't picked up this version of `fetch_morphe_tools.sh` yet, the manual recipe is identical to the case above (`gh cache delete morphe-patches-<slug>-<old-tag>`).
 
@@ -262,3 +262,25 @@ If you hit a failure not listed here:
 3. Use the `bug-report.yml` issue template and include the app package id, expected version, artifact format (monolithic / XAPK / APKM / APKS), and `preferred_arch`.
 
 For downloader-specific failures, use the `download-resolver-failure.yml` template — it asks for the package name, target version, selected source, attempted sources, architecture, DPI, artifact format, stable error code, sanitized log, `pin_version` in use, and whether a `download_urls` cache was in use.
+
+## Final APK identity or signing verification fails
+
+The final selected or merged APK must expose the configured package ID and exact
+target `versionName` through `aapt`/`aapt2`. Unreadable metadata fails the build.
+Delete a stale app APK cache if it contains another package or an invalid file;
+check the upstream source before retrying. Two-part versions such as `24.3` are
+supported. Bundles containing inner APKs are merged even when saved as `.apk` or
+when their outer archive contains `AndroidManifest.xml`.
+
+The patch command must create its declared output. Directory scans cannot replace
+missing output with another APK. Android build-tools `apksigner verify` checks the
+result before it is uploaded. Signing secrets are supplied only to keystore decode
+and patch/sign steps; downloader processes do not receive them.
+
+## Runner setup and URL caches
+
+Matrix jobs install production Node dependencies from the npm package cache.
+They restore the check job's bounded URL cache and package-isolated pre-downloads
+under `tools/apks/<package-id>/`. Browser fallback setup runs only when no local
+candidate passes the ABI check. The large browser artifact is no longer transferred
+to every matrix job; Actions caches preserve browser executable modes.

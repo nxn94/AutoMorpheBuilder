@@ -11,8 +11,6 @@ set -euo pipefail
 CONFIG_FILE="${CONFIG_FILE:-./config.json}"
 PATCHES_FILE="${PATCHES_FILE:-./patches.json}"
 RUNNER_TEMP="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-REPO_VERSIONS="${REPO_VERSIONS:-{}}"
-
 if ! command -v jq >/dev/null 2>&1; then
   echo "::error::jq is required for patches.json sync."
   exit 1
@@ -29,32 +27,34 @@ if ! jq -e '.cli | has("repo") and has("branch")' "$CONFIG_FILE" >/dev/null 2>&1
 fi
 
 # Resolve branch -> tag using the same helper as the build workflow.
+source .github/scripts/pipeline/lib/common.sh
 source .github/scripts/pipeline/resolve-tag.sh
 
 # Build a list of unique repo+branch pairs from config.json.
 REPO_PAIRS="$(jq -r '
   .patch_repos
   | to_entries
-  | map(.value | "\(.repo)|\(.branch)")
+  | map(.value | "\(.repo)|\(.branch | ascii_downcase)|\(.pin_patch_tag // "")")
   | unique[]
 ' "$CONFIG_FILE")"
 
 # Resolve a tag for each unique repo+branch pair.
 declare -A REPO_TAGS
-while IFS='|' read -r repo branch; do
+while IFS='|' read -r repo branch pin; do
   echo "Resolving tag for ${repo} (branch=${branch})..."
-  tag="$(resolve_release_tag "$repo" "$branch")"
+  tag="$pin"
+  if [ -z "$tag" ]; then tag="$(resolve_release_tag "$repo" "$branch")"; fi
   echo "  -> ${tag}"
-  REPO_TAGS["$repo"]="$tag"
+  REPO_TAGS["$repo|$branch|$pin"]="$tag"
 done <<< "$REPO_PAIRS"
 
-# Pack the results into the {repo: tag} JSON object consumed by
-# .github/scripts/pipeline/sync-patches.sh.
-REPO_VERSIONS="$(
-  for repo in "${!REPO_TAGS[@]}"; do
-    echo "{\"repo\":\"$repo\",\"tag\":\"${REPO_TAGS[$repo]}\"}"
-  done | jq -sc 'map({(.repo): .tag}) | add // {}'
-)"
+TAGS_JSON='{}'
+for selector in "${!REPO_TAGS[@]}"; do
+  TAGS_JSON="$(jq -c --arg key "$selector" --arg tag "${REPO_TAGS[$selector]}" '. + {($key): $tag}' <<<"$TAGS_JSON")"
+done
+REPO_VERSIONS="$(jq -c --argjson tags "$TAGS_JSON" '
+  .patch_repos | to_entries | map({(.key): $tags[(.value.repo + "|" + (.value.branch | ascii_downcase) + "|" + (.value.pin_patch_tag // ""))]}) | add
+' "$CONFIG_FILE")"
 
 REPO_VERSIONS="$REPO_VERSIONS" \
   CONFIG_FILE="$CONFIG_FILE" \

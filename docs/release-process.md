@@ -22,7 +22,7 @@ See `docs/architecture.md` for the job graph and the signing model.
 
 Where:
 
-- `<name>` is the `config.json` `patch_repos[*].name` field — short identifier (`youtube`, `ytmusic`, `reddit`, `sofascore`, `twitch`, `nzb360`, `aida64`, `mimo`).
+- `<name>` is the `config.json` `patch_repos[*].name` field — short identifier (`youtube`, `ytmusic`, `reddit`, `sofascore`, `twitch`, `nzb360`, `flightradar24`).
 - `<base-version>` is the resolved APK `versionName` from `morphe-desktop list-versions` (or `pin_version` when set).
 - `<patches-version>` is the latest release tag of the patch repo at `patch_repos[*].repo` (or `pin_patch_tag` when set).
 
@@ -54,12 +54,12 @@ Override the count per workflow run by setting the `KEEP_COUNT` environment vari
 
 When `config.json` `patch_repos[*].pin_version` is set:
 
-- `prepare_target_version.sh` exports `PINNED_VERSION=<value>` and `pinned=1`.
+- `prepare_target_version.sh` emits `pinned=<value>`, passed as `PINNED_VERSION` to version resolution.
 - The `Resolve supported version` step uses the pinned value instead of calling `morphe-desktop list-versions`.
 - `update-download-urls.js` **skips** URL write-backs for that app (the cached URL would never be used — the pin short-circuits version resolution).
 - The release tag format is unchanged — `<name>-v<pinned-version>-<patches-version>`.
 
-When `pin_patch_tag` is set (used by `nzb360` and `aida64`):
+When `pin_patch_tag` is set:
 
 - The patch repo's release list is filtered to that exact tag instead of "latest".
 - The CLI / APK download / patch flow is otherwise unchanged.
@@ -72,11 +72,24 @@ Morphe patches repos ship prerelease tags like `v1.24.0-dev.8`. GitHub Releases 
 
 If your Obtainium entry does not show prereleases, check the "Include prereleases" toggle in the Obtainium app config. Pruning treats prereleases the same as stable releases (oldest-first within the app's release set).
 
-## Force-build
+## Build identity and forced rebuilds
 
-On `workflow_dispatch`, the `check_existing_releases.sh` step sets `FORCE_BUILD=1`, which bypasses the "release already exists" check. This is the right way to manually rebuild an app without first deleting the existing release tag.
+Scheduled builds skip an app only when the expected tag contains its APK,
+`SHA256SUMS`, and `build-inputs.json`, and the release notes contain a matching
+build-input fingerprint. The fingerprint includes the app configuration, patch
+Boolean selections, preferred architecture, CLI configuration/version, lockfile,
+tool pins, and pipeline source. Changing these inputs rebuilds an existing tag.
+Older releases without provenance are rebuilt once.
 
-A scheduled run never sets `FORCE_BUILD` — it always honours the filter.
+`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison.
+Publication replaces the APK, checksum manifest, and provenance with `--clobber`.
+It removes the completion marker before replacement and restores it only after
+all uploads succeed. A partial publication is retried by the next scheduled run.
+GitHub asset replacement is not transactional; a consumer downloading during
+replacement should retry if its checksum does not match.
+
+Pins are exact: a failed `pin_version` download never silently selects a different
+APK version. Change or remove the pin explicitly to select another version.
 
 ## Rolling back
 

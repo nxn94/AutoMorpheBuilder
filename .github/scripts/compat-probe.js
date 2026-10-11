@@ -42,6 +42,7 @@
  * shells out to the pure function.
  */
 
+const { patchTag, patchSlug, supportedVersions } = require('./build-plan');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
@@ -124,8 +125,8 @@ async function probe({ config, repoVersions, toolsDir = './tools', execImpl = ex
 
   for (const [appId, entry] of Object.entries(config.patch_repos)) {
     const repo = entry.repo;
-    const tag = entry.pin_patch_tag || repoVersions[repo] || '';
-    const mppPath = path.join(toolsDir, `${repo.replace(/\//g, '-')}.mpp`);
+    const tag = patchTag(appId, entry, repoVersions);
+    const mppPath = path.join(toolsDir, `${patchSlug(appId, entry, repoVersions)}.mpp`);
     const mppExists = fs.existsSync(mppPath);
 
     if (!mppExists) {
@@ -163,9 +164,10 @@ async function probe({ config, repoVersions, toolsDir = './tools', execImpl = ex
         appId,
         repo,
         tag,
-        status: stderr ? 'STDOUT_ERROR' : 'OK',
+        status: classifyStderr(stderr) ? 'STDOUT_ERROR' : 'OK',
+        versions: supportedVersions(out?.stdout || ''),
         symbol: null,
-        error: stderr ? stderr.trim().split('\n').slice(0, 3).join(' | ') : null,
+        error: classifyStderr(stderr) ? stderr.trim().split('\n').slice(0, 3).join(' | ') : null,
       });
     } catch (e) {
       // Some failures exit non-zero without writing stderr that the
@@ -283,6 +285,7 @@ if (require.main === module) {
       }
       process.exit(1);
     }
+    fs.writeFileSync(path.join(toolsDir, 'supported-versions.json'), JSON.stringify(Object.fromEntries(rows.map((r) => [r.appId, r.versions || []]))));
     process.exit(0);
   }).catch((e) => {
     console.error(`::error::probe threw: ${e.stack || e.message}`);

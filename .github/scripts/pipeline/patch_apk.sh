@@ -88,7 +88,7 @@ mkdir -p "$OUT_DIR" "$APKS_DIR"
 
 JAR="$CLI_JAR"
 if [ -z "$JAR" ]; then
-  JAR="$(ls -1 "$TOOLS_DIR"/morphe-desktop*.jar 2>/dev/null | head -n1 || true)"
+  JAR="$TOOLS_DIR/morphe-desktop.jar"
 fi
 if [ -z "$JAR" ] || [ ! -f "$JAR" ]; then
   log_error "morphe-desktop jar not found in $TOOLS_DIR"
@@ -149,7 +149,6 @@ PATCH_TMP_DIR="$RUNNER_TEMP/morphe_${APP_NAME}"
 PATCHED_APK="$RUNNER_TEMP/morphe_${APP_NAME}_patched.apk"
 rm -f "$PATCHED_APK"
 
-APK_NORM="${APK#./}"
 
 run_patch() {
   local mode="$1"; shift
@@ -229,41 +228,14 @@ fi
 
 # --- locate patched output -----------------------------------------------
 
-OUT_APK=""
-if [ -f "$PATCHED_APK" ]; then
-  OUT_APK="$PATCHED_APK"
-else
-  log_warn "morphe-desktop --out was not honored; falling back to find-based scan."
-  OUT_APK="$(
-    { find . -maxdepth 1 -type f -name "*.apk" -newer "$MARKER" -printf '%T@ %p\n' || true; \
-      find "$APKS_DIR" -maxdepth 1 -type f -name "*.apk" -newer "$MARKER" -printf '%T@ %p\n' || true; } \
-    | sort -nr \
-    | cut -d' ' -f2- \
-    | awk -v apk="$APK_NORM" '
-        { line=$0; sub(/^\.\//, "", line)
-          if (line != "" && line != apk && out == "") out=line }
-        END { if (out != "") print out }'
-  )"
-  if [ -z "$OUT_APK" ] || [ ! -f "$OUT_APK" ]; then
-    OUT_APK="$(
-      { find . -maxdepth 1 -type f -name "*.apk" -printf '%T@ %p\n' || true; \
-        find "$APKS_DIR" -maxdepth 1 -type f -name "*.apk" -printf '%T@ %p\n' || true; } \
-      | sort -nr \
-      | cut -d' ' -f2- \
-      | awk -v apk="$APK_NORM" '
-          { line=$0; sub(/^\.\//, "", line)
-            if (line != "" && line != apk && out == "") out=line }
-          END { if (out != "") print out }'
-    )"
-  fi
-fi
-
-if [ -z "$OUT_APK" ] || [ ! -f "$OUT_APK" ]; then
-  log_error "Could not locate patched APK output (expected at $PATCHED_APK)."
-  log_error "Files in current dir: $(ls -A)"
-  log_error "Files in $APKS_DIR: $(ls -A "$APKS_DIR" 2>/dev/null || echo '<empty>')"
+OUT_APK="$PATCHED_APK"
+if [ ! -s "$OUT_APK" ]; then
+  log_error "morphe-desktop did not produce the declared output: $PATCHED_APK"
   exit 1
 fi
+APKSIGNER="${ANDROID_HOME:-/tmp/android-sdk}/build-tools/${ANDROID_BUILD_TOOLS_VERSION:-35.0.0}/apksigner"
+require_file "$APKSIGNER" >/dev/null
+"$APKSIGNER" verify --verbose "$OUT_APK"
 
 OUTPUT_NAME="${APP_NAME}-v${APK_VERSION}-${PATCH_TAG}.apk"
 mv "$OUT_APK" "$OUT_DIR/$OUTPUT_NAME"

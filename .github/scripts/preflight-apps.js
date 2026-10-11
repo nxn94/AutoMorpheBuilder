@@ -40,6 +40,7 @@
  * line per row, and exits non-zero on any error.
  */
 
+const { patchTag } = require('./build-plan');
 const fs = require('node:fs');
 
 const RAW_BASE = 'https://raw.githubusercontent.com';
@@ -113,7 +114,7 @@ async function preflight({ config, repoVersions, fetchImpl = fetch }) {
     const repo = entry.repo;
     // pin_patch_tag overrides the resolved tag for this app's repo
     // (mirror check_versions.sh lines 63-69).
-    const effectiveTag = entry.pin_patch_tag || repoVersions[repo] || '';
+    const effectiveTag = patchTag(appId, entry, repoVersions);
     if (!appsByRepo.has(repo)) appsByRepo.set(repo, []);
     appsByRepo.get(repo).push({ appId, entry, tag: effectiveTag });
   }

@@ -2,55 +2,18 @@
 'use strict';
 
 /**
- * download-supported-apk.js
- *
- * For a single matrix entry, ensure the target-version APK is present
- * in $APKS_DIR (downloading, picking from cache, or merging a split
- * package as needed), validate its version with aapt, and emit the
- * chosen APK path + version as workflow outputs.
- *
- * Extracted from the ~480-line inline bash block in morphe-build.yml's
- * "Download supported APK for ${{ matrix.appId }}" step. Behavior
- * intentionally identical to that bash — the same fallback chain:
- *
- *   1. Cached APK already in $APKS_DIR matching the target version.
- *   2. Pre-downloaded APK in $TOOLS_DIR (from check-versions).
- *   3. unified-downloader.js (URL cache → parallel resolve → sequential).
- *   4. Manual APKMirror URL from config.json download_urls[pkg].latest_supported.
- *   5. If pinned and everything above failed: emergency fallback to
- *      morphe-desktop list-versions, retry with the head of that list.
- *
- * Then: aapt-validate, score-rank candidate, merge split packages
- * (APKEditor required — no silent fallback to base.apk-only, which would
- * drop arm64-v8a / x86_64 native libs and silently break install on
- * 64-bit-only devices), require classes.dex, and enforce the
- * preferred_arch ABI guardrail when config.json sets one.
- *
- * Inputs (env vars):
- *   APP_ID         required  package id
- *   TARGET_VERSION required  selected version from resolve-supported-version step
- *   TARGET_VERSIONS optional comma-separated list of all compatible versions
- *                            (used only for the "All compatible versions" log line)
- *   APKS_DIR       required  destination directory for the chosen APK
- *   TOOLS_DIR      required  where pre-downloaded APKs / .mpp / .jar live
- *   APKEDITOR_JAR  optional  APKEditor.jar path (needed for split-package merge)
- *   PINNED_CHECK   optional  same as config.json patch_repos[pkg].pin_version
- *   PATCH_REPO     optional  patch repo (for emergency fallback)
- *   MORPHE_CLI_JAR optional  morphe-desktop jar (for emergency fallback)
- *   MANUAL_URL     optional  config.json download_urls[pkg].latest_supported
- *   RUNNER_TEMP    optional  temp dir (default /tmp)
- *   GITHUB_OUTPUT  required  workflow output file
- *
- * Outputs ($GITHUB_OUTPUT):
- *   apk     absolute path of the chosen APK
- *   version APK's version (from filename, falling back to TARGET_VERSION)
+ * Select a cached/pre-downloaded APK or run the multi-source downloader,
+ * validate archives, merge bundles, then verify the exact final package,
+ * version and architecture. Pins never silently change version.
+ * Required env: APP_ID, TARGET_VERSION, APKS_DIR, TOOLS_DIR, GITHUB_OUTPUT.
+ * Optional env: TARGET_VERSIONS, APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP.
  */
 
+const { inspectIdentity } = require('./apk-identity');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
 const {
-  extractVersionFromString,
   findCachedApk,
   findPackageCandidate,
   bestRankedApkInDir,
@@ -61,7 +24,6 @@ const {
   detectApkShape,
 } = require('./apk-selection');
 const { validateApkBoundary, validateArchiveSafe } = require('../../src/apk/validate-boundary');
-const { InvalidApkError, formatError } = require('../../src/errors');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 
 const APP_ID = process.env.APP_ID;
@@ -70,9 +32,6 @@ const TARGET_VERSIONS = process.env.TARGET_VERSIONS || '';
 const APKS_DIR = process.env.APKS_DIR;
 const TOOLS_DIR = process.env.TOOLS_DIR;
 const APKEDITOR_JAR = process.env.APKEDITOR_JAR || '';
-const PINNED_CHECK = process.env.PINNED_CHECK || '';
-const PATCH_REPO = process.env.PATCH_REPO || '';
-const MORPHE_CLI_JAR = process.env.MORPHE_CLI_JAR || '';
 const MANUAL_URL = process.env.MANUAL_URL || '';
 const RUNNER_TEMP = process.env.RUNNER_TEMP || '/tmp';
 const GITHUB_OUTPUT = process.env.GITHUB_OUTPUT;
@@ -144,14 +103,14 @@ function downloadWithCurl(url, apksDir, appId) {
     let r;
     try {
       r = spawnSync('curl', [
-        '-fL', '--retry', '4', '--retry-delay', '5', '--connect-timeout', '30',
+        '-fL', '--max-time', '120', '--connect-timeout', '20',
         '-A', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
         '-H', 'Accept: */*',
         '-H', 'Accept-Language: en-US,en;q=0.9',
         '-H', 'Referer: https://www.apkmirror.com/',
         '-o', outputFile,
         url,
-      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      ], { encoding: 'utf8', timeout: 125000, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       r = { error: e };
     }
@@ -363,7 +322,7 @@ if (!downloadSuccess) {
     process.exit(1);
   }
 
-  const preloaded = findCachedApk(path.join(TOOLS_DIR, 'apks'), TARGET_VERSION);
+  const preloaded = findCachedApk(path.join(TOOLS_DIR, 'apks', APP_ID), TARGET_VERSION);
   if (preloaded) {
     // Same ABI validation as the APKS_DIR cache above. The
     // pre-downloaded file was produced by pre_download_apks.sh, which
@@ -411,188 +370,22 @@ if (!downloadSuccess) {
   }
 }
 
-// 3. Pinned-version emergency fallback
 if (!downloadSuccess) {
-  if (PINNED_CHECK && PINNED_CHECK !== 'null' && PINNED_CHECK === TARGET_VERSION) {
-    console.error(`::warning::Pinned version ${PINNED_CHECK} download failed; attempting emergency fallback to list-versions...`);
-    const slug = PATCH_REPO.replace(/\//g, '-');
-    const mppFile = path.join(TOOLS_DIR, `${slug}.mpp`);
-    if (fs.existsSync(mppFile) && MORPHE_CLI_JAR && fs.existsSync(MORPHE_CLI_JAR)) {
-      let out;
-      try {
-        out = execFileSync(
-          'java',
-          ['-jar', MORPHE_CLI_JAR, 'list-versions', '-f', APP_ID, '--patches=' + mppFile],
-          { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] },
-        );
-      } catch (_e) {
-        out = '';
-      }
-      const versions = out.match(/\d+\.\d+\.\d+/g) || [];
-      if (versions.length > 0) {
-        // Sort descending (numeric-aware) so the head picks the recommended
-        // version, not whatever order the CLI happens to print — e.g. Twitch's
-        // RookieEnough/De-Vanced mpp prints 16.9.1 before 25.3.0.
-        versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-        const fallbackVersion = versions[0];
-        console.log(`Emergency fallback: retrying with version ${fallbackVersion}`);
-        const dl = runUnifiedDownloader(APP_ID, fallbackVersion, APKS_DIR);
-        if (dl.ok) {
-          console.log(`Emergency fallback succeeded: ${JSON.stringify(dl.result)}`);
-          // Update TARGET_VERSION so downstream validation picks it up.
-          process.env.TARGET_VERSION = fallbackVersion;
-          downloadSuccess = true;
-        } else {
-          console.log(`Emergency fallback also failed: ${dl.error}`);
-        }
-      }
-    }
-  }
-  if (!downloadSuccess) {
-    console.error(`::error::No APK could be downloaded for ${APP_ID} version ${TARGET_VERSION}.`);
-    process.exit(1);
-  }
-}
-
-// 3.5. APK boundary validation (archive integrity + safe paths + dex).
-// Runs on every archive in APKS_DIR before any further processing. A
-// failure here means the file is corrupt, unsafe, or not actually an
-// APK — none of which downstream steps (aapt, merge, ABI guardrail,
-// morphe-desktop) can recover from. Fail closed.
-console.log('Running APK boundary checks (archive integrity + safe paths + classes.dex)...');
-// Robust split-package detection for the boundary check. The previous
-// helper (isSplitPackageFile from apk-selection.js) delegated to
-// detectApkShape, which classifies an archive by checking for
-// top-level AndroidManifest.xml. The pureapk.com XAPK format puts
-// AndroidManifest.xml at the bundle root, which makes detectApkShape
-// return 'apk' for what is actually a zip-of-zips — so
-// isSplitPackageFile returned false for aida64's XAPK and the
-// boundary check was misrouted to validateApkBoundary, which rejected
-// the bundle with "Archive contains no classes*.dex entries".
-//
-// This helper does the structural test directly: a split package is a
-// zip-of-zips whose entries include one or more inner .apk files and
-// which does NOT have a top-level classes.dex. Plain APKs always have
-// classes.dex and never have inner .apk entries. execFileSync is
-// already imported at the top of this file (line ~51) from
-// node:child_process.
-function isSplitPackageRobust(archivePath) {
-  if (/\.(xapk|apkm|apks)$/i.test(archivePath)) return true;
-  try {
-    const listing = execFileSync(
-      'unzip', ['-Z1', archivePath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    let hasInnerApk = false;
-    let hasTopLevelDex = false;
-    for (const line of listing.split('\n')) {
-      if (!line) continue;
-      if (line.toLowerCase().endsWith('.apk')) hasInnerApk = true;
-      else if (/^classes(?:\d+)?\.dex$/.test(line)) hasTopLevelDex = true;
-    }
-    return hasInnerApk && !hasTopLevelDex;
-  } catch {
-    // On error (corrupt zip, unzip missing, etc.), fall through to
-    // the strict per-file boundary check (validateApkBoundary).
-    return false;
-  }
-}
-for (const f of fs.readdirSync(APKS_DIR)) {
-  const full = path.join(APKS_DIR, f);
-  const lower = f.toLowerCase();
-  if (!/\.(apk|xapk|apkm|apks)$/.test(lower)) continue;
-  try {
-    if (isSplitPackageRobust(full)) {
-      // Split package (bundle). Outer zip-of-zips has no top-level
-      // classes.dex; the inner APKs are validated after merge.
-      // The unified-downloader hardcodes the saved filename to
-      // `${packageId}_${version}.apk` regardless of source shape,
-      // so extension matching alone misses bundles served as `.apk`.
-      // isSplitPackageRobust() combines the extension check with a
-      // structural zip-content test that does not depend on the
-      // AndroidManifest.xml heuristic used by detectApkShape().
-      validateArchiveSafe(full);
-    } else {
-      validateApkBoundary(full);
-    }
-  } catch (e) {
-    if (e instanceof InvalidApkError) {
-      console.error(`::error::APK boundary check failed for ${f}: ${e.message}`);
-      // Remove the bad file so subsequent retries can replace it
-      // (unified-downloader won't re-download if the bad file is
-      // sitting in APKS_DIR matching the version).
-      try { fs.unlinkSync(full); } catch { /* ignore */ }
-      continue;
-    }
-    console.error(`::error::Unexpected error during boundary check for ${f}: ${formatError(e)}`);
-    process.exit(1);
-  }
-}
-
-// 4. aapt validation pass — drop any APKs with the wrong versionName.
-const effectiveTargetVersion = process.env.TARGET_VERSION || TARGET_VERSION;
-console.log(`Validating APK version matches target v${effectiveTargetVersion} using aapt...`);
-
-let apkValid = false;
-const apkFiles = fs.readdirSync(APKS_DIR).filter(f => f.endsWith('.apk'));
-for (const f of apkFiles) {
-  const full = path.join(APKS_DIR, f);
-  const versionName = readApkVersion(full);
-  console.log(`::debug::APK: ${f} -> versionName=${versionName}`);
-  if (versionName === effectiveTargetVersion) {
-    console.log(`APK version validated: ${f} is v${versionName} (matches target)`);
-    apkValid = true;
-    break;
-  } else if (!versionName) {
-    // aapt couldn't read the version (not installed or unsupported format);
-    // unified-downloader already validated, so accept the APK.
-    console.log('Could not read APK version via aapt (aapt unavailable); trusting unified-downloader validation');
-    apkValid = true;
-    break;
-  } else {
-    console.log(`APK has wrong version: ${f} is v${versionName} but wanted v${effectiveTargetVersion} - removing`);
-    try { fs.unlinkSync(full); } catch { /* ignore */ }
-  }
-}
-
-// 5. Also check split packages
-if (!apkValid) {
-  for (const ext of ['xapk', 'apkm', 'apks']) {
-    const splitFiles = fs.readdirSync(APKS_DIR).filter(f => f.endsWith('.' + ext));
-    for (const f of splitFiles) {
-      const full = path.join(APKS_DIR, f);
-      console.log(`Checking split package: ${f}`);
-      const tmpDir = fs.mkdtempSync(path.join(RUNNER_TEMP, 'split_validate_'));
-      try {
-        const r = spawnSync('unzip', ['-q', full, 'base.apk', '-d', tmpDir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-        if (r.status === 0) {
-          const baseApk = path.join(tmpDir, 'base.apk');
-          if (fs.existsSync(baseApk)) {
-            const splitVersion = readApkVersion(baseApk);
-            console.log(`::debug::Split package base APK version: ${splitVersion} (expected: ${effectiveTargetVersion})`);
-            if (splitVersion && splitVersion !== effectiveTargetVersion) {
-              console.log(`Split package has wrong version: ${splitVersion} (expected ${effectiveTargetVersion}) - removing`);
-              try { fs.unlinkSync(full); } catch { /* ignore */ }
-              continue;
-            }
-            console.log(`Split package version validated: ${splitVersion}`);
-          }
-        }
-      } finally {
-        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-      }
-      // We'll re-validate after merge.
-      apkValid = true;
-      break;
-    }
-    if (apkValid) break;
-  }
-}
-
-if (!apkValid) {
-  console.error(`::error::No APK found with correct version v${effectiveTargetVersion}`);
-  console.error(`Files in ${APKS_DIR}:`);
-  try { console.error(fs.readdirSync(APKS_DIR).join('\n')); } catch { /* ignore */ }
+  console.error(`::error::Could not download requested version ${TARGET_VERSION} for ${APP_ID}`);
   process.exit(1);
+}
+const effectiveTargetVersion = TARGET_VERSION;
+// Inspect archives before any extraction, including bundles disguised as APKs.
+for (const file of fs.readdirSync(APKS_DIR)) {
+  if (!/\.(apk|xapk|apkm|apks)$/i.test(file)) continue;
+  const full = path.join(APKS_DIR, file);
+  try {
+    if (detectApkShape(full) === 'bundle' || /\.(xapk|apkm|apks)$/i.test(file)) validateArchiveSafe(full);
+    else validateApkBoundary(full);
+  } catch (error) {
+    console.error(`::error::Invalid APK archive ${file}: ${error.message}`);
+    process.exit(1);
+  }
 }
 
 // 6. Pick best APK candidate.
@@ -745,7 +538,7 @@ if (preferredArch) {
   const hasLibs = apkHasNativeLibsForArch(finalApk, preferredArch);
   const nativeCodeLine = readApkNativeCode(finalApk);
   console.log(`::debug::ABI check: preferred=${preferredArch}, hasLib/${preferredArch}/*.so=${hasLibs}, manifest=${nativeCodeLine || '(no native-code line)'}`);
-  if (!hasLibs) {
+  if (!hasLibs && listApkAbis(finalApk).length > 0) {
     console.error(`::error::APK ${finalApk} is missing native libraries for preferred architecture '${preferredArch}'.`);
     if (nativeCodeLine) console.error(`Manifest declares: ${nativeCodeLine}`);
     console.error('This usually means a BUNDLE/APK set was not properly merged and only base.apk was kept,');
@@ -758,11 +551,16 @@ if (preferredArch) {
 
 console.log(`Downloaded ${APP_ID} → ${finalApk}`);
 
-// 9. Outputs
+// Validate the exact selected/merged file; earlier scans cannot establish
+// identity for a different candidate, nor can a filename substitute for aapt.
+let identity;
+try {
+  validateApkBoundary(finalApk);
+  identity = inspectIdentity(finalApk, APP_ID, effectiveTargetVersion);
+} catch (error) {
+  console.error(`::error::Final APK validation failed: ${error.message}`);
+  process.exit(1);
+}
 setOutput('apk', finalApk);
-const apkFilename = path.basename(finalApk);
-let apkVersion = extractVersionFromString(apkFilename);
-if (!apkVersion && effectiveTargetVersion) apkVersion = effectiveTargetVersion;
-if (!apkVersion) apkVersion = 'unknown';
-setOutput('version', apkVersion);
-console.log(`Downloaded ${APP_ID} → ${finalApk} (v${apkVersion})`);
+setOutput('version', identity.version);
+console.log(`Downloaded ${APP_ID} → ${finalApk} (v${identity.version})`);

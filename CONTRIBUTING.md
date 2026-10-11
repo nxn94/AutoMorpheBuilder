@@ -135,3 +135,10 @@ A "fully green" PR shows no skipped tests, no lint warnings, no `actionlint` fin
 ## License
 
 By contributing, you agree that your contributions are licensed under the GPL-3.0 (see `LICENSE`).
+
+Shell and workflow changes must also pass `shellcheck -x -P SCRIPTDIR
+.github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh scripts/*.sh` and
+`actionlint .github/workflows/*.yml`. CI runs both checks on PRs and pushes to
+`main` and `dev`, alongside contributor-document validation. See
+[architecture](docs/architecture.md) and [release behavior](docs/release-process.md)
+for the per-app tag, APK identity, and provenance contracts.

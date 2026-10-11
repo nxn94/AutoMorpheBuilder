@@ -5,9 +5,9 @@ name: CodeQL
 # as this file exists on the default branch.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
   schedule:
     #  Daily 06:00 UTC — staggered from morphe-build (05:15)
     # to avoid runner contention.

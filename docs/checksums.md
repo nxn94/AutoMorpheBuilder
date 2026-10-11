@@ -69,3 +69,18 @@ keytool -list -v -keystore <path-to-keystore.p12> -storetype PKCS12 \
 
 - `tools.sha256` — single global manifest of tool digests consulted by the install / fetch scripts.
 - (Future) `morphe-desktop-<version>.sha256` — per-CLI-version digest, useful when the JAR hash drifts between patch-tag runs.
+## Installer archive verification
+
+APKEditor is pinned to `V1.4.9` together with its existing manifest digest; update
+both values together. `EXPECTED_AAPT_CMDLINE_TOOLS_SHA256` verifies the exact
+cmdline-tools ZIP before extraction. Browser installers verify the exact
+Playwright-pinned archives using `EXPECTED_PLAYWRIGHT_CHROMIUM_SHA256` and
+`EXPECTED_PLAYWRIGHT_HEADLESS_SHA256` respectively. A configured digest mismatch
+aborts installation; it never falls through to an unverified archive. Existing
+browser installations without the matching digest marker are reinstalled before
+being accepted under a new pin. These optional values are archive hashes, not
+hashes of extracted executables.
+
+GitHub Actions cache entries are immutable. Repairing restored files fixes the
+current run but cannot replace an existing exact-key entry. Delete a corrupt
+entry or advance its key to repair persistent storage.

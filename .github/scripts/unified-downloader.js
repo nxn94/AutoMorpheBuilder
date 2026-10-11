@@ -218,7 +218,7 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
  * curl's TLS fingerprint matches real browsers and passes Cloudflare bot detection.
  */
 async function apkmirrorFetch(url, cookies = {}, referer = null) {
-  const { execFileSync } = require('child_process');
+  const execAsync = require('node:util').promisify(require('node:child_process').execFile);
   const args = [
     '-s', '-L', '--max-time', '30',
     '-A', 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
@@ -233,7 +233,7 @@ async function apkmirrorFetch(url, cookies = {}, referer = null) {
   }
   args.push(url);
 
-  const output = execFileSync('curl', args, { maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
+  const { stdout: output } = await execAsync('curl', args, { timeout: 35000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
   const lastNewline = output.lastIndexOf('\n');
   const statusCode = parseInt(output.slice(lastNewline + 1).trim(), 10);
   const body = output.slice(0, lastNewline);
@@ -363,6 +363,7 @@ async function resolveApkeepVariant(packageId, version) {
   // protobuf endpoint; only the JSON-parsed bytes are returned, never
   // written to disk.
   const response = await fetch(apiUrl, {
+    signal: AbortSignal.timeout(TIMEOUTS.sourceResolve),
     headers: {
       'User-Agent': 'Mozilla/5.0',
       'x-cv': '3172501',
@@ -494,6 +495,7 @@ async function resolveApkmirrorApi(packageId, version) {
     // codeql[js/file-access-to-http] reason: same as the apiUrl comment
     // above; this fetch targets the hardcoded APKMirror API host.
     const response = await fetch(apiUrl, {
+    signal: AbortSignal.timeout(TIMEOUTS.sourceResolve),
       headers: {
         "Authorization": apkMirrorAuthHeader(),
         "Accept": "application/json"
@@ -583,8 +585,9 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
       const result = await new Promise((resolve, reject) => {
         // codeql[js/file-access-to-http] reason: same as above; the curl
         // invocation is the unified-downloader's intended download path.
-        const curl = spawnImpl('curl', ['-L', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
+        const curl = spawnImpl('curl', ['-L', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
 
+        curl.on('error', reject);
         let stderr = '';
 
         curl.stderr.on('data', (data) => {
@@ -1417,13 +1420,19 @@ async function resolveApkmirrorUrl(apkmirrorPath, version) {
  * @param {object} [opts] - Optional process dependency overrides for tests
  */
 async function download(packageId, version, outputDir, opts = {}) {
+  const cacheDir = opts.cacheDir || process.env.URL_CACHE_DIR
+    || path.join(require('node:os').homedir(), '.cache', 'auto-morphe-builder', 'urls');
+  function remember(url, source) {
+    try { saveCachedUrl(packageId, version, url, source, cacheDir); }
+    catch (error) { console.error(`[url-cache] Could not persist URL: ${error.message}`); }
+  }
   // Ensure output directory exists
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
   // Step 1: Check URL cache
-  const cachedUrl = getCachedUrl(packageId, version);
+  const cachedUrl = getCachedUrl(packageId, version, cacheDir);
   if (cachedUrl) {
     console.error(`[download] Trying cache for ${packageId} v${version}`);
     try {
@@ -1431,7 +1440,7 @@ async function download(packageId, version, outputDir, opts = {}) {
       if (isValid) {
         const result = await downloadWithUrl(cachedUrl.url, outputDir, packageId, version, opts);
         // Update cache with incremented download count
-        saveCachedUrl(packageId, version, cachedUrl.url, cachedUrl.source);
+        remember(cachedUrl.url, cachedUrl.source);
         return result;
       }
     } catch (e) {
@@ -1448,7 +1457,7 @@ async function download(packageId, version, outputDir, opts = {}) {
       if (isValid) {
         const result = await downloadWithUrl(existingUrl, outputDir, packageId, version, opts);
         // Save to our URL cache
-        saveCachedUrl(packageId, version, existingUrl, 'patches.json');
+        remember(existingUrl, 'patches.json');
         return result;
       }
     } catch (e) {
@@ -1462,7 +1471,7 @@ async function download(packageId, version, outputDir, opts = {}) {
     const resolved = await parallelResolveSources(packageId, version, opts);
     const result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
     // Save to URL cache
-    saveCachedUrl(packageId, version, resolved.url, resolved.source);
+    remember(resolved.url, resolved.source);
     return result;
   } catch (e) {
     console.error(`[download] Parallel resolution failed: ${e.message}`);
@@ -1483,7 +1492,7 @@ async function download(packageId, version, outputDir, opts = {}) {
   try {
     const result = await downloadWithApkeep(packageId, version, outputDir);
     const url = result.url || `apkeep:${packageId}@${version}`;
-    saveCachedUrl(packageId, version, url, 'apkeep');
+    remember(url, 'apkeep');
     return result;
   } catch (e) {
     console.error(`[apkeep] Failed: ${e.message}`);
@@ -1493,7 +1502,7 @@ async function download(packageId, version, outputDir, opts = {}) {
   console.error(`[apkmirror-api] Attempting download for ${packageId} v${version} via API`);
   try {
     const result = await downloadWithApkmirrorApi(packageId, version, outputDir);
-    saveCachedUrl(packageId, version, result.url, 'apkmirror-api');
+    remember(result.url, 'apkmirror-api');
     return result;
   } catch (e) {
     console.error(`[apkmirror-api] Failed: ${e.message}`);
@@ -1503,7 +1512,7 @@ async function download(packageId, version, outputDir, opts = {}) {
   console.error(`[apkmirror] Starting APKMirror Playwright fallback...`);
   try {
     const result = await downloadWithApkmirror(packageId, version, outputDir);
-    saveCachedUrl(packageId, version, result.url, 'apkmirror');
+    remember(result.url, 'apkmirror');
     return result;
   } catch (e) {
     console.error(`[apkmirror] Failed: ${e.message}`);

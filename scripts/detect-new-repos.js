@@ -87,7 +87,13 @@ function detectChanges(config, patches) {
     return a.newRepo < b.newRepo ? -1 : 1;
   });
 
+  const missingApps = Object.entries(patchRepos)
+    .filter(([pkg, entry]) => !Object.hasOwn(patchesObj[entry.repo] || {}, pkg))
+    .map(([pkg]) => pkg).sort();
+
   return {
+    missingApps,
+    hasMissingApps: missingApps.length > 0,
     hasNewRepos: newRepos.length > 0,
     hasRelocatedApps: relocatedApps.length > 0,
     newRepos,
@@ -124,7 +130,7 @@ function main() {
   // Open the gate on either condition. The downstream script
   // (sync-patches.sh) carries over the user's existing toggles when an
   // app is relocated, so re-syncing here is the right call.
-  const hasNewRepos = result.hasNewRepos || result.hasRelocatedApps;
+  const hasNewRepos = result.hasNewRepos || result.hasRelocatedApps || result.hasMissingApps;
   writeOutput('has_new_repos', hasNewRepos ? 'true' : 'false');
   writeOutput('has_relocated_apps', result.hasRelocatedApps ? 'true' : 'false');
   writeOutput('relocated_apps_json', JSON.stringify(result.relocatedApps));

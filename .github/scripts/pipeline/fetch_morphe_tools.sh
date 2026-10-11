@@ -298,7 +298,7 @@ fi
 
 # --- APKEditor ----------------------------------------------------------
 
-APKEDITOR_TAG="$(gh release view --repo REAndroid/APKEditor --json tagName -q .tagName)"
+APKEDITOR_TAG="V1.4.9"
 # Pick the canonical APKEditor-<version>.jar asset by name. The
 # `endswith(".jar") | head -n1` form we used previously was
 # order-dependent: if a release ever shipped both `APKEditor-X.Y.Z.jar`

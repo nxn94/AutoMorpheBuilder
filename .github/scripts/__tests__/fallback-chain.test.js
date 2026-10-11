@@ -328,17 +328,18 @@ describe('download() fallback chain', () => {
     jest.clearAllMocks();
     apksDir = tmpDir();
     homeDir = tmpDir();
-    process.env.HOME = homeDir;
+    process.env.URL_CACHE_DIR = path.join(homeDir, 'urls');
     delete global.fetch;
   });
   afterEach(() => {
     try { fs.rmSync(apksDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    delete process.env.URL_CACHE_DIR;
     try { fs.rmSync(homeDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
   test('cache hit short-circuits the rest', async () => {
     // Seed the URL cache so getCachedUrl returns a hit.
-    const cacheDir = path.join(os.homedir(), '.cache', 'auto-morphe-builder', 'urls', PKG);
+    const cacheDir = path.join(process.env.URL_CACHE_DIR, PKG);
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.writeFileSync(
       path.join(cacheDir, `${VER}.json`),

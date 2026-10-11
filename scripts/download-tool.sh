@@ -41,7 +41,8 @@ curl \
   --output "$OUTPUT" \
   "$URL"
 
-readonly ACTUAL_SHA256="$(sha256sum "$OUTPUT" | awk '{print $1}')"
+ACTUAL_SHA256="$(sha256sum "$OUTPUT" | awk '{print $1}')"
+readonly ACTUAL_SHA256
 
 if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
   echo "::error file=$OUTPUT::Downloaded file checksum mismatch"

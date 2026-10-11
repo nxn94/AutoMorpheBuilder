@@ -23,7 +23,7 @@ if [ -z "$APP_ID" ] || [ -z "$PATCH_REPO" ]; then
   exit 1
 fi
 
-slug="${PATCH_REPO//\//-}"
+slug="${PATCH_SLUG:-${PATCH_REPO//\//-}}"
 mpp="$TOOLS_DIR/${slug}.mpp"
 jar="$TOOLS_DIR/morphe-desktop.jar"
 
@@ -34,6 +34,8 @@ fi
 
 if [ -n "$PINNED_VERSION" ] && [ "$PINNED_VERSION" != "null" ]; then
   version="$PINNED_VERSION"
+elif [ -n "${RESOLVED_VERSION:-}" ]; then
+  version="$RESOLVED_VERSION"
 else
   # The CLI does not guarantee latest-first ordering. Sort versions
   # descending so Twitch's 16.9.1 does not beat a later 25.3.0.

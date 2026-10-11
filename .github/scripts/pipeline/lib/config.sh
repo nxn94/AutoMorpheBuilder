@@ -114,7 +114,7 @@ validate_required_config() {
 auto_update_urls_enabled() {
   require_file "$CONFIG_FILE" >/dev/null || return 1
   local flag
-  flag="$(jq -r '.auto_update_urls // true' "$CONFIG_FILE" 2>/dev/null)"
+  flag="$(jq -r 'if .auto_update_urls == null then true else .auto_update_urls end' "$CONFIG_FILE" 2>/dev/null)"
   case "$flag" in
     true|True|TRUE|1|yes|YES) return 0 ;;
     *)                        return 1 ;;

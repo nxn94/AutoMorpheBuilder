@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { apkHasNativeLibsForArch, detectApkShape } = require('./apk-selection');
+const { apkHasNativeLibsForArch, detectApkShape, listApkAbis } = require('./apk-selection');
 
 /**
  * Reject a freshly-downloaded APK/bundle that lacks libs for the
@@ -69,7 +69,7 @@ if (!preferredArch) return;
   const shape = detectApkShape(filePath);
   if (shape === 'unknown') return; // Trust upstream; download-supported-apk.js's post-merge guardrail is the safety net.
   if (shape === 'apk') {
-    if (!apkHasNativeLibsForArch(filePath, preferredArch)) {
+    if (listApkAbis(filePath).length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch)) {
       throw new Error(
         `Downloaded APK ${path.basename(filePath)} is missing ` +
         `lib/${preferredArch}/*.so (upstream mislabelled it as universal/` +
@@ -86,6 +86,7 @@ if (!preferredArch) return;
   // arch only inside base.apk, and (c) filename conventions drift.
   // Extraction + the same zip-listing helper used for plain APKs is
   // the most reliable.
+  require('../../src/apk/validate-boundary').validateArchiveSafe(filePath);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'abi_check_'));
   try {
     try {
@@ -97,6 +98,7 @@ if (!preferredArch) return;
       return;
     }
     const inner = fs.readdirSync(tmpDir).filter((f) => f.toLowerCase().endsWith('.apk'));
+    if (inner.length > 0 && inner.every((apk) => listApkAbis(path.join(tmpDir, apk)).length === 0)) return;
     for (const apk of inner) {
       if (apkHasNativeLibsForArch(path.join(tmpDir, apk), preferredArch)) return;
     }

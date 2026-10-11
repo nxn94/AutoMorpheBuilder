@@ -1,31 +1,7 @@
 #!/usr/bin/env bash
-#
-# scripts/check_versions.sh — resolve the latest Morphe / CLI release
-# tags and emit the build matrix. The should-build decision is made
-# later, in check_existing_releases.sh, which can short-circuit the
-# build when every app already has a current release.
-#
-# Replaces the ~140-line inline `run:` block in the workflow's
-# check-versions job. The behaviour is identical except for the
-# should-build contract:
-#   1. Validate config.json shape.
-#   2. For every unique patch_repo+branch, resolve the latest matching
-#      tag using resolve-tag.sh.
-#   3. Resolve the CLI tag.
-#   4. Emit a matrix-include JSON array of build entries (the FULL
-#      matrix — filtering happens in check_existing_releases.sh).
-#   5. Emit should-build=true as the optimistic default. The
-#      check_existing_releases.sh step (run later in the same job, after
-#      the morphe-desktop jar + .mpp files are downloaded) overrides
-#      this to false if every app's release already exists.
-#
-# Outputs (written to $GITHUB_OUTPUT):
-#   should-build    "true" | "false"  (default true; overridden downstream)
-#   matrix-include  JSON array of {name, appId, patchRepo, patchBranch, patchSlug, patchTag}
-#   repo-versions   JSON object { "owner/repo": "tag" }
-#   cli-version     CLI release tag
-#   cli-branch      CLI branch (echoed back for downstream steps)
-#   cli-repo        CLI repo slug (echoed back for downstream steps)
+# Resolve each app's repository/branch/pin selector independently and emit
+# an app-keyed repo-versions map plus the full build matrix. Release filtering
+# runs after verified tools and supported versions have been obtained.
 
 set -Eeuo pipefail
 
@@ -72,55 +48,22 @@ while IFS='|' read -r repo branch pin_tag; do
     tag="$(resolve_release_tag "$repo" "$branch")"
     log "  ${repo} -> ${tag}"
   fi
-  REPO_TAGS["$repo"]="$tag"
+  REPO_TAGS["$repo|$branch|$pin_tag"]="$tag"
 done <<< "$REPO_PAIRS"
 
 CLI_TAG="$(resolve_release_tag "$CLI_REPO" "$CLI_BRANCH")"
 log "CLI (${CLI_REPO}) -> ${CLI_TAG}"
 
-# --- build matrix-include -------------------------------------------------
-
-MATRIX_INCLUDE="$(
-  jq -c '
-    .patch_repos
-    | to_entries
-    | map({
-        name: .value.name,
-        appId: .key,
-        patchRepo: .value.repo,
-        patchBranch: (.value.branch | ascii_downcase),
-        patchSlug: (.value.repo | gsub("/"; "-"))
-      })
-  ' "$CONFIG_FILE"
-)"
-
-# Inject the resolved patchTag per matrix entry. Using jq's --argjson
-# ensures the tag map is parsed exactly once.
-TAGS_JSON="$(
-  for repo in "${!REPO_TAGS[@]}"; do
-    printf '{"repo":"%s","tag":"%s"}\n' "$repo" "${REPO_TAGS[$repo]}"
-  done | jq -sc 'map({(.repo): .tag}) | add // {}'
-)"
-
-MATRIX_WITH_TAGS="$(
-  jq -c --argjson tags "$TAGS_JSON" \
-    'map(. + {patchTag: ($tags[.patchRepo] // "")})' \
-    <<<"$MATRIX_INCLUDE"
-)"
-
-if [ "$(jq 'length' <<<"$MATRIX_WITH_TAGS")" = "0" ]; then
-  log_warn "No apps configured in patch_repos; skipping build."
-  json_set_output should-build false
-  json_set_output matrix-include '[]'
-  json_set_output repo-versions '{}'
-  json_set_output cli-version "$CLI_TAG"
-  json_set_output cli-branch "$CLI_BRANCH"
-  json_set_output cli-repo "$CLI_REPO"
-  exit 0
-fi
-
-# Build the {owner/repo: tag} map for downstream use.
-REPO_VERSIONS="$TAGS_JSON"
+# Preserve each selector independently. Build a per-app tag map so apps on
+# different channels or pins never overwrite another app's selection.
+TAGS_JSON='{}'
+for selector in "${!REPO_TAGS[@]}"; do
+  TAGS_JSON="$(jq -c --arg key "$selector" --arg tag "${REPO_TAGS[$selector]}" '. + {($key): $tag}' <<<"$TAGS_JSON")"
+done
+REPO_VERSIONS="$(jq -c --argjson tags "$TAGS_JSON" '
+  .patch_repos | to_entries | map({(.key): $tags[(.value.repo + "|" + (.value.branch | ascii_downcase) + "|" + (.value.pin_patch_tag // ""))]}) | add
+' "$CONFIG_FILE")"
+MATRIX_WITH_TAGS="$(REPO_VERSIONS="$REPO_VERSIONS" node "$(dirname "$0")/../build-plan.js")"
 
 # --- decide + emit -------------------------------------------------------
 
