@@ -319,14 +319,14 @@ jobs:
           done
 
       - name: Restore apkeep + Playwright from check-versions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           name: apkeep-binary
           path: /usr/local/bin
         continue-on-error: true
 
       - name: Restore pre-downloaded APKs from check-versions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           name: pre-downloaded-apks
           # The artifact zip has a `tools/apks/` path prefix (uploaded as
@@ -340,7 +340,7 @@ jobs:
         continue-on-error: true
 
       - name: Restore Playwright browsers from check-versions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           name: playwright-browsers
           path: ~/.cache/ms-playwright
@@ -355,7 +355,7 @@ jobs:
           node-version: '24'
 
       - name: Restore node_modules from check-versions
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           name: node-modules
           path: node_modules
@@ -570,7 +570,7 @@ jobs:
         # iterates $APKS_DIR/*.apk unchanged. Failed matrix legs never
         # reached the upload step, so partial-failure downloads only
         # contain artifacts for the apps that built successfully.
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           pattern: '*-v*'
           path: apks
