@@ -174,7 +174,7 @@ jobs:
         # lockfile content is identical for every matrix entry so this
         # is a safe shortcut.
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: node-modules
           path: node_modules
@@ -198,7 +198,7 @@ jobs:
 
       - name: Upload Playwright browsers for build jobs
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: playwright-browsers
           path: ~/.cache/ms-playwright
@@ -218,7 +218,7 @@ jobs:
 
       - name: Upload apkeep for build jobs
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: apkeep-binary
           path: /usr/local/bin/apkeep
@@ -243,7 +243,7 @@ jobs:
 
       - name: Upload pre-downloaded APKs
         if: steps.filter.outputs.should-build == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: pre-downloaded-apks
           path: |
@@ -523,7 +523,7 @@ jobs:
         # matrix entries). The downstream `create-release` job reads
         # the signed APK from this artifact directly — no separate
         # sign job between build and create-release anymore.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
           path: out/${{ steps.patch.outputs.output }}
