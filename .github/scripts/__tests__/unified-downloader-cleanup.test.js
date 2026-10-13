@@ -40,7 +40,15 @@ const originalPath = process.env.PATH;
 // Forwarding shims preserve call-count assertions while exercising real
 // child_process operations. They are deliberately local rather than
 // module-level shims so no subprocess contract is hidden.
-const spawn = jest.fn((...args) => childProcess.spawn(...args));
+const spawn = jest.fn((file, args, ...rest) => {
+  if (file === 'curl') {
+    // Keep real subprocess/file I/O while avoiding network and production
+    // file:// support: the HTTPS fixture URL identifies a local copy source.
+    const source = decodeURIComponent(new URL(args.at(-1)).pathname.slice(1));
+    return childProcess.spawn('cp', [source, args[args.indexOf('-o') + 1]], ...rest);
+  }
+  return childProcess.spawn(file, args, ...rest);
+});
 const execFile = jest.fn((file, args, ...rest) => {
   const command = file === 'apkeep' ? path.join(fixtureTools, 'apkeep') : file;
   if (file === 'apkeep' && !process.env.APKEEP_FIXTURE) {
@@ -82,7 +90,7 @@ function tmpDir() {
 }
 
 function fixtureUrl(filePath) {
-  return `file://${filePath}`;
+  return `https://example.invalid/${encodeURIComponent(filePath)}`;
 }
 
 function installFixtureTools() {

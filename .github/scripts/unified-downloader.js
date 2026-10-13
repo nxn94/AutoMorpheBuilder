@@ -488,12 +488,12 @@ async function resolveApkmirrorApi(packageId, version) {
   // CORRECT API endpoint with Basic auth
   const apiUrl = `https://www.apkmirror.com/wp-json/apkm/v1/${apkmirrorPath}/${version}`;
 
-  // codeql[js/file-access-to-http] reason: apiUrl is the official
-  // APKMirror API endpoint; constructed from a hardcoded path + the
-  // version selector from Morphe's patches-list.json.
+  // Intentional config-to-network flow: apkmirrorPath comes from the
+  // maintainer-owned config.json and version is the selected APK version.
+  // Only these public app selectors are sent to the fixed APKMirror host;
+  // no arbitrary file content is included in headers or the request body.
+  // CodeQL alert #41 is a reviewed false positive, not an inline suppression.
   try {
-    // codeql[js/file-access-to-http] reason: same as the apiUrl comment
-    // above; this fetch targets the hardcoded APKMirror API host.
     const response = await fetch(apiUrl, {
     signal: AbortSignal.timeout(TIMEOUTS.sourceResolve),
       headers: {
@@ -552,6 +552,11 @@ async function resolveApkmirror(packageId, version) {
  * @returns {Promise<object>} Download result
  */
 async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
+  // Cache/config strings are URLs, never curl options or local-file sources.
+  const parsedUrl = new URL(url);
+  if (parsedUrl.protocol !== 'https:') throw new Error('Download URL must use HTTPS');
+  if (parsedUrl.username || parsedUrl.password) throw new Error('Download URL must not contain credentials');
+  const safeUrl = parsedUrl.toString();
   const spawnImpl = opts.spawnImpl || spawn;
   // Read preferred_arch so we can validate the downloaded file's ABI
   // composition. A 32-bit-only APK from upstream (e.g. APKMirror's
@@ -579,13 +584,11 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
       await sleep((attempt - 1) * 2000);
     }
 
-    // codeql[js/file-access-to-http] reason: argv-style spawn, no shell;
-    // URL is constrained by the unified-downloader's upstream sources.
+    // Restrict initial requests and redirects to HTTPS; terminate options
+    // explicitly so no cached value can become a curl upload/config flag.
     try {
       const result = await new Promise((resolve, reject) => {
-        // codeql[js/file-access-to-http] reason: same as above; the curl
-        // invocation is the unified-downloader's intended download path.
-        const curl = spawnImpl('curl', ['-L', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', url]);
+        const curl = spawnImpl('curl', ['-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl]);
 
         curl.on('error', reject);
         let stderr = '';

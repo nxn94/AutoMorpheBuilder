@@ -106,20 +106,28 @@ test('avoids browser setup only when a local candidate passes its ABI check', ()
 
 test('returns the failed command status after exhausted retries and retries transient failures', () => {
   const library = path.join(root, '.github/scripts/pipeline/lib/common.sh');
-  const failed = spawnSync('bash', ['-c', 'source "$1"; with_retry 1 0 bash -c "exit 23"', '_', library]);
+  const failed = spawnSync('bash', ['-s', '--', library], {
+    input: 'source "$1"; with_retry 1 0 bash -c "exit 23"',
+  });
   expect(failed.status).toBe(23);
-  expect(execFileSync('bash', ['-c', 'source "$1"; count=0; attempt() { count=$((count+1)); [ "$count" -eq 2 ]; }; with_retry 2 0 attempt; echo "$count"', '_', library], { encoding: 'utf8' }).trim()).toBe('2');
+  expect(execFileSync('bash', ['-s', '--', library], {
+    input: 'source "$1"; count=0; attempt() { count=$((count+1)); [ "$count" -eq 2 ]; }; with_retry 2 0 attempt; echo "$count"',
+    encoding: 'utf8',
+  }).trim()).toBe('2');
 });
 
 test('honours auto_update_urls=false and defaults missing flags to true', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-flag-'));
   try {
     const file = path.join(dir, 'config.json');
-    const args = ['-c', 'source "$1"; source "$2"; auto_update_urls_enabled', '_',
+    const args = ['-s', '--',
       path.join(root, '.github/scripts/pipeline/lib/common.sh'), path.join(root, '.github/scripts/pipeline/lib/config.sh')];
     for (const [data, status] of [[{ auto_update_urls: false }, 1], [{}, 0], [{ auto_update_urls: true }, 0]]) {
       fs.writeFileSync(file, JSON.stringify(data));
-      expect(spawnSync('bash', args, { env: { ...process.env, CONFIG_FILE: file } }).status).toBe(status);
+      expect(spawnSync('bash', args, {
+        input: 'source "$1"; source "$2"; auto_update_urls_enabled',
+        env: { ...process.env, CONFIG_FILE: file },
+      }).status).toBe(status);
     }
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

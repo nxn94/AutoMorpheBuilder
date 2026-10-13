@@ -61,6 +61,16 @@ keytool -list -v -keystore <path-to-keystore.p12> -storetype PKCS12 \
   | tr -d ' :'
 ```
 
+## Direct APK download URL policy
+
+`downloadWithUrl` accepts only parsed HTTPS URLs without embedded credentials.
+Curl receives the canonical URL after `--`, and both `--proto` and
+`--proto-redir` restrict transfers to HTTPS. Cache/config strings cannot become
+curl options, local-file downloads, or redirects to non-HTTPS protocols. Local
+fixture tests use HTTPS identifiers with an isolated subprocess copy adapter;
+production does not have a file-scheme bypass. APK version and ABI validation
+remain mandatory after transfer.
+
 ## Per-release integrity
 
 `create_release.sh` writes a `SHA256SUMS` file next to each release's APKs. Each line is `sha256  <apk-name>`; the file is verified with `sha256sum --check SHA256SUMS` before being uploaded alongside the APK assets. Downstream consumers (Obtainium, etc.) can `sha256sum --check` against the same file to confirm the APK they downloaded matches the one the workflow built.
