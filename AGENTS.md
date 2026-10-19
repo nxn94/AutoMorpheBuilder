@@ -12,6 +12,7 @@ Every authoritative file in the repo, with its role. When information conflicts,
 - `.github/workflows/update-patches.yml` — patch metadata updates from upstream patch repos.
 - `.github/workflows/ci.yml` — continuous integration (PR + main gate).
 - `.github/workflows/codeql.yml` — security analysis.
+- `.github/dependabot.yml` groups CodeQL action steps so `init` and `analyze` upgrade together (mismatched versions fail analysis).
 - `README.md` — project overview.
 - `SETUP.md` — fork and signing setup walkthrough.
 - `CONTRIBUTING.md`, `SECURITY.md` — community files (contribution guide, vulnerability disclosure).
