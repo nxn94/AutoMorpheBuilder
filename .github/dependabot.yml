@@ -30,6 +30,10 @@ updates:
       day: "monday"
       time: "05:00"
       timezone: "Europe/Berlin"
+    # init and analyze must share a version within a workflow run.
+    groups:
+      codeql-action:
+        patterns: ["github/codeql-action/*"]
     commit-message:
       prefix: "ci"
       include: "scope"
