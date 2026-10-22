@@ -22,12 +22,11 @@ on:
 # Workflow-level default. The `update-patches` job below needs to
 # commit + push to main, so it declares `contents: write` per-job.
 permissions:
-  contents: write
+  contents: read
 
 # Shared concurrency group with morphe-build.yml's create-release step:
-# both push to main (patches.json here, config.json + release tags
-# there). Serializing them prevents a manual update-patches run from
-# racing against a scheduled build's release push.
+# Serialize metadata commits with release/tag mutations. Keep this group
+# identical to create-release.concurrency; builds do not hold the write lock.
 concurrency:
   group: morphe-writes-to-main
   cancel-in-progress: false
@@ -36,6 +35,8 @@ jobs:
   update-patches:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:

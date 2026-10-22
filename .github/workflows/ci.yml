@@ -1,23 +1,7 @@
 name: CI
 
-# Pull-request and main-branch CI. Runs `npm ci` → `npm run lint` →
-# `npm run validate:config` → `npm run check:readme` → `npm test`.
-# The two existing workflows (morphe-build.yml and update-patches.yml)
-# are dispatch/schedule-only, so this is the only thing that gates a
-# broken PR from merging.
-#
-# Config-change orchestration: when a push to main changes
-# `config.json`, the auto-regenerate in `update-patches.yml` lands the
-# matching README update as a follow-up commit (PR #43 fix). If CI's
-# own `push` trigger ran in parallel, it would check the README on the
-# user's commit (which doesn't have the update yet) and fail — a brief
-# red run that's later overwritten by a green run on the auto-commit.
-#
-# A config-only push is deferred to workflow_run after table generation.
-# Mixed config/code pushes still run normal CI and must include regenerated
-# README tables. The follow-up run checks the trusted main branch tip, including
-# generated changes; it is a validation of that tip, not the original head SHA.
-
+# Config-only main pushes are validated after update-patches regenerates README.
+# Mixed config/code pushes and PRs must include matching README tables.
 on:
   pull_request:
   push:
@@ -32,140 +16,48 @@ on:
 permissions:
   contents: read
 
-# Cancel any in-flight run for the same ref when a new commit lands.
-# PR pushes + main-branch auto-runs are cheap but the test fixture
-# build (`zip` install + npm ci + lint + jest suite) is not free —
-# cancelling the superseded run keeps the queue moving.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    if: ${{ github.event_name != 'workflow_run' }}
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Checkout
+        if: github.event_name != 'workflow_run'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Install zip
-        # The apk-selection and apk-abi-validator test fixtures shell
-        # out to `zip` to build fake APKs. `unzip` is preinstalled on
-        # the runner; `zip` is not — without this step several tests
-        # skip with "no zip" warnings instead of actually exercising
-        # the path-stripping bug fix.
-        run: sudo apt-get update && sudo apt-get install -y zip shellcheck
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
-        with:
-          node-version: '24'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Validate config.json shape
-        # Catches typos and missing required keys in patch_repos entries
-        # BEFORE merge. Layer A of the "adding a new app must just work"
-        # robustness fix — see AGENTS.md / PR #32.
-        # PR 3: routes through npm so the ajv-based structural layer
-        # (schemas/*.schema.json) runs alongside the hand-rolled
-        # semantic rules from .github/scripts/validate-config.js.
-        run: npm run validate:config
-
-      - name: Verify README tables match config.json
-        # The "Tested apps" and "Releases & Obtainium" tables in README.md
-        # are generated from config.json by scripts/generate-readme-tables.js
-        # so adding/removing an app is a one-edit affair. This step fails
-        # the PR if the README is out of sync — mirrors validate:config
-        # and forces a `npm run generate:readme` commit on top of any
-        # config.json change.
-        run: npm run check:readme
-
-      - name: Validate contributor instructions
-        run: npm run validate:agent-docs
-
-      - name: Validate shell scripts and workflows
-        run: |
-          shellcheck -x -P SCRIPTDIR .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh scripts/*.sh
-          archive="$RUNNER_TEMP/actionlint.tar.gz"
-          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
-            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
-          printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check
-          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" .github/workflows/*.yml
-
-      - name: Test
-        run: npm test
-
-  test_workflow_run:
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_repository.full_name == github.repository }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout
+      - name: Checkout trusted main tip after metadata update
+        if: github.event_name == 'workflow_run'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # The `workflow_run` listener above is filtered to
-          # `branches: [main]` (and the job's `if:` also requires
-          # `head_repository.full_name == github.repository`), so the
-          # completed upstream run is always the same repo on the main
-          # branch. A literal `refs/heads/main` checks out that branch
-          # tip — equivalent to `head_sha` for a single-branch
-          # workflow, and avoids the CodeQL
-          # `actions/untrusted-checkout` alert that fires whenever a
-          # workflow_run `head_*` field flows into `actions/checkout`'s
-          # `ref`.
+          # Never check out workflow_run head data in this privileged event.
           ref: refs/heads/main
           persist-credentials: false
 
-      - name: Install zip
-        # The apk-selection and apk-abi-validator test fixtures shell
-        # out to `zip` to build fake APKs. `unzip` is preinstalled on
-        # the runner; `zip` is not — without this step several tests
-        # skip with "no zip" warnings instead of actually exercising
-        # the path-stripping bug fix.
+      - name: Install test and lint tools
+        # zip builds real APK fixtures; keep missing tools from silently skipping tests.
         run: sudo apt-get update && sudo apt-get install -y zip shellcheck
 
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with:
           node-version: '24'
+          cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
-      - name: Lint
-        run: npm run lint
-
-      - name: Validate config.json shape
-        # Catches typos and missing required keys in patch_repos entries
-        # BEFORE merge. Layer A of the "adding a new app must just work"
-        # robustness fix — see AGENTS.md / PR #32.
-        # PR 3: routes through npm so the ajv-based structural layer
-        # (schemas/*.schema.json) runs alongside the hand-rolled
-        # semantic rules from .github/scripts/validate-config.js.
-        run: npm run validate:config
-
-      - name: Verify README tables match config.json
-        # The "Tested apps" and "Releases & Obtainium" tables in README.md
-        # are generated from config.json by scripts/generate-readme-tables.js
-        # so adding/removing an app is a one-edit affair. This step fails
-        # the PR if the README is out of sync — mirrors validate:config
-        # and forces a `npm run generate:readme` commit on top of any
-        # config.json change.
-        run: npm run check:readme
-
-      - name: Validate contributor instructions
-        run: npm run validate:agent-docs
+      - name: Check code, tests, configuration and documentation
+        run: npm run check
 
       - name: Validate shell scripts and workflows
         run: |
@@ -176,6 +68,3 @@ jobs:
           printf '%s  %s\n' '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' "$archive" | sha256sum --check
           tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" .github/workflows/*.yml
-
-      - name: Test
-        run: npm test

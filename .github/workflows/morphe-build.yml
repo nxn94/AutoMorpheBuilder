@@ -14,9 +14,7 @@ on:
 permissions:
   contents: read
 
-# Allow only one in-flight build for this workflow. Concurrent runs would
-# race on patches.json / config.json updates; this lets the runner cancel
-# the older one instead of producing a corrupt commit.
+# Queue builds instead of cancelling a run that may already be publishing.
 concurrency:
   group: morphe-build
   cancel-in-progress: false
@@ -64,7 +62,7 @@ jobs:
       - name: Install dependencies
         # PR 3: npm ci installs ajv (devDep) used by the validate
         # step below. Installed once and reused throughout this job.
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Validate configuration
         # PR 3: gates the whole job on a valid config.json + patches.json
@@ -216,6 +214,8 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: pre-downloaded-apks
+          # APK bundles are already compressed; zlib mostly burns CPU here.
+          compression-level: 0
           path: |
             tools/apks/**/*.apk
             tools/apks/**/*.xapk
@@ -309,7 +309,7 @@ jobs:
           cache: npm
 
       - name: Install runtime dependencies
-        run: npm ci --omit=dev
+        run: npm ci --omit=dev --no-audit --no-fund
 
       - name: Ensure apkeep is available
         run: |
@@ -501,6 +501,10 @@ jobs:
 
   create-release:
     needs: [check-versions, build]
+    # Match update-patches.yml; serialize mutations, not the expensive build.
+    concurrency:
+      group: morphe-writes-to-main
+      cancel-in-progress: false
     # Release whatever the matrix successfully produced. The build matrix
     # already runs with `fail-fast: false`, so a single bad app lets every
     # other leg finish — but the matrix `needs.build.result` value that

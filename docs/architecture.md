@@ -167,6 +167,16 @@ requires an HTTPS HEAD probe; every APK still passes the final validation.
 
 ## Further performance measurements
 
+CI shares one validation job for ordinary events and the trusted metadata-update
+follow-up. The latter still checks out literal `refs/heads/main`, never upstream
+head data. `setup-node` caches npm downloads; `npm run check` remains the single
+source of truth for JavaScript, test and documentation checks. npm installs omit
+audit/funding requests (Dependabot remains responsible for vulnerability alerts).
+Pre-downloaded APK artifacts use compression level zero, like signed artifacts.
+Release publishing shares the metadata updater's non-cancelling concurrency group;
+the long-running build does not hold that write lock. See
+[workflow optimization](workflow-optimization.md) for scope and limits.
+
 This revision removes the observed stale check-stage restore, duplicate dependency
 install, `node_modules` artifact, and approximately 536 MiB browser artifact.
 Measure both no-change schedules and full manual builds on GitHub before claiming
