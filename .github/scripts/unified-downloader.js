@@ -18,6 +18,7 @@ const { execFile, spawn } = require("child_process");
 const { chromium } = require("playwright");
 const os = require("node:os");
 const cheerio = require('cheerio');
+const { downloadWithGoopdl } = require('./goopdl-downloader');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { detectApkShape } = require('./apk-selection');
 // Network-independent URL/auth helpers extracted to a pure module so
@@ -1412,6 +1413,7 @@ async function resolveApkmirrorUrl(apkmirrorPath, version) {
  */
 /**
  * Main download function with improved reliability:
+ * 0. Try exact Google Play build via goopdl; any failure uses the chain below
  * 1. Check URL cache -> if valid, use directly
  * 2. Check patches.json -> if has URL, verify and use
  * 3. Parallel resolution (priority-ordered: apkeep → apkmirror-api →
@@ -1432,6 +1434,13 @@ async function download(packageId, version, outputDir, opts = {}) {
   // Ensure output directory exists
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  // Google Play first; preserve the existing URL/resolver chain on any failure.
+  try {
+    return await downloadWithGoopdl(packageId, version, outputDir, opts);
+  } catch (error) {
+    console.error(`[goopdl] ${error.message}; trying existing sources`);
   }
 
   // Step 1: Check URL cache

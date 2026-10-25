@@ -73,12 +73,23 @@ Runs first. Failures here short-circuit the rest of the workflow.
 | Node dependencies | `actions/setup-node` + `npm ci` | Installed once before configuration validation; matrix jobs use the npm cache with `npm ci --omit=dev`. |
 | Cache + install Playwright | `actions/cache@v5` + `pipeline/install_playwright.sh` | The custom installer bypasses a yauzl extraction bug in Playwright 1.58. |
 | Install apkeep + aapt | `pipeline/install_apkeep.sh` + `pipeline/install_aapt.sh` | apkeep is pinned to SHA-256 against `APKEEP_VERSION`. |
+| Install optional goopdl | `pipeline/install_goopdl.sh` | Commit-pinned Python virtualenv; installation failure warns without disabling existing sources. Also installed in each build job. |
 | Pre-download APKs in parallel | `pipeline/pre_download_apks.sh` | Per-app `&` + `wait`. Honours `SKIP_LIST` from the filter step. Calls `update-download-urls.js` per app (writes back only when `auto_update_urls=true` and no `pin_version` is set). |
 
 **Notes:**
 
 - The CLI jar is **never** cached. `download_morphe_tools.sh` always `rm -f` and re-downloads it, because `actions/cache@v5` only saves on a cache miss — a restore would silently put a stale jar back into `tools/`. Both download scripts verify the jar's `Implementation-Version` from `META-INF/MANIFEST.MF` matches `CLI_VERSION` after download.
 - The compat probe classifies stderr for `NoSuchMethodError`, `NoClassDefFoundError`, `IncompatibleClassChangeError`, `VerifyError`, `LinkageError` and emits an actionable `::error::` ("bump cli or pin each affected app to an older patch tag") instead of waiting 30 minutes for the matrix to surface the same crash.
+
+### Google Play first
+
+`unified-downloader.js` tries `goopdl-downloader.js` before the existing URL cache and providers. The optional installer pins upstream goopdl 1.2.2 to commit `30c43eb0f4e06d5ab0a45e39c559a2869a2c7d68` in a Python virtualenv under `tools/goopdl/`. No personal Google account is required.
+
+- `.github/scripts/goopdl-version-codes.json` maps exact version names to verified **stock ARM64** version codes for the seven evaluated app versions. New versions require a verified mapping; unknown versions or other architectures skip Play immediately. Do not derive stock codes from patched APKs or probe current rollout cohorts as a historical catalogue.
+- Each delivery explicitly includes splits. Every APK is checked against the delivery's SHA-256/size and its package/version-code manifest; the base must match the requested version name. The existing ABI validator rejects wrong-architecture deliveries before success. Split deliveries become local `.apkm` bundles for the existing APKEditor merge and final validation path; standalone APKs stay `.apk`.
+- Any installation/download/validation failure continues through the unchanged old source chain. Downloads are bounded to 180 seconds, including at most 30 seconds waiting for the anonymous-pool lock.
+- Parallel apps share a dedicated mode-0700 anonymous authentication HOME at `${TOOLS_DIR:-tools}/goopdl-home`, protected with Linux `flock -F`. Reusing the pool avoids requesting a new batch of anonymous tokens for every app. Personal account environment variables are removed. **Never cache/upload this HOME or log subprocess authentication output.** Temporary delivery files are deleted after success or failure.
+- A Play result supplies a local file, not a reusable URL. Pre-download accepts that file without updating `config.json` or the URL cache with expiring signed delivery URLs. Uploaded APK artifacts contain only `tools/apks/`, not the authentication HOME.
 
 ### `build`
 
@@ -94,7 +105,7 @@ Gated by the `signing` GitHub environment so `KEYSTORE_BASE64` / `KEYSTORE_PASSW
 | Resolve supported version | `prepare_target_version.sh` + inline `list-versions` invocation. Pinned apps skip the CLI call. The `sort -Vr` head-pick handles `list-versions` not guaranteeing "latest first" (Twitch's RookieEnough/De-Vanced prints `16.9.1` before `25.3.0`). |
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
-| Download supported APK | `download-supported-apk.js`. Multi-source fallback: `tools/*.apk` → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via apkeep (APKPure), APKMirror-API (if creds), APKMirror scraper (curl → Chromium fallback). **Cleanup on failure** removes partial APK on ABI / version validation throw so a stale file does not pre-empt the good one. |
+| Download supported APK | `download-supported-apk.js`. Reuse validated local/pre-downloaded APKs; otherwise try **goopdl (Google Play)** → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via apkeep (APKPure), APKMirror-API (if creds), APKMirror scraper (curl → Chromium fallback). **Cleanup on failure** removes partial APK on ABI / version validation throw so a stale file does not pre-empt the good one. |
 | Decode signing keystore | `printf '%s' "$KEYSTORE_BASE64" \| base64 -d > "$TOOLS_DIR/source.keystore"` — no conversion. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents. Hard-fails if `KEYSTORE_BASE64` or `KEYSTORE_PASSWORD` is unset. |
 | Patch and sign APK | `patch_apk.sh` runs `morphe-desktop.jar patch --keystore <file> --keystore-password <KEYSTORE_PASSWORD> --keystore-entry-alias <KEY_ALIAS or detected first alias> --keystore-entry-password <KEY_PASSWORD or KEYSTORE_PASSWORD>`. If the keystore is invalid or the password is wrong, morphe-desktop exits non-zero and the job fails loudly (no `--unsigned` fallback). |
 | Upload signed APK | `${{ matrix.name }}-v${{ version }}-${{ patches-tag }}` artifact. |
