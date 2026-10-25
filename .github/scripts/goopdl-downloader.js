@@ -56,12 +56,16 @@ async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
       }
       names.add(item.path);
       const file = path.join(temp, item.path);
-      const stat = fs.lstatSync(file);
-      if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== item.size || item.algorithm !== 'sha256') {
-        throw new Error('Invalid Google Play artifact metadata');
-      }
-      const digest = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('base64url');
-      if (digest !== item.digest) throw new Error('Google Play artifact digest mismatch');
+      // Validate and hash the same descriptor; never follow a replaced symlink.
+      const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const stat = fs.fstatSync(fd);
+        if (!stat.isFile() || stat.size !== item.size || item.algorithm !== 'sha256') {
+          throw new Error('Invalid Google Play artifact metadata');
+        }
+        const digest = crypto.createHash('sha256').update(fs.readFileSync(fd)).digest('base64url');
+        if (digest !== item.digest) throw new Error('Google Play artifact digest mismatch');
+      } finally { fs.closeSync(fd); }
       const { stdout } = await exec('aapt', ['dump', 'badging', file], runOpts);
       const line = stdout.split('\n').find(line => line.startsWith('package:')) || '';
       const attrs = Object.fromEntries([...line.matchAll(/(\w+)='([^']*)'/g)].map(match => [match[1], match[2]]));

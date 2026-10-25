@@ -51,6 +51,16 @@ test.each([
   expect(fs.readdirSync(dir).filter(name => name !== 'pool')).toEqual([]);
 });
 
+test('artifact validation opens files without following links before inspecting their bytes', async () => {
+  const open = jest.spyOn(fs, 'openSync');
+  try {
+    await download('com.test', '1.2', dir, options(fixture()));
+    expect(open.mock.calls.some(([file, flags]) =>
+      String(file).endsWith('.apk') && typeof flags === 'number' && (flags & fs.constants.O_NOFOLLOW) !== 0,
+    )).toBe(true);
+  } finally { open.mockRestore(); }
+});
+
 test('unverified architecture variants retain the original fallback path', async () => {
   const exec = fixture();
   await expect(download('com.test', '1.2', dir, { ...options(exec), preferredArch: 'x86_64' })).rejects.toThrow('not verified for requested architecture');
