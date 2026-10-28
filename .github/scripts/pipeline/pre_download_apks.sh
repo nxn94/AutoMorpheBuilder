@@ -101,6 +101,12 @@ download_for() {
       printf '%s:%s:%s\n' "$pkg" "$version" "$url" > "$RESULTS_DIR/${pkg}.txt"
       return 0
     fi
+    # Google Play returns a local artifact, not a reusable public URL.
+    if printf '%s' "$result" | jq -e '.source == "goopdl" and (.file | type == "string")' >/dev/null 2>&1; then
+      local artifact
+      artifact="$(printf '%s' "$result" | jq -r '.file')"
+      if [ -f "$artifact" ]; then return 0; fi
+    fi
   fi
   log_warn "  [$pkg] unified-downloader failed for v${version}"
   err="$(printf '%s' "$result" | jq -r '.error // empty' 2>/dev/null || true)"
