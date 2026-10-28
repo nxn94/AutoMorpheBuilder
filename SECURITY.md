@@ -51,6 +51,22 @@ The following are not security issues for this repository:
 - APKMirror rate-limiting or 403s. Those are upstream operational issues.
 - Build failures covered in `docs/troubleshooting.md`.
 
+## Known test-only dependency advisory
+
+`GHSA-gcqx-w48m-w2h4` affects `deepmerge@4.3.1`, pulled in only by
+`jest-config@30.5.2`. No patched `deepmerge` version is currently available.
+Jest uses it to merge repository-owned test configuration; the APK downloader
+and build scripts do not import it or pass remote APK metadata to it.
+An attacker able to change the test configuration can already execute arbitrary
+code through tests. PR tests run without signing secrets or write permission.
+
+Dependabot alert #29 is therefore dismissed as **tolerable risk (test-only)**,
+not fixed or classified as a false positive. The package remains vulnerable, and full
+`npm audit` reports it and its Jest dependants; `npm audit --omit=dev` is clean.
+Do not downgrade Jest or disguise the vulnerable package version just to clear
+the audit. Upgrade when an upstream fix is available, and reopen the alert if
+this dependency reaches runtime code or begins merging untrusted remote input.
+
 ## Attribution
 
 We follow coordinated disclosure. Reporters who file a valid advisory will be credited in the fix commit (unless they prefer anonymity).
