@@ -254,7 +254,7 @@ Shape:
     "com.google.android.apps.youtube.music":     { "name": "ytmusic", "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "google-inc/youtube-music" },
     "com.reddit.frontpage":                      { "name": "reddit",  "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "redditinc/reddit" },
     "com.sofascore.results":                     { "name": "sofascore","repo": "hoo-dles/morphe-patches",    "branch": "main", "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore" },
-    "tv.twitch.android.app":                     { "name": "twitch",  "repo": "RookieEnough/De-Vanced",       "branch": "main", "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming" },
+    "tv.twitch.android.app":                     { "name": "twitch",  "repo": "ryykitty/twitch-patched",       "branch": "main", "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming" },
     "com.kevinforeman.nzb360":                   { "name": "nzb360",  "repo": "rushiranpise/morphe-patches",  "branch": "main", "apkmirror_path": "kevin-foreman/nzb360",          "pin_patch_tag": "v1.18.3" },
     "com.finalwire.aida64":                      { "name": "aida64",  "repo": "rushiranpise/morphe-patches",  "branch": "main", "apkmirror_path": "finalwire-ltd/aida64",          "pin_patch_tag": "v1.18.3" },
     "com.getmimo":                               { "name": "mimo",    "repo": "hoo-dles/morphe-patches",       "branch": "main", "apkmirror_path": "mimohello-gmbh/mimohello-mimo-learn-to-code" }
