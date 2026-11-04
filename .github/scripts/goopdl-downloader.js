@@ -13,11 +13,19 @@ const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
   const arch = opts.preferredArch || process.env.PREFERRED_ARCH || loadConfig().preferred_arch || 'arm64-v8a';
   if (arch !== 'arm64-v8a') throw new Error('Google Play version codes not verified for requested architecture');
-  const code = (opts.versionCodes || versionCodes)[packageId]?.[version];
-  if (!Number.isSafeInteger(code) || code <= 0) throw new Error('No verified Google Play version code for requested version');
   if (!/^[a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+$/.test(packageId) || !/^\d+(?:\.\d+)*$/.test(version)) {
     throw new Error('Invalid package or version');
   }
+  const goopdlBin = opts.goopdlBin || process.env.GOOPDL_BIN || path.resolve(process.env.TOOLS_DIR || 'tools', 'goopdl/bin/goopdl');
+  if (!fs.existsSync(goopdlBin)) throw new Error('Optional Google Play downloader is not installed');
+  let code = (opts.versionCodes || versionCodes)[packageId]?.[version];
+  if (code !== undefined && (!Number.isSafeInteger(code) || code <= 0)) throw new Error('Invalid Google Play version code');
+  if (!code && opts.resolveVersionCode) {
+    try { code = await opts.resolveVersionCode(packageId, version, arch); } catch { /* Try goopdl's exact-name resolver next. */ }
+    if (code !== undefined && (!Number.isSafeInteger(code) || code <= 0)) throw new Error('Invalid discovered Google Play version code');
+  }
+  // Never omit --version: goopdl would otherwise silently download the latest release.
+  const requestedVersion = String(code || version);
   const exec = opts.execFileImpl || promisify(execFile);
   const output = path.resolve(outputDir);
   fs.mkdirSync(output, { recursive: true });
@@ -37,8 +45,8 @@ async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
     try {
       // -F replaces flock with goopdl, so timeout cancellation also kills the downloader.
       await exec('flock', ['-F', '-w', '30', path.join(home, '.lock'),
-        opts.goopdlBin || process.env.GOOPDL_BIN || path.resolve(process.env.TOOLS_DIR || 'tools', 'goopdl/bin/goopdl'),
-        'download', packageId, '--version', String(code), '--arch', 'arm64',
+        goopdlBin,
+        'download', packageId, '--version', requestedVersion, '--arch', 'arm64',
         '--splits', '--no-extras', '--profile', 'Pv',
         '--integrity-manifest', manifestPath, '-o', temp,
       ], runOpts);
@@ -69,7 +77,8 @@ async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
       const { stdout } = await exec('aapt', ['dump', 'badging', file], runOpts);
       const line = stdout.split('\n').find(line => line.startsWith('package:')) || '';
       const attrs = Object.fromEntries([...line.matchAll(/(\w+)='([^']*)'/g)].map(match => [match[1], match[2]]));
-      if (attrs.name !== packageId || attrs.versionCode !== String(code)) throw new Error('Google Play package/version code mismatch');
+      if (!code && /^\d+$/.test(attrs.versionCode) && Number.isSafeInteger(Number(attrs.versionCode)) && Number(attrs.versionCode) > 0) code = Number(attrs.versionCode);
+      if (!code || attrs.name !== packageId || attrs.versionCode !== String(code)) throw new Error('Google Play package/version code mismatch');
       if (!attrs.split) {
         if (base || attrs.versionName !== version) throw new Error('Google Play base/version mismatch');
         base = item.path;

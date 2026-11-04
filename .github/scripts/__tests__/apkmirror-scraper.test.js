@@ -390,9 +390,9 @@ describe('resolveApkmirrorReleaseSlug', () => {
   // reuse it for the slug scrape: Chromium's TLS fingerprint passes
   // Cloudflare. This test exercises that path end-to-end.
   test('resolves the slug via a Playwright page when provided', async () => {
-    const goto = jest.fn(() => Promise.resolve({ ok: () => true }));
+    const goto = jest.fn(() => Promise.resolve({ status: () => 200 }));
     const content = jest.fn(() => Promise.resolve(sofascoreAllVersionsHtml));
-    const page = { goto, content };
+    const page = { goto, content, title: async () => 'APKMirror', waitForTimeout: jest.fn() };
 
     const url = await resolveApkmirrorReleaseSlug(sofascorePath, '26.07.27', { page });
 
@@ -410,6 +410,7 @@ describe('resolveApkmirrorReleaseSlug', () => {
     const page = {
       goto: jest.fn(() => Promise.resolve({ ok: () => false, status: () => 403 })),
       content: jest.fn(),
+      title: async () => 'Attention Required! | Cloudflare', waitForTimeout: jest.fn(),
     };
 
     const url = await resolveApkmirrorReleaseSlug(sofascorePath, '26.07.27', { page });
@@ -446,12 +447,12 @@ describe('resolveApkmirrorReleaseSlugViaChromium', () => {
   });
 
   test('launches Chromium, navigates to /all-versions/, and returns the resolved slug', async () => {
-    const goto = jest.fn(() => Promise.resolve({ ok: () => true }));
+    const goto = jest.fn(() => Promise.resolve({ status: () => 200 }));
     const content = jest.fn(() => Promise.resolve(sofascoreAllVersionsHtml));
-    const newPage = jest.fn(() => Promise.resolve({ goto, content }));
+    const newPage = jest.fn(() => Promise.resolve({ goto, content, title: async () => 'APKMirror', waitForTimeout: jest.fn() }));
     const close = jest.fn(() => Promise.resolve());
     const newContext = jest.fn(() => Promise.resolve({ newPage }));
-    const launch = jest.fn(() => Promise.resolve({ newContext, close }));
+    const launch = jest.fn(() => Promise.resolve({ newContext, close, version: () => '151.0.0.0' }));
 
     jest.doMock('playwright', () => ({ chromium: { launch } }));
 
@@ -464,8 +465,9 @@ describe('resolveApkmirrorReleaseSlugViaChromium', () => {
     expect(launch).toHaveBeenCalledTimes(1);
     expect(newContext).toHaveBeenCalledTimes(1);
     expect(newPage).toHaveBeenCalledTimes(1);
-    expect(goto).toHaveBeenCalledTimes(1);
-    expect(goto.mock.calls[0][0]).toBe(
+    expect(goto).toHaveBeenCalledTimes(2);
+    expect(goto.mock.calls[0][0]).toBe('https://www.apkmirror.com/');
+    expect(goto.mock.calls[1][0]).toBe(
       `https://www.apkmirror.com/apk/${sofascorePath}/all-versions/`
     );
     expect(content).toHaveBeenCalledTimes(1);
@@ -473,11 +475,11 @@ describe('resolveApkmirrorReleaseSlugViaChromium', () => {
   });
 
   test('returns the path-slug fallback when Chromium also fails on /all-versions/', async () => {
-    const goto = jest.fn(() => Promise.resolve({ ok: () => false, status: () => 403 }));
-    const newPage = jest.fn(() => Promise.resolve({ goto, content: jest.fn() }));
+    const goto = jest.fn(url => Promise.resolve({ status: () => url === 'https://www.apkmirror.com/' ? 200 : 403 }));
+    const newPage = jest.fn(() => Promise.resolve({ goto, content: jest.fn(), title: async () => 'APKMirror', waitForTimeout: jest.fn() }));
     const close = jest.fn(() => Promise.resolve());
     const newContext = jest.fn(() => Promise.resolve({ newPage }));
-    const launch = jest.fn(() => Promise.resolve({ newContext, close }));
+    const launch = jest.fn(() => Promise.resolve({ newContext, close, version: () => '151.0.0.0' }));
 
     jest.doMock('playwright', () => ({ chromium: { launch } }));
 

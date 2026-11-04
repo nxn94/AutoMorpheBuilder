@@ -61,6 +61,7 @@ if [ -d "$CACHE_DIR" ] && find "$CACHE_DIR" -name 'chrome' 2>/dev/null | grep -q
       const t0 = Date.now();
       const browser = await chromium.launch({
         headless: true,
+        channel: "chromium",
         args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
       });
       const page = await browser.newPage();
