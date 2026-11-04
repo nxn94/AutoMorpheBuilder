@@ -83,7 +83,7 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
     },
     "tv.twitch.android.app": {
       "name": "twitch",
-      "repo": "RookieEnough/De-Vanced",
+      "repo": "ryykitty/twitch-patched",
       "branch": "main",
       "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming"
     },

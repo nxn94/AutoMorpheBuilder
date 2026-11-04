@@ -32,7 +32,7 @@
     },
     "tv.twitch.android.app": {
       "name": "twitch",
-      "repo": "RookieEnough/De-Vanced",
+      "repo": "ryykitty/twitch-patched",
       "branch": "main",
       "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming",
       "display_name": "Twitch"

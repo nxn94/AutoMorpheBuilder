@@ -153,14 +153,21 @@
       "Start as guest": true
     }
   },
-  "RookieEnough/De-Vanced": {
+  "ryykitty/twitch-patched": {
     "tv.twitch.android.app": {
-      "Auto claim channel points": true,
-      "Block audio ads": true,
-      "Block embedded ads": true,
-      "Block video ads": true,
-      "Debug mode": true,
-      "Show deleted messages": true
+      "Auto-claim bonus channel points": true,
+      "BTTV, FFZ and 7TV emotes": true,
+      "Block client-requested ads": true,
+      "Block stream ads": true,
+      "Favorite emotes": true,
+      "Hide Turbo promotions": true,
+      "Hide feed and display ads": true,
+      "Hide subscription discount banners": true,
+      "Inspect Twitch APK": false,
+      "Playback diagnostics": false,
+      "Reload stream": true,
+      "Show deleted messages": true,
+      "UI settings": true
     }
   },
   "rushiranpise/morphe-patches": {
