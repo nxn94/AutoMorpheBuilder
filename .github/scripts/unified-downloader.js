@@ -19,6 +19,7 @@ const { chromium } = require("playwright");
 const os = require("node:os");
 const cheerio = require('cheerio');
 const { downloadWithGoopdl } = require('./goopdl-downloader');
+const { openApkmirror, navigateApkmirror, extractVersionCode } = require('./apkmirror-browser');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { detectApkShape } = require('./apk-selection');
 // Network-independent URL/auth helpers extracted to a pure module so
@@ -158,10 +159,7 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
   try {
     let html;
     if (page) {
-      const resp = await page.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      if (!resp || !resp.ok()) {
-        throw new Error(`page.goto HTTP ${resp ? resp.status() : 'no response'}`);
-      }
+      await navigateApkmirror(page, listUrl);
       html = await page.content();
     } else {
       // codeql[js/file-access-to-http] reason: listUrl is APKMirror's
@@ -1077,31 +1075,21 @@ async function downloadViaPlaywright(apkmirrorPath, version, outputDir) {
 
   console.error(`[apkmirror-pw] Starting browser download for ${apkmirrorPath} v${version}`);
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-  });
+  const { browser, page } = await openApkmirror(chromium);
 
   try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
-      locale: 'en-US',
-      acceptDownloads: true,
-      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9', 'DNT': '1' },
-    });
-    const page = await context.newPage();
 
     // Page 1: Release page (slug resolved via /all-versions/, not path last component).
     const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     console.error(`[apkmirror-pw] Page 1: ${page1Url}`);
-    await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await navigateApkmirror(page, page1Url);
     const $1 = cheerio.load(await page.content());
     const variantHref = selectVariant($1, priorities);
 
     // Page 2: Variant page → find download button
     const page2Url = `https://www.apkmirror.com${variantHref}`;
     console.error(`[apkmirror-pw] Page 2: ${page2Url}`);
-    await page.goto(page2Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await navigateApkmirror(page, page2Url);
     const $2 = cheerio.load(await page.content());
     const dlButtonHref = $2('a.downloadButton[href]').attr('href');
     if (!dlButtonHref) throw new Error('Download button not found on APKMirror variant page');
@@ -1109,7 +1097,7 @@ async function downloadViaPlaywright(apkmirrorPath, version, outputDir) {
     // Page 3: Download confirmation page → click final link within browser session
     const page3Url = `https://www.apkmirror.com${dlButtonHref}`;
     console.error(`[apkmirror-pw] Page 3: ${page3Url}`);
-    await page.goto(page3Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await navigateApkmirror(page, page3Url);
     // APKMirror shows a cookie/consent popup on this page that blocks clicks.
     // The button text is exactly "AGREE" (InMobi CMP). Dismiss it before
     // trying to click the download link, otherwise the click is intercepted.
@@ -1221,35 +1209,29 @@ async function downloadWithApkmirror(packageId, version, outputDir) {
   };
 }
 
-/**
- * Resolve APKMirror's release-page slug via Chromium when curl gets
- * blocked by Cloudflare. The /all-versions/ page is the only one whose
- * bot detection bites the GitHub Actions runner; the release/variant/
- * download pages are usually fine with curl once the slug is known.
- * Spinning up a fresh browser just for the slug scrape saves the ~10s
- * of full-Playwright navigation on each call.
- *
- * On Cloudflare 403 from the curl path, this is the fallback. On
- * network/parse errors (e.g. no release link found) it falls back to
- * the path-derived URL.
- */
-async function resolveApkmirrorReleaseSlugViaChromium(apkmirrorPath, version) {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-  });
+/** Discover a stock Play code from an exact-version, architecture-specific listing. */
+async function resolveGooglePlayVersionCode(packageId, version, arch) {
+  const apkmirrorPath = getApkmirrorPath(packageId);
+  if (!apkmirrorPath) throw new Error('No APKMirror mapping for version discovery');
+  const { browser, page } = await openApkmirror(chromium);
   try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
-      locale: 'en-US',
-      extraHTTPHeaders: { 'Accept-Language': 'en-US,en;q=0.9', 'DNT': '1' },
-    });
-    const page = await context.newPage();
-    // Reuse the existing helper — it accepts a `page` option and falls
-    // back to fetch when no page is passed. With the page it goes
-    // through Chromium; on Cloudflare 403 it falls back to the
-    // path-derived URL (which is what we want for the curl path to
-    // bail out).
+    const releaseUrl = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
+    await navigateApkmirror(page, releaseUrl);
+    // Only explicit architecture matches provide Play codes, not universal fallbacks.
+    const priorities = buildVariantPriorities(arch).filter(p => p.arch === arch);
+    const variant = selectVariant(cheerio.load(await page.content()), priorities);
+    await navigateApkmirror(page, new URL(variant, 'https://www.apkmirror.com').href);
+    return extractVersionCode(cheerio.load(await page.content()), packageId, version);
+  } finally {
+    await browser.close();
+  }
+}
+
+/** Resolve the current release slug when the curl listing is blocked. */
+async function resolveApkmirrorReleaseSlugViaChromium(apkmirrorPath, version) {
+  const { browser, page } = await openApkmirror(chromium);
+  try {
+    // Reuse the warmed context; the helper retains its path-slug fallback.
     const url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     return url;
   } finally {
@@ -1332,26 +1314,14 @@ async function resolveApkmirrorUrlViaCurl(apkmirrorPath, version, priorities) {
 async function resolveApkmirrorUrlViaPlaywright(apkmirrorPath, version, priorities) {
   console.error(`[apkmirror-scraper] Using Playwright fallback for ${apkmirrorPath} v${version}`);
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-  });
+  const { browser, page } = await openApkmirror(chromium);
 
   try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
-      locale: 'en-US',
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-US,en;q=0.9',
-        'DNT': '1',
-      },
-    });
-    const page = await context.newPage();
 
     // Page 1: Release page (slug resolved via /all-versions/, not path last component).
     const page1Url = await resolveApkmirrorReleaseSlug(apkmirrorPath, version, { page });
     console.error(`[apkmirror-scraper] Page 1 (PW): ${page1Url}`);
-    await page.goto(page1Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await navigateApkmirror(page, page1Url);
     const html1 = await page.content();
     const $1 = cheerio.load(html1);
     const variantHref = selectVariant($1, priorities);
@@ -1359,7 +1329,7 @@ async function resolveApkmirrorUrlViaPlaywright(apkmirrorPath, version, prioriti
     // Page 2: Variant page
     const page2Url = `https://www.apkmirror.com${variantHref}`;
     console.error(`[apkmirror-scraper] Page 2 (PW): ${page2Url}`);
-    await page.goto(page2Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await navigateApkmirror(page, page2Url);
     const html2 = await page.content();
     const $2 = cheerio.load(html2);
     const downloadButtonHref = $2('a.downloadButton[href]').attr('href');
@@ -1370,7 +1340,7 @@ async function resolveApkmirrorUrlViaPlaywright(apkmirrorPath, version, prioriti
     // which matches ~96 unrelated sidebar nav links on the same page).
     const page3Url = `https://www.apkmirror.com${downloadButtonHref}`;
     console.error(`[apkmirror-scraper] Page 3 (PW): ${page3Url}`);
-    await page.goto(page3Url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await navigateApkmirror(page, page3Url);
     const html3 = await page.content();
     const $3 = cheerio.load(html3);
     const finalHref =
@@ -1438,7 +1408,7 @@ async function download(packageId, version, outputDir, opts = {}) {
 
   // Google Play first; preserve the existing URL/resolver chain on any failure.
   try {
-    return await downloadWithGoopdl(packageId, version, outputDir, opts);
+    return await downloadWithGoopdl(packageId, version, outputDir, { resolveVersionCode: resolveGooglePlayVersionCode, ...opts });
   } catch (error) {
     console.error(`[goopdl] ${error.message}; trying existing sources`);
   }
@@ -1585,6 +1555,7 @@ module.exports = {
   collectCookies,
   resolveApkmirrorReleaseSlug,
   resolveApkmirrorReleaseSlugViaChromium,
+  resolveGooglePlayVersionCode,
   resolveApkmirrorUrl,
   resolveApkeep,
   resolveApkeepVariant,
@@ -1609,6 +1580,7 @@ module.exports = {
   // them through the full download() fallback chain.
   downloadWithUrl,
   downloadWithApkeep,
+  downloadViaPlaywright,
   // Source priority table for the resolver fallback chain (see top of
   // file). Exported so test code and external tooling can introspect
   // the order without re-reading the inline sources[] array.

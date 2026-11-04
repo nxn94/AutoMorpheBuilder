@@ -14,7 +14,7 @@ afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 function fixture({ wrongVersion = false, corrupt = false, traversal = false, wrongAbi = false } = {}) {
   const wrapped = jest.fn(async (command, args, opts) => {
     if (command === 'flock') return wrapped(args[4], args.slice(5), opts);
-    if (command === 'fixture-goopdl') {
+    if (command === process.execPath) {
       const output = args[args.indexOf('-o') + 1];
       const files = ['com.test-123.apk', 'com.test-123-config.arm64_v8a.apk'].map(name => {
         const file = path.join(output, name);
@@ -67,10 +67,22 @@ test('unverified architecture variants retain the original fallback path', async
   expect(exec).not.toHaveBeenCalled();
 });
 
-test('unknown historical versions skip Play without probing rollout cohorts', async () => {
+test('unknown versions discover an architecture-specific exact code instead of skipping Play', async () => {
   const exec = fixture();
-  await expect(download('com.test', '7.8', dir, options(exec))).rejects.toThrow('No verified Google Play version code');
-  expect(exec).not.toHaveBeenCalled();
+  const resolveVersionCode = jest.fn(async () => 123);
+  await download('com.test', '1.2', dir, { ...options(exec), versionCodes: {}, resolveVersionCode });
+  expect(resolveVersionCode).toHaveBeenCalledWith('com.test', '1.2', 'arm64-v8a');
+  expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['--version', '123']));
+});
+
+test('unknown versions use goopdl exact-name resolution when metadata is unavailable', async () => {
+  const exec = fixture();
+  await download('com.test', '1.2', dir, { ...options(exec), versionCodes: {}, resolveVersionCode: async () => { throw new Error('Cloudflare'); } });
+  expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['--version', '1.2']));
+});
+
+test('exact-name discovery never accepts a different delivered version', async () => {
+  await expect(download('com.test', '1.2', dir, { ...options(fixture({ wrongVersion: true })), versionCodes: {} })).rejects.toThrow(/base\/version mismatch/);
 });
 
 test('upstream error output is redacted and incomplete downloads are removed', async () => {
@@ -79,7 +91,7 @@ test('upstream error output is redacted and incomplete downloads are removed', a
   expect(fs.readdirSync(dir).filter(name => name !== 'pool')).toEqual([]);
 });
 
-const options = (execFileImpl) => ({ execFileImpl, homeDir: path.join(dir, 'pool'), goopdlBin: 'fixture-goopdl', versionCodes: { 'com.test': { '1.2': 123 } } });
+const options = (execFileImpl) => ({ execFileImpl, homeDir: path.join(dir, 'pool'), goopdlBin: process.execPath, versionCodes: { 'com.test': { '1.2': 123 } } });
 
 test('downloads exact numeric code, validates delivery and packages splits for the existing merger', async () => {
   const exec = fixture();
@@ -90,7 +102,7 @@ test('downloads exact numeric code, validates delivery and packages splits for t
   expect(execFileSync('unzip', ['-Z1', result.file], { encoding: 'utf8' }).trim().split('\n')).toEqual(['base.apk', 'com.test-123-config.arm64_v8a.apk']);
   const [command, args] = exec.mock.calls[0];
   expect(command).toBe('flock');
-  expect(args.slice(0, 5)).toEqual(['-F', '-w', '30', path.join(dir, 'pool', '.lock'), 'fixture-goopdl']);
+  expect(args.slice(0, 5)).toEqual(['-F', '-w', '30', path.join(dir, 'pool', '.lock'), process.execPath]);
   expect(exec.mock.calls[0][2].env.HOME).toBe(path.join(dir, 'pool'));
   expect(args).toEqual(expect.arrayContaining(['--version', '123', '--splits', '--no-extras', '--arch', 'arm64']));
   expect(fs.readdirSync(dir).filter(name => name !== 'pool')).toEqual([path.basename(result.file)]);
