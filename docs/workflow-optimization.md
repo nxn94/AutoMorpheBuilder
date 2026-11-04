@@ -1,4 +1,4 @@
-# Workflow optimization (dev)
+# Workflow optimization
 
 What this repo does: GitHub Actions builds, signs and publishes patched Android
 APKs. This review assumes one personal repository, a daily build and occasional
@@ -12,7 +12,7 @@ manual builds or metadata updates, not a high-throughput build farm.
    Event-specific checkout steps preserve the trusted literal main checkout for
    `workflow_run`; no upstream head value is checked out. The old
    `test_workflow_run` job name is removed; any downstream consumer of that name
-   must use `test` instead (dev has no branch protection at review time).
+   must use `test` instead. Check branch-protection requirements when renaming jobs.
 
 2. **The documented shared write lock was missing on the publisher**
    (`morphe-build.yml`, `update-patches.yml`). The updater declared a shared group,
@@ -55,8 +55,8 @@ Verdict: small orchestration changes, not a pipeline rewrite. No measured
 wall-clock speedup is claimed. All four workflow files were reviewed; CodeQL
 needed no change.
 
-Not checked: full third-party APK downloads, signing and release publication;
-manual build/update dispatches would mutate repository releases or metadata and
-were deliberately not run. The default-branch workflow_run listener cannot be
-exercised from dev alone. Scheduled runs still use the default branch. Changes
-are intentionally restricted to dev; main is not updated.
+This optimization review did not exercise full third-party APK downloads,
+signing or release publication. Manual build/update dispatches mutate releases
+or metadata; do not treat unit validation as end-to-end evidence. Scheduled runs
+and the metadata-follow-up listener use the default branch (`main`); topic-branch
+tests alone do not exercise those default-branch events.

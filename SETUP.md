@@ -2,6 +2,8 @@
 
 Forking for personal use is encouraged. Most customizations are edits to `config.json` and `patches.json` — no workflow changes needed.
 
+Optional browser editor: [AutoMorpheBuilder UI](https://nxn94.github.io/AutoMorpheBuilder-UI/) loads, edits and validates both JSON files. Download your changes and commit them to your fork; it does not save to GitHub or start workflows automatically. Never enter signing secrets into the UI or commit them in JSON.
+
 ---
 
 ## 1. Create a signing keystore
@@ -19,9 +21,14 @@ Keep this file safe — do not commit it.
 
 ## 2. Base64-encode the keystore
 
-**Linux / macOS:**
+**Linux (GNU coreutils):**
 ```bash
 base64 -w 0 morphe.jks
+```
+
+**macOS:**
+```bash
+base64 < morphe.jks | tr -d '\n'
 ```
 
 **Windows PowerShell:**
@@ -43,7 +50,7 @@ Repo → Settings → Secrets and variables → Actions.
 | `KEYSTORE_PASSWORD` | yes | Keystore password (also used as the key entry password when `KEY_PASSWORD` is unset) |
 | `KEY_ALIAS` | no | Defaults to the first alias in the keystore, detected via `keytool -list`. Set this explicitly if your keystore has multiple aliases. |
 | `KEY_PASSWORD` | no | Only if the key entry password differs from `KEYSTORE_PASSWORD`. Set for keystores where the store and key passwords were generated separately. |
-| `APKMIRROR_API_USER` | no | Speeds up APK resolution (skips Playwright fallback) |
+| `APKMIRROR_API_USER` | no | Enables the optional APKMirror-API provider; browser fallback remains available |
 | `APKMIRROR_API_PASS` | no | APKMirror-API password |
 
 ---
@@ -60,7 +67,7 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
     "com.google.android.youtube": {
       "name": "youtube",
       "repo": "MorpheApp/morphe-patches",
-      "branch": "main",
+      "branch": "dev",
       "apkmirror_path": "google-inc/youtube"
     },
     "com.google.android.apps.youtube.music": {
@@ -77,7 +84,7 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
     },
     "com.sofascore.results": {
       "name": "sofascore",
-      "repo": "heval99/morphe-patches",
+      "repo": "hoo-dles/morphe-patches",
       "branch": "main",
       "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore"
     },
@@ -94,24 +101,18 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
       "apkmirror_path": "kevin-foreman/nzb360",
       "pin_patch_tag": "v1.18.3"
     },
-    "com.finalwire.aida64": {
-      "name": "aida64",
+    "com.flightradar24free": {
+      "name": "flightradar24",
       "repo": "rushiranpise/morphe-patches",
       "branch": "main",
-      "apkmirror_path": "finalwire-ltd/aida64",
-      "pin_patch_tag": "v1.18.3"
-    },
-    "com.getmimo": {
-      "name": "mimo",
-      "repo": "hoo-dles/morphe-patches",
-      "branch": "main",
-      "apkmirror_path": "mimohello-gmbh/mimo-learn-to-code"
+      "apkmirror_path": "flightradar24-ab/flightradar24-flight-tracker-2"
     }
   },
   "cli": {
     "repo": "MorpheApp/morphe-desktop",
     "branch": "main"
-  }
+  },
+  "download_urls": {}
 }
 ```
 
@@ -154,7 +155,9 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
 
 Actions → **Build Morphe-patched apps** → Run workflow.
 
-Runs daily at 05:15 UTC automatically. The `check-versions` job drops apps whose release already exists — only apps with a new patch or APK version get rebuilt.
+Select your intended branch (normally `main`). Scheduled runs use the default branch daily at 05:15 UTC and skip apps only when APK, checksum and provenance assets are complete and match the current build inputs. Manual runs force rebuilding, including existing tags. See [release identity](docs/release-process.md#build-identity-and-forced-rebuilds).
+
+The workflow installs optional goopdl and tries exact-version Google Play downloads before the existing cache/APKPure/APKMirror providers. No personal Google login is needed; all fallbacks remain available. Never upload or cache `tools/goopdl-home/` (the private anonymous-authentication pool).
 
 ---
 
@@ -176,8 +179,7 @@ One entry per app, same repo, different Release Tag Filter:
 | Sofascore | `^sofascore` |
 | Twitch | `^twitch` |
 | NZB360 | `^nzb360` |
-| AIDA64 | `^aida64` |
-| Mimo | `^mimo` |
+| Flightradar24 | `^flightradar24` |
 
 ---
 
@@ -188,7 +190,7 @@ The list below mirrors the short set in `README.md` → "Common failures". For t
 - **`Chosen APK has no classes.dex`** — split/config APK picked. The post-merge step handles XAPK/APKM/APKS bundles via APKEditor, so bundles should resolve to a patched base APK automatically.
 - **`[pkg] could not determine version`** — `morphe-desktop list-versions` found no compatible APK for the app's patch. Verify `patch_repos[*].repo` publishes a `.mpp` for your package.
 - **`Wrong version of key store`** — verify `KEYSTORE_BASE64` decodes to the correct keystore, `KEYSTORE_PASSWORD` is right, and `KEY_PASSWORD` is set only if it differs.
-- **Arm64-v8a APK arrives with armeabi-v7a libs only** — upstream bundle is mislabeled. Use `pin_version` to lock to a known-good APK version.
+- **ARM64 requested but only armeabi-v7a libraries arrive** — check the selected source/variant; keep validation enabled and use another provider or a known-good `pin_version`.
 - **Obtainium not finding updates** — verify the Release Tag Filter regex matches the `name` field in `config.json`.
 
 ---

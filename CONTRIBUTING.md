@@ -71,7 +71,7 @@ chore(workflows): remove stale comments pointing at AGENTS.md
 
 ## Pull requests
 
-PRs go to the `dev` branch. `main` only receives fast-forward merges from `dev`.
+Open a topic branch from current `main` and target PRs at `main`. Scheduled builds use the default branch; an upstream app's `branch: dev` selects that patch repository's releases, not this repository's contribution branch.
 
 Before opening a PR, complete the **Validation** section below and tick every box that applies. Use `.github/pull_request_template.md` — it lists the same checks.
 
@@ -104,6 +104,9 @@ npm ci
 # Unit tests (Jest)
 npm test
 
+# Full local gate: lint, tests, config, agent docs and generated README tables
+npm run check
+
 # Lint JS (flat-config ESLint, scoped to .github/scripts/)
 npm run lint
 
@@ -128,7 +131,7 @@ A "fully green" PR shows no skipped tests, no lint warnings, no `actionlint` fin
 - **No unsigned APKs.** The build hard-fails on signing errors — do not add an `--unsigned` flag or env-gated skip path.
 - **No force-pushes to `dev` or `main`.** Squash or rebase locally before pushing.
 - **No secrets in the tree.** The `.gitignore` blocks `*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.pem`, `*.b64`, `morphe.jks*`. Do not weaken it.
-- **No workflow `uses:` downgrades.** All `actions/*` references pin to a major version (`@v4` / `@v5` / `@v6` / `@v7` / `@v8`). Dependabot updates them via `.github/dependabot.yml`; do not hand-edit.
+- **No workflow `uses:` downgrades.** Action references are pinned to full commit SHAs with version comments. Preserve those pins; Dependabot updates them via `.github/dependabot.yml`.
 - **No silent skips.** If a check might fail on an upstream change, surface it as `::error::` or `::warning::`, not as a swallowed exception.
 - **`patches.json` toggles are user data.** The `update-patches.yml` workflow preserves existing toggles on sync. Do not mass-reset them.
 
