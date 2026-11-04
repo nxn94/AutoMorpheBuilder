@@ -6,7 +6,7 @@ This document describes how AutoMorpheBuilder produces, tags, publishes, and pru
 
 The `morphe-build.yml` workflow runs on a daily cron (`15 5 * * *` UTC) and on `workflow_dispatch`. The full pipeline is:
 
-1. **`check-versions`** resolves the latest Morphe patches tags per app and the latest `morphe-desktop` CLI tag, then filters the build matrix by whether each app's expected release already exists.
+1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding.
 2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK, decodes `KEYSTORE_BASE64` straight to `tools/source.keystore`, then runs `morphe-desktop patch --keystore` which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents.
 3. **`create-release`** (also gated by the `signing` environment) downloads every signed APK artifact via `pattern: '*-v*'` + `merge-multiple: true`, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
 
@@ -40,7 +40,7 @@ The `-v` infix in the APK filename is **required** — Obtainium filters use `^y
 
 ## Per-app release isolation
 
-Each app gets its own GitHub Release (and its own tag). The release contains **only** that app's patched APK. The `create_release.sh` step iterates over the downloaded artifacts and creates one release per `*-v*-v*` filename pattern; there is no "umbrella" release.
+Each app gets its own GitHub Release and tag, containing that app's patched APK, `SHA256SUMS` and `build-inputs.json`. `create_release.sh` iterates over the downloaded artifacts; there is no combined multi-app release. Failed apps are not published as successful builds, while successful matrix entries can still publish.
 
 ## Pruning (`KEEP_COUNT`)
 
@@ -68,9 +68,9 @@ A pinned version does **not** prevent pruning — a release tagged with a pinned
 
 ## Prerelease handling
 
-Morphe patches repos ship prerelease tags like `v1.24.0-dev.8`. GitHub Releases auto-detect a tag matching the SemVer prerelease convention (`-` followed by a dot-separated identifier) and mark the release as a prerelease automatically.
+Upstream patches may use prerelease tags such as `v1.24.0-dev.8`. The publisher calls `gh release create` without `--prerelease`; a `-dev` suffix in the per-app tag does not automatically set GitHub's prerelease flag. Inspect the release's actual flag rather than inferring it from the tag.
 
-If your Obtainium entry does not show prereleases, check the "Include prereleases" toggle in the Obtainium app config. Pruning treats prereleases the same as stable releases (oldest-first within the app's release set).
+If a release is marked as a prerelease, enable "Include prereleases" in Obtainium as needed. Pruning treats prereleases the same as stable releases (oldest-first within the app's release set).
 
 ## Build identity and forced rebuilds
 

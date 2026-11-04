@@ -4,7 +4,7 @@ AutoMorpheBuilder is a **GitHub Actions pipeline** that produces signed, patched
 
 ## High-level flow
 
-1. **`check-versions`** resolves the latest Morphe patches tags per app and the latest `morphe-desktop` CLI tag, then filters the build matrix by whether each app's expected release already exists.
+1. **`check-versions`** resolves per-app patch tags and the CLI tag, then skips only complete releases with matching build-input provenance. Manual runs force rebuilding.
 2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK and runs `morphe-desktop patch --keystore`, which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents (not extension) and converts internally — no manual type detection, no BouncyCastle conversion step.
 3. (Removed — see "Signing model" below for the dissolved trust boundary.)
 4. **`create-release`** downloads the signed APKs, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
@@ -27,7 +27,8 @@ flowchart TD
     B8 -->|false| Z1[build + create-release skipped<br/>no-op day]
     B8 -->|true| B9[Reuse validated Node dependencies]
     B9 --> B10[Cache + install Playwright Chromium]
-    B10 --> B11[Cache + install apkeep]
+    B10 --> GP[Install optional goopdl]
+    GP --> B11[Cache + install apkeep]
     B11 --> B12[Install aapt]
     B12 --> B13[Pre-download APKs in parallel<br>pre_download_apks.sh]
     B13 --> C[build job matrix per app<br/>environment: signing<br/>holds keystore secrets]
@@ -104,7 +105,7 @@ Gated by the `signing` GitHub environment so `KEYSTORE_BASE64` / `KEYSTORE_PASSW
 | Checkout + Java 21 | Standard runner setup. |
 | Restore apkeep / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
 | Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with **exact-key match only** — no `restore-keys` fallback. A `restore-keys: morphe-patches-<slug>-` would silently restore an `.mpp` from an older patch tag when the matrix moves forward (e.g. Twitch `v1.3.1` → `v1.3.2`), which `morphe-desktop list-versions` would then read to produce a stale APK version; the build would silently re-create an already-released APK and the former publisher would skip the upload. Forcing an exact-key match forces `fetch_morphe_tools.sh` to re-download the `.mpp` from `gh release download` whenever the patch tag moves. The `.mpp` is verified against the per-asset digest served by the GitHub release API (`gh_asset_sha256`) before the build continues — a stale cache entry that survived a matrix-tag move fails the SHA check, is deleted, and re-downloaded, for the current run. Exact-key entries are immutable; delete a corrupt entry or advance its key to repair storage. |
-| Resolve supported version | `prepare_target_version.sh` + inline `list-versions` invocation. Pinned apps skip the CLI call. The `sort -Vr` head-pick handles `list-versions` not guaranteeing "latest first" (Twitch's RookieEnough/De-Vanced prints `16.9.1` before `25.3.0`). |
+| Resolve supported version | `prepare_target_version.sh` + `list-versions`. Pinned apps skip the CLI call. `sort -Vr` selects the newest supported version even when upstream output is unsorted. Twitch now uses `ryykitty/twitch-patched`; the retired De-Vanced source is not configured. |
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
 | Download supported APK | `download-supported-apk.js`. Reuse validated local/pre-downloaded APKs; otherwise try **goopdl (Google Play)** → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via apkeep (APKPure), APKMirror-API (if creds), APKMirror scraper (curl → Chromium fallback). **Cleanup on failure** removes partial APK on ABI / version validation throw so a stale file does not pre-empt the good one. |
@@ -119,7 +120,7 @@ Runs after `build` succeeds (`needs: [check-versions, build]`). Also gated by th
 | Step | Purpose |
 |------|---------|
 | Download signed APKs from build job | `actions/download-artifact@v8` with `pattern: '*-v*'` + `merge-multiple: true` — pulls every `<name>-v<ver>-<patches>` artifact the `build` matrix uploaded. |
-| Publish per-app releases | `create_release.sh` creates one GitHub Release per app, tag `<name>-v<base-version>-<patches-version>`, contains only that app's APK. |
+| Publish per-app releases | `create_release.sh` creates or updates one GitHub Release per app, tag `<name>-v<base-version>-<patches-version>`, containing that app's APK, `SHA256SUMS` and `build-inputs.json`. |
 | Prune old releases | `prune_old_releases.sh` caps each app's release history at `KEEP_COUNT` (default `2`) by `gh release delete --cleanup-tag` on the oldest beyond the window. Failures on a single tag (race / already gone) are warnings only. |
 
 ## Source layout

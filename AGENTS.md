@@ -52,7 +52,7 @@ The repo mixes hand-curated and workflow-generated content. Treat the categories
 - **Scripts (shell pipeline)**: `.github/scripts/pipeline/*.sh` plus shared helpers in `.github/scripts/pipeline/lib/`. Each `<step>.sh` corresponds to one workflow step.
 - **Scripts (CLI orchestrators)**: `scripts/*.js` — thin entry points that wire `node_modules` (ajv etc.) into the pure logic in `.github/scripts/`. `scripts/generate-readme-tables.js` regenerates the "Tested apps" / "Releases & Obtainium" tables in `README.md` from `config.json` `patch_repos`.
 - **Tests**: `.github/scripts/__tests__/*.test.js` — Jest unit tests for pure helpers and CLI wrappers.
-- **Config**: `config.json`, `patches.json`, `eslint.config.js` (lints `.github/scripts/**/*.js` only).
+- **Config**: `config.json`, `patches.json`, `eslint.config.js` (lints `.github/scripts/`, `src/` and `scripts/`).
 - **Docs**: `docs/{configuration,architecture,troubleshooting,release-process}.md` plus `README.md`, `SETUP.md`, `AGENTS.md`.
 - **Community**: `CONTRIBUTING.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/`, `.github/pull_request_template.md`, `.github/CODEOWNERS`.
 
@@ -82,7 +82,7 @@ npm run check:readme        # regenerates README tables in-memory and diffs; --c
 
 `npm run generate:readme` (no flag) writes the regenerated tables back to `README.md` — run this after any change to `config.json` `patch_repos` so the "Tested apps" / "Releases & Obtainium" tables stay in sync. `update-patches.yml` does this automatically on push to main, alongside the existing patches.json sync.
 
-Shell scripts use `shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh`; workflow YAML uses `actionlint .github/workflows/*.yml`. CI runs `node .github/scripts/validate-config.js` directly (it is not on `npm run` yet); the JSON config validator catches typos and missing required keys before merge.
+Shell scripts use `shellcheck -x -P SCRIPTDIR .github/scripts/pipeline/*.sh .github/scripts/pipeline/lib/*.sh scripts/*.sh`; workflow YAML uses `actionlint .github/workflows/*.yml`. CI runs `npm run check`, including the `scripts/validate-config.js` entry point (`npm run validate:config`); it catches schema and semantic errors before merge.
 
 ## Repo quirks (not obvious from filenames)
 
@@ -102,6 +102,8 @@ Shell scripts use `shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipe
 - The downloader saves XAPK/APKM/APKS bundles with a `.apk` extension. `detectApkShape` in `apk-selection.js` inspects zip contents to recognise bundles — required because APKMirror often serves bundles without preserving the extension.
 - The `aapt` version check is skipped for split packages (the outer zip-of-zips is not a valid APK); the post-merge step verifies the inner `base.apk`.
 - `pre_download_apks.sh` runs apps in parallel via `&` + `wait`. Each app's `.mpp` is passed directly to `morphe-desktop list-versions` (no shared-file race).
+- After validated local APK reuse, optional goopdl runs before URL caches and the existing providers. Exact stock ARM64 mappings are a fast path; unmapped versions use exact-release/architecture metadata discovery or the explicit requested version name. Never request implicit latest or weaken package/version/ABI/integrity validation. Never upload/cache the private `tools/goopdl-home/` or publish authentication logs or signed delivery URLs. See `docs/architecture.md` → "Google Play first".
+- APKMirror uses full Chromium with a matching Chrome user-agent and a warmed context shared through download. Challenge/status checks and one bounded retry report persistent Cloudflare blocks; access from every runner IP is not guaranteed. Keep other providers available.
 - `check_existing_releases.sh` is **fail-open**: if `morphe-desktop list-versions` returns nothing or `gh release view` errors, the app is kept in the matrix with a `::warning::`. The build never silently skips an app we couldn't version-check.
 - The `compat-probe` step (in the `check-versions` job) runs `list-versions` per app and surfaces `NoSuchMethodError` / `NoClassDefFoundError` at the cheapest step rather than 30 minutes into the matrix.
 - `update-patches.yml`'s push-trigger gate (`scripts/detect-new-repos.js`) opens on **either** a brand-new patch repo in `config.json` (case a) **or** an existing app whose `patch_repos[*].repo` changed (case b — relocated). Case (b) is the bit that catches "I moved sofascore to a different patches repo" — without it, the sync was silently skipped because the destination repo already existed in `patches.json` (carrying unrelated apps), and on the next dispatch the jq merge would have wiped the user's per-patch toggles for the moved app. Both `detectChanges` (`scripts/detect-new-repos.js`) and the merge used by `sync-patches.sh` (`scripts/merge-patches.js`) are pure functions with unit tests in `.github/scripts/__tests__/{detect-new-repos,merge-patches}.test.js`. The merge prefers the destination repo's section for an app but **falls back** to the same app's entry under any other repo key in `patches.json` so explicit `false` toggles like `Disable telemetry: false` survive a repo move.
@@ -109,4 +111,4 @@ Shell scripts use `shellcheck .github/scripts/pipeline/*.sh .github/scripts/pipe
 
 ## Local environment
 
-Node.js 24 (matches `actions/setup-node@v6`; `package.json` declares `"engines": { "node": ">=24" }`). Java 21 (matches `actions/setup-java@v6`; required by `morphe-desktop` ≥ 1.12.0). The CI workflow installs `zip` via `apt-get` because the apk-selection / apk-abi-validator test fixtures shell out to `zip` to build fake APKs; without it several tests skip with "no zip" warnings instead of actually exercising the path-stripping bug fix. Tests use Jest only; ESLint is scoped to `.github/scripts/**/*.js` via `eslint.config.js`. Shell pipeline linting (`shellcheck`) is not part of `npm run lint`.
+Node.js 24 (`package.json` requires `>=24`) and Java 21 match the workflow runtimes; action references are full-SHA-pinned with version comments. CI installs `zip` for APK fixtures so those tests do not silently skip. Tests use Jest; ESLint covers `.github/scripts/`, `src/` and `scripts/`. ShellCheck and actionlint run separately from `npm run check`.

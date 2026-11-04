@@ -42,14 +42,14 @@ The verify scripts in `download_morphe_tools.sh` and `fetch_morphe_tools.sh` ext
 Some entries may be TODO (`# TODO(pin-aapt2)` etc.) when the value couldn't be computed at PR-creation time, or when the upstream doesn't publish a sibling hash:
 
 - `morphe-desktop.jar`: `download_morphe_tools.sh` and `fetch_morphe_tools.sh` always fall back to the `META-INF/MANIFEST.MF` `Implementation-Version` tag check. With a real SHA in the manifest, the JAR is also verified against the digest.
-- `APKEditor.jar`: same fallback as `morphe-desktop.jar`. SHA-256 verification is opt-in via `checksums/tools.sha256`.
+- `APKEditor.jar`: pinned to `V1.4.9` with its manifest digest; update the version and digest together. This is not an opt-in hash check.
 - Per-repo `*.mpp` files: `fetch_morphe_tools.sh` resolves the per-asset digest from the GitHub release API and verifies the on-disk bytes against it on every run. A stale cache entry (e.g. one left over from before fd537df removed `restore-keys: morphe-patches-<slug>-`) fails the SHA check and the script re-downloads the correct `.mpp` and re-verifies before letting the build continue. The script falls back to "download if missing, no SHA check" only when the release API itself is unreachable. SHA changes per release tag, so per-tag pinning in `checksums/<slug>-<tag>.sha256` is not currently used.
 - `aapt2` (Android build-tools): SHA changes per SDK release. Pin via the specific SDK version (`build-tools;35.0.0`) + a commit that introduces it. `install_aapt.sh` prints the actual SHA at the end of each install with a `TODO(pin-aapt2)` note.
 - `chromium-linux.zip`: SHA changes per Playwright/Chromium release. `install_playwright.sh` prints the actual SHA at the end of each install with a `TODO(pin-chromium)` note.
 
 ## Certificate fingerprint (not used)
 
-The previous build flow pinned the signed APK's signing certificate via `EXPECTED_CERT_SHA256` (a repo variable), comparing `apksigner verify --print-certs` SHA-256 against the expected value in `sign_apk.sh`. That code path was removed when `sign_apk.sh` was deleted in favour of morphe-desktop's `patch --keystore` (which patches and signs in one step and does not expose the signed APK to a separate verify step). Pinning is not currently re-implemented — if you need it, post-process the signed APK with `apksigner verify --print-certs` in the `create-release` job and compare against a repo variable.
+`patch_apk.sh` runs `apksigner verify --verbose` on the signed output before upload. This verifies the APK signature, not a configured certificate identity. The old `EXPECTED_CERT_SHA256` certificate-fingerprint comparison in the removed `sign_apk.sh` has not been re-implemented. Do not confuse signature validity or release SHA-256 checks with independently pinning the signing certificate.
 
 To extract the fingerprint of an existing keystore (still useful for documentation / rotation audits):
 

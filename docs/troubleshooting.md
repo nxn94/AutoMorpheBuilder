@@ -8,6 +8,22 @@ This document mirrors and expands the "Common failures" section of `AGENTS.md`. 
 
 If a failure you see is not listed here, capture a redacted workflow log and file an issue with the `bug-report.yml` template.
 
+## Google Play exact-version lookup fails
+
+**Symptom:** `[goopdl] ...; trying existing sources`, an unavailable optional downloader, or a rejected package/version/ABI.
+
+**Cause:** Play may not retain the requested build, metadata discovery may be blocked, the optional installer may have failed, or the delivered variant may not match. Verified stock ARM64 codes are a fast path, not a complete historical catalogue.
+
+**Fix:** keep the existing fallbacks enabled. Unmapped versions use exact-release/architecture metadata discovery, then an explicit requested version name if discovery fails. Do not switch to an implicit latest download, derive stock codes from patched APKs, or disable integrity/version/ABI checks. Inspect the final provider outcome: a goopdl warning alone is not a failed app build. Never publish `tools/goopdl-home/`, authentication logs or signed delivery URLs.
+
+## APKMirror Cloudflare block / missing download button
+
+**Symptom:** `APKMirror Cloudflare block (HTTP 403)` or no download button on a page titled "Just a moment" / "Attention Required".
+
+**Cause:** the browser received a challenge, not necessarily an app variant page. A blocked page does not prove the requested version or ARM64 variant is absent.
+
+**Fix:** use the installed full Chromium (`channel: chromium`) and the shared warmed browser context with its matching Chrome user-agent. The helper waits and retries once, then reports a persistent block. Verify the exact release and architecture-specific variant in a browser; multiple variants may exist for one version. Cloudflare may still block a runner IP, so retain Google Play/APKPure/API fallbacks. Share only redacted status/title diagnostics, never cookies or signed URLs.
+
 ---
 
 ## `Chosen APK has no classes.dex`
@@ -152,8 +168,7 @@ The repo defends against this in three layers:
 | Sofascore | `^sofascore` | `^sofascore-v.*\.apk$` |
 | Twitch | `^twitch` | `^twitch-v.*\.apk$` |
 | NZB360 | `^nzb360` | `^nzb360-v.*\.apk$` |
-| AIDA64 | `^aida64` | `^aida64-v.*\.apk$` |
-| Mimo | `^mimo` | `^mimo-v.*\.apk$` |
+| Flightradar24 | `^flightradar24` | `^flightradar24-v.*\.apk$` |
 
 A missing APK filter (or one that lacks the `-v` infix) causes Obtainium to skip every release.
 
@@ -189,13 +204,9 @@ If you see this error after upgrading, your saved file may not be the bundle sha
 
 **Fix:**
 
-1. Manually delete the offending release tag:
+1. Run **Build Morphe-patched apps** manually on the intended branch. `workflow_dispatch` forces rebuilding even when the release tag already exists; no release deletion is required.
 
-   ```bash
-   gh release delete <app>-v<apk>-<patches>
-   ```
-
-2. Re-run the workflow. The next scheduled run will rebuild it.
+2. Check `build-inputs.json` and the completion marker in the release notes. Scheduled runs skip only complete releases with matching inputs; missing/stale provenance causes rebuilding.
 
 3. If the issue is a mismatch between `list-versions` and the actual APKMirror release page, set `pin_version` on that app to lock the build to the desired APK version.
 

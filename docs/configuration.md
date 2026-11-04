@@ -2,6 +2,8 @@
 
 Every field in `config.json`, with type, required-ness, default, example, and validation rules. The current default file is shown at the bottom of this document.
 
+For browser-based editing, use [AutoMorpheBuilder UI](https://nxn94.github.io/AutoMorpheBuilder-UI/), then download and commit the changed JSON files to your fork. The repository schema and `npm run validate:config` remain authoritative; never put secrets into config files.
+
 ## Top-level shape
 
 ```jsonc
@@ -22,14 +24,14 @@ Every field in `config.json`, with type, required-ness, default, example, and va
 | Required | no |
 | Default | `"arm64-v8a"` |
 | Example | `"arm64-v8a"` |
-| Allowed values | `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `universal` |
+| Allowed values | `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64` |
 
 Selects the preferred native architecture when APKMirror / APKPure lists multiple ABIs in the same release. The downloader (`unified-downloader.js`) reads this to:
 
-- Pick the smaller arm64-v8a variant when both arm64-v8a and universal are present (Sofascore's 57 MB arm64-v8a XAPK wins over the 93 MB universal).
+- Prefer an explicitly matching architecture over a compatible universal variant. APKPure API results use size to prioritize candidates, but actual native libraries are checked before acceptance.
 - Reject a downloaded bundle whose only `lib/` ABI does not match this preference (post-merge validation in `download-supported-apk.js`).
 
-Validation: any string is accepted at config-load time; mismatch is caught at the per-app ABI validator, not here.
+Validation: `schemas/config.schema.json` enforces the four-value ABI enum. `universal` is a possible upstream variant, not an accepted `preferred_arch` value. Actual delivered libraries must still pass ABI validation.
 
 ## `auto_update_urls`
 
@@ -40,11 +42,11 @@ Validation: any string is accepted at config-load time; mismatch is caught at th
 | Default | `true` |
 | Example | `false` |
 
-When `true`, `pre_download_apks.sh` writes resolved APK URLs back to `download_urls` after a successful pre-download (via `node update-download-urls.js <pkg> <version> <url>`). The next build reads `download_urls` before falling through to `apkeep` / `APKMirror-API` / Playwright resolution, so a resolved URL short-circuits the chain.
+When `true`, `pre_download_apks.sh` writes reusable resolved APK URLs back to `download_urls` after a successful pre-download (via `node update-download-urls.js <pkg> <version> <url>`). After local APK reuse and the Google Play attempt, URL caches can short-circuit the remaining providers. Google Play returns local files; its expiring delivery URLs and authentication data are never written here.
 
 When `false`, the resolved URL is logged but `config.json` is left untouched. Useful if you want to pin downloads to specific URLs, or want to avoid noisy diffs on every run.
 
-`true` / `false` / `1` / `0` / `yes` / `no` are accepted; anything else is treated as `false`. See `pipeline/lib/config.sh` `auto_update_urls_enabled` for the source of truth.
+Use JSON Booleans `true` or `false`; strings and numbers are rejected by the schema. The shell helper `pipeline/lib/config.sh` `auto_update_urls_enabled` also handles legacy truthy values defensively, but that does not make them valid configuration.
 
 Apps with `pin_version` set **also** skip URL updates — the cached URL would never be used (the pin short-circuits version resolution) and updating it is wasted work.
 
@@ -89,7 +91,7 @@ Short identifier used in:
 - Obtainium Release Tag Filter: `^<name>`.
 - APK cache key: `apk-<name>-<version>`.
 
-Must be unique across `patch_repos`. Lower-case ASCII letters, digits, dashes only is the convention but not enforced.
+Must be unique across `patch_repos`. The schema enforces `^[a-z0-9][a-z0-9-]*$`; the semantic validator rejects duplicate names.
 
 #### `repo`
 
@@ -103,7 +105,7 @@ GitHub `owner/repo` slug pointing at a Morphe-compatible patches repository. The
 
 1. Lists the latest release tag of this repo (used as the `patches-version`).
 2. Downloads the `patches-<tag>.mpp` artifact attached to that release.
-3. Calls `morphe-desktop.jar patch -b <mpp>` with this `.mpp` to patch the APK.
+3. Calls `morphe-desktop.jar patch --patches <mpp>` with this `.mpp` to patch the APK.
 
 The repo **must** publish `.mpp` artifacts. If it does not, the per-app `Preflight per-app patch availability` step fails the workflow before the build matrix spins up.
 
@@ -167,7 +169,7 @@ When set:
 | Required | no |
 | Example | `"v1.18.3"` |
 
-Lock the patches tag to this exact release, bypassing `gh release list` on the patches repo. Currently used by `nzb360` and `aida64` because their upstream `rushiranpise/morphe-patches` ships patches tags that lag the morphe-desktop CLI API surface.
+Lock the patches tag to this exact release instead of selecting the latest compatible upstream tag. Currently `nzb360` pins `rushiranpise/morphe-patches` to `v1.18.3`; see `config.json` for current pins.
 
 #### `display_name` (optional)
 
@@ -177,7 +179,7 @@ Lock the patches tag to this exact release, bypassing `gh release list` on the p
 | Required | no |
 | Example | `"YouTube Music"` |
 
-Human-readable name rendered in `README.md`'s **Tested apps** / **Releases & Obtainium** tables and embedded in the Obtainium deep-link's `name` field. The `name` field is a build slug (lowercase letters/digits/hyphens) baked into release tags, so IDs like `ytmusic`, `nzb360`, and `aida64` cannot be humanised by capitalisation alone — set `display_name` explicitly for those.
+Human-readable name rendered in `README.md`'s **Tested apps** / **Releases & Obtainium** tables and embedded in the Obtainium deep-link's `name` field. The `name` field is a build slug baked into release tags; set `display_name` explicitly for labels such as YouTube Music, NZB360 and Flightradar24.
 
 When `display_name` is omitted, the generator falls back to a capitalised `name` (so `nzb360` renders as `Nzb360` if no `display_name` is set). The field stays optional so adding a new app entry never blocks on picking a pretty name.
 
@@ -225,7 +227,7 @@ The branch to query for the latest release tag. Hard-fail if missing.
 | Required | no |
 | Auto-managed | yes (do not hand-edit) |
 
-APK URLs cached by the downloader for fast-path resolution. The cache is consulted **after** `~/.cache/auto-morphe-builder/urls/` and **before** falling through to `apkeep` / `APKMirror-API` / Playwright.
+Reusable APK URLs cached for fast-path resolution. After local APK reuse and the optional goopdl attempt, this section is consulted **after** `~/.cache/auto-morphe-builder/urls/` and **before** apkeep / APKMirror-API / browser fallback. Cached downloads still require validation.
 
 Shape:
 
@@ -245,22 +247,23 @@ Shape:
 
 ## Current defaults
 
+The authoritative complete file (including optional `display_name` labels) is [`config.json`](../config.json). The build-relevant defaults are:
+
 ```json
 {
   "preferred_arch": "arm64-v8a",
   "auto_update_urls": true,
   "patch_repos": {
-    "com.google.android.youtube":                { "name": "youtube", "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "google-inc/youtube" },
+    "com.google.android.youtube":                { "name": "youtube", "repo": "MorpheApp/morphe-patches",     "branch": "dev",  "apkmirror_path": "google-inc/youtube" },
     "com.google.android.apps.youtube.music":     { "name": "ytmusic", "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "google-inc/youtube-music" },
     "com.reddit.frontpage":                      { "name": "reddit",  "repo": "MorpheApp/morphe-patches",     "branch": "main", "apkmirror_path": "redditinc/reddit" },
     "com.sofascore.results":                     { "name": "sofascore","repo": "hoo-dles/morphe-patches",    "branch": "main", "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore" },
     "tv.twitch.android.app":                     { "name": "twitch",  "repo": "ryykitty/twitch-patched",       "branch": "main", "apkmirror_path": "twitch-interactive-inc/twitch-live-streaming" },
     "com.kevinforeman.nzb360":                   { "name": "nzb360",  "repo": "rushiranpise/morphe-patches",  "branch": "main", "apkmirror_path": "kevin-foreman/nzb360",          "pin_patch_tag": "v1.18.3" },
-    "com.finalwire.aida64":                      { "name": "aida64",  "repo": "rushiranpise/morphe-patches",  "branch": "main", "apkmirror_path": "finalwire-ltd/aida64",          "pin_patch_tag": "v1.18.3" },
-    "com.getmimo":                               { "name": "mimo",    "repo": "hoo-dles/morphe-patches",       "branch": "main", "apkmirror_path": "mimohello-gmbh/mimohello-mimo-learn-to-code" }
+    "com.flightradar24free":                     { "name": "flightradar24", "repo": "rushiranpise/morphe-patches", "branch": "main", "apkmirror_path": "flightradar24-ab/flightradar24-flight-tracker-2" }
   },
   "cli":             { "repo": "MorpheApp/morphe-desktop", "branch": "main" },
-  "download_urls":   { /* see file */ }
+  "download_urls":   {}
 }
 ```
 
