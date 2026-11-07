@@ -21,12 +21,12 @@ async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
   if (!fs.existsSync(goopdlBin)) throw new Error('Optional Google Play downloader is not installed');
   let code = (opts.versionCodes || versionCodes)[packageId]?.[version];
   if (code !== undefined && (!Number.isSafeInteger(code) || code <= 0)) throw new Error('Invalid Google Play version code');
+  let discovered = false;
   if (!code && opts.resolveVersionCode) {
     try { code = await opts.resolveVersionCode(packageId, version, arch); } catch { /* Try goopdl's exact-name resolver next. */ }
     if (code !== undefined && (!Number.isSafeInteger(code) || code <= 0)) throw new Error('Invalid discovered Google Play version code');
+    discovered = Boolean(code);
   }
-  // Never omit --version: goopdl would otherwise silently download the latest release.
-  const requestedVersion = String(code || version);
   const exec = opts.execFileImpl || promisify(execFile);
   const output = path.resolve(outputDir);
   fs.mkdirSync(output, { recursive: true });
@@ -39,6 +39,25 @@ async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
   delete env.GOOPDL_ACCOUNT_EMAIL;
   delete env.GOOPDL_AAS_TOKEN;
   const runOpts = { encoding: 'utf8', timeout: 180_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, env };
+  const attempt = (expected) => downloadAndValidate({
+    packageId, version, arch, expected, exec, output, home, runOpts, goopdlBin,
+  });
+  if (!discovered) return attempt(code);
+  // A discovered code is only a hint (listings don't prove which devices
+  // Play serves it to). If Play can't deliver it, or delivers something
+  // that fails the checks below, ask by the exact version name as before.
+  try {
+    return await attempt(code);
+  } catch {
+    return attempt(undefined);
+  }
+}
+
+/** One goopdl request plus every delivery check; `expected` undefined = by version name. */
+async function downloadAndValidate({ packageId, version, arch, expected, exec, output, home, runOpts, goopdlBin }) {
+  let code = expected;
+  // Never omit --version: goopdl would otherwise silently download the latest release.
+  const requestedVersion = String(code || version);
   const temp = fs.mkdtempSync(path.join(output, '.goopdl-'));
   const manifestPath = path.join(temp, 'integrity.json');
   const artifact = path.join(temp, 'artifact.apkm');
