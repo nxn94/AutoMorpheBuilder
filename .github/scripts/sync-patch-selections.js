@@ -27,7 +27,7 @@ function syncSelections(config, original, versions, lists) {
     } else {
       const defaults = Object.fromEntries((list.patches || list)
         .filter((patch) => compatiblePackages(patch).some((name) => matchesPackage(name, appId)))
-        .map((patch) => [patch.name, list.generated ? patch.use === true : patch.default ?? true]));
+        .map((patch) => [patch.name, list.generated ? patch.use === true : patch.default ?? patch.use ?? true]));
       selection = mergeRepoEntries({
         defaultsForTargetRepo: { [appId]: defaults },
         baseAllRepos: original,
