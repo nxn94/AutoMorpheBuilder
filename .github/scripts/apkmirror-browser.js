@@ -13,7 +13,11 @@ async function navigateApkmirror(page, url) {
     const status = response?.status() || 0;
     const blocked = /attention required|just a moment|checking your browser|cloudflare/i.test(title);
     if (!blocked && status >= 200 && status < 400) return;
-    if (attempt) throw new Error(`APKMirror ${blocked ? 'Cloudflare block' : 'navigation failure'} (HTTP ${status})`);
+    if (attempt) {
+      const error = new Error(`APKMirror ${blocked ? 'Cloudflare block' : 'navigation failure'} (HTTP ${status})`);
+      if (!blocked) error.status = status;
+      throw error;
+    }
   }
 }
 

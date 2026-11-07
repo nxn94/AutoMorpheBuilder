@@ -27,6 +27,26 @@ describe('inferReleaseUrl', () => {
     expect(inferReleaseUrl(hrefs, p, '26.07.27')).toBe(`https://www.apkmirror.com/apk/${p}/sofascore-live-sports-scores-26-07-27-release/`);
   });
 
+  test('accepts canonical same-origin absolute URLs with a default HTTPS port', () => {
+    expect(inferReleaseUrl([
+      'https://WWW.APKMIRROR.COM:443/apk/linkedin/linkedin-linkedin/linkedin-community-network-4-1-1271-release/',
+    ], 'linkedin/linkedin-linkedin', '4.1.1261'))
+      .toBe('https://www.apkmirror.com/apk/linkedin/linkedin-linkedin/linkedin-community-network-4-1-1261-release/');
+  });
+
+  test.each([
+    'https://www.apkmirror.com.evil.example',
+    'https://www.apkmirror.com@evil.example',
+    'https://evil.example',
+    'http://www.apkmirror.com',
+    'https://www.apkmirror.com:444',
+    'https://user:password@www.apkmirror.com',
+  ])('ignores release links from an untrusted origin or credentials: %s', (origin) => {
+    expect(inferReleaseUrl([
+      `${origin}/apk/linkedin/linkedin-linkedin/linkedin-community-network-4-1-1271-release/`,
+    ], 'linkedin/linkedin-linkedin', '4.1.1261')).toBeNull();
+  });
+
   test('nothing usable gives null', () => {
     expect(inferReleaseUrl([], 'a/b', '1.0')).toBeNull();
     expect(inferReleaseUrl(undefined, 'a/b', '1.0')).toBeNull();

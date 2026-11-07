@@ -325,6 +325,123 @@ describe('resolveApkmirrorReleaseSlug', () => {
     );
   });
 
+  test('retains the legacy release URL when an inferred rename returns 404', async () => {
+    const path = 'example/old-app-name';
+    const listUrl = `https://www.apkmirror.com/apk/${path}/all-versions/`;
+    const inferredUrl = `https://www.apkmirror.com/apk/${path}/new-app-name-1-0-0-release/`;
+    const legacyUrl = `https://www.apkmirror.com/apk/${path}/old-app-name-1-0-0-release/`;
+    const html = `<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`;
+    const fetchImpl = jest.fn(async (url) => {
+      if (url === listUrl) return { ok: true, text: async () => html };
+      if (url === inferredUrl) return { ok: false, status: 404 };
+      if (url === legacyUrl) return { ok: true, status: 200 };
+      throw new Error(`Unexpected URL ${url}`);
+    });
+
+    const url = await resolveApkmirrorReleaseSlug(path, '1.0.0', { fetchImpl });
+
+    expect(url).toBe(legacyUrl);
+    expect((await fetchImpl(url)).ok).toBe(true);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([listUrl, inferredUrl, legacyUrl]);
+  });
+
+  test('retains the legacy candidate when the real curl status parser reports inferred 404', async () => {
+    const path = 'example/old-app-name';
+    const html = `<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`;
+    const execAsync = jest.fn()
+      .mockResolvedValueOnce({ stdout: `${html}\n200` })
+      .mockResolvedValueOnce({ stdout: 'Not found\n404' });
+    const promisify = jest.spyOn(require('node:util'), 'promisify').mockReturnValue(execAsync);
+    try {
+      await expect(resolveApkmirrorReleaseSlug(path, '1.0.0')).resolves.toBe(
+        `https://www.apkmirror.com/apk/${path}/old-app-name-1-0-0-release/`
+      );
+      expect(execAsync).toHaveBeenCalledTimes(2);
+    } finally {
+      promisify.mockRestore();
+    }
+  });
+
+  test('retains the legacy release URL after a browser-confirmed inferred 404', async () => {
+    const path = 'example/old-app-name';
+    const inferredUrl = `https://www.apkmirror.com/apk/${path}/new-app-name-1-0-0-release/`;
+    const page = {
+      goto: jest.fn(async (url) => ({ status: () => url === inferredUrl ? 404 : 200 })),
+      waitForTimeout: jest.fn().mockResolvedValue(),
+      title: jest.fn().mockResolvedValue('APKMirror'),
+      content: jest.fn().mockResolvedValue(`<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`),
+    };
+
+    await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { page })).resolves.toBe(
+      `https://www.apkmirror.com/apk/${path}/old-app-name-1-0-0-release/`
+    );
+    expect(page.goto.mock.calls.map(([url]) => url)).toEqual([
+      `https://www.apkmirror.com/apk/${path}/all-versions/`, inferredUrl, inferredUrl,
+    ]);
+  });
+
+  test.each([403, 429, 500])('does not treat an inferred HTTP %i as a missing release', async (status) => {
+    const path = 'example/old-app-name';
+    const html = `<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`;
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, text: async () => html })
+      .mockResolvedValueOnce({ ok: false, status });
+
+    await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { fetchImpl })).rejects.toMatchObject({ status });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  test('propagates network errors while checking an inferred release', async () => {
+    const path = 'example/old-app-name';
+    const html = `<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`;
+    const error = new Error('connection reset');
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, text: async () => html })
+      .mockRejectedValueOnce(error);
+
+    await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { fetchImpl })).rejects.toBe(error);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  test('keeps a reachable inferred release and does not try the legacy URL', async () => {
+    const path = 'example/old-app-name';
+    const html = `<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`;
+    const fetchImpl = jest.fn()
+      .mockResolvedValueOnce({ ok: true, text: async () => html })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+
+    await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { fetchImpl })).resolves.toBe(
+      `https://www.apkmirror.com/apk/${path}/new-app-name-1-0-0-release/`
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  test('does not probe an inferred URL identical to the legacy candidate', async () => {
+    const path = 'example/old-app-name';
+    const html = `<a href="/apk/${path}/old-app-name-2-0-0-release/">2.0.0</a>`;
+    const fetchImpl = jest.fn().mockResolvedValueOnce({ ok: true, text: async () => html });
+
+    await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { fetchImpl })).resolves.toBe(
+      `https://www.apkmirror.com/apk/${path}/old-app-name-1-0-0-release/`
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not treat a browser challenge with HTTP 404 as a missing release', async () => {
+    const path = 'example/old-app-name';
+    const page = {
+      goto: jest.fn()
+        .mockResolvedValueOnce({ status: () => 200 })
+        .mockResolvedValue({ status: () => 404 }),
+      waitForTimeout: jest.fn().mockResolvedValue(),
+      title: jest.fn().mockResolvedValueOnce('APKMirror').mockResolvedValue('Just a moment'),
+      content: jest.fn().mockResolvedValue(`<a href="/apk/${path}/new-app-name-2-0-0-release/">2.0.0</a>`),
+    };
+
+    await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { page })).rejects.toThrow('Cloudflare block');
+    expect(page.goto).toHaveBeenCalledTimes(3);
+  });
+
   // SD Maid (darken) ships its upstream tag as `2.0.2` but APKMirror
   // lists the same build under `/sd-maid-2-se-system-cleaner-2-0-2-rc0-release/`.
   // The exact `-2-0-2-release/` match misses; the rc0 fallback must pick

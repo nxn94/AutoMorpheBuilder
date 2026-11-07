@@ -58,7 +58,14 @@ function inferReleaseUrl(hrefs, apkmirrorPath, version) {
   const counts = new Map();
   for (const raw of hrefs || []) {
     if (typeof raw !== 'string') continue;
-    const href = raw.replace(/^https:\/\/www\.apkmirror\.com/, '');
+    let parsed;
+    try {
+      parsed = new URL(raw, 'https://www.apkmirror.com');
+    } catch {
+      continue;
+    }
+    if (parsed.origin !== 'https://www.apkmirror.com' || parsed.username || parsed.password || parsed.search || parsed.hash) continue;
+    const href = parsed.pathname;
     if (!href.startsWith(base)) continue;
     const dir = href.slice(base.length).replace(/\/$/, '');
     if (!dir || dir.includes('/')) continue;
