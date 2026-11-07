@@ -46,6 +46,7 @@ const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
 const { pickSmallestMatchingVariant, versionCodeOf } = require('../../src/download/apkeep-variant');
+const { inferReleaseUrl } = require('../../src/download/release-slug');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -128,7 +129,17 @@ function getApkmirrorPath(packageId) {
  * the slug (e.g. `2.0.2` vs `2-0-2-rc0`), we widen the selector to
  * common pre-release suffixes before giving up.
  *
- * Falls back to `buildReleasePageUrl(apkmirrorPath, version)` on network
+ * `/all-versions/` only lists the newest releases (about ten), so an
+ * often-updated app's supported version can be missing from it. Then the
+ * release name is inferred from the listed releases (`inferReleaseUrl` in
+ * `src/download/release-slug.js`), e.g. LinkedIn's
+ * `linkedin-community-network-<ver>-release` under `linkedin/linkedin-linkedin`.
+ * Like the path-slug fallback below it is a guess. A distinct inferred URL
+ * gets one bounded existence check; HTTP 404 retains the path-slug fallback.
+ * Other probe errors propagate so a block is not mistaken for a missing page.
+ * The APK still goes through the usual validation.
+ *
+ * Falls back to `buildReleasePageUrl(apkmirrorPath, version)` on listing network
  * / parse errors so the existing path-slug contract still works for
  * apps whose release slug matches the path slug (YouTube, YT Music,
  * Reddit, …).
@@ -155,6 +166,8 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
   // the live HTML always emits lowercase for the path components we
   // observe in /all-versions/.
   const tailCandidates = apkmirrorReleaseTailCandidates(version);
+  const fallback = buildReleasePageUrl(apkmirrorPath, version);
+  let inferred;
 
   try {
     let html;
@@ -202,13 +215,33 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
       console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${abs}${suffixNote}`);
       return abs;
     }
-    throw new Error(
-      `No release link found ending in any of: ${tailCandidates.join(', ')}`
-    );
+    // Not listed (older than the newest releases on the page): apply the
+    // listed releases' name pattern to this version.
+    inferred = inferReleaseUrl($('a[href$="-release/"]').map((_, a) => $(a).attr('href')).get(), apkmirrorPath, version);
+    if (!inferred) throw new Error(`No release link found ending in any of: ${tailCandidates.join(', ')}`);
   } catch (err) {
     console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
-    return buildReleasePageUrl(apkmirrorPath, version);
+    return fallback;
   }
+
+  // Check only a distinct guess; a renamed app's old releases may retain the path slug.
+  if (inferred !== fallback) {
+    try {
+      if (page) {
+        await navigateApkmirror(page, inferred);
+      } else {
+        const response = await fetchImpl(inferred);
+        if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status} for inferred release`), { status: response.status });
+      }
+    } catch (err) {
+      // A blocked request or network error does not prove that the guessed page is absent.
+      if (err.status !== 404) throw err;
+      console.error(`[apkmirror-slug-resolve] inferred release not found → ${fallback}`);
+      return fallback;
+    }
+  }
+  console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${inferred} (not listed; name inferred from listed releases)`);
+  return inferred;
 }
 
 /**
@@ -237,7 +270,7 @@ async function apkmirrorFetch(url, cookies = {}, referer = null) {
   const statusCode = parseInt(output.slice(lastNewline + 1).trim(), 10);
   const body = output.slice(0, lastNewline);
 
-  if (statusCode >= 400) throw new Error(`HTTP ${statusCode} for ${url}`);
+  if (statusCode >= 400) throw Object.assign(new Error(`HTTP ${statusCode} for ${url}`), { status: statusCode });
 
   return {
     text: async () => body,
