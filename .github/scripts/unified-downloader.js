@@ -46,6 +46,7 @@ const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
 const { pickSmallestMatchingVariant } = require('../../src/download/apkeep-variant');
+const { inferReleaseUrl } = require('../../src/download/release-slug');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -128,6 +129,14 @@ function getApkmirrorPath(packageId) {
  * the slug (e.g. `2.0.2` vs `2-0-2-rc0`), we widen the selector to
  * common pre-release suffixes before giving up.
  *
+ * `/all-versions/` only lists the newest releases (about ten), so an
+ * often-updated app's supported version can be missing from it. Then the
+ * release name is inferred from the listed releases (`inferReleaseUrl` in
+ * `src/download/release-slug.js`), e.g. LinkedIn's
+ * `linkedin-community-network-<ver>-release` under `linkedin/linkedin-linkedin`.
+ * Like the path-slug fallback below it is a guess: a wrong one 404s on the
+ * release page, and the APK still goes through the usual validation.
+ *
  * Falls back to `buildReleasePageUrl(apkmirrorPath, version)` on network
  * / parse errors so the existing path-slug contract still works for
  * apps whose release slug matches the path slug (YouTube, YT Music,
@@ -201,6 +210,13 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
       const suffixNote = matchedTail === tailCandidates[0] ? '' : ` (matched via fallback tail ${matchedTail})`;
       console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${abs}${suffixNote}`);
       return abs;
+    }
+    // Not listed (older than the newest releases on the page): apply the
+    // listed releases' name pattern to this version.
+    const inferred = inferReleaseUrl($('a[href$="-release/"]').map((_, a) => $(a).attr('href')).get(), apkmirrorPath, version);
+    if (inferred) {
+      console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → ${inferred} (not listed; name inferred from listed releases)`);
+      return inferred;
     }
     throw new Error(
       `No release link found ending in any of: ${tailCandidates.join(', ')}`
