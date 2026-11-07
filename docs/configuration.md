@@ -137,7 +137,7 @@ The patches repo branch used to resolve the latest release tag. Almost always `"
 | Required | yes |
 | Example | `"google-inc/youtube"` |
 
-APKMirror URL slug (the path segment after `https://www.apkmirror.com/apk/`). The downloader navigates to `https://www.apkmirror.com/apk/<apkmirror_path>/all-versions/` to enumerate releases.
+APKMirror URL slug (the path segment after `https://www.apkmirror.com/apk/`). The downloader navigates to `https://www.apkmirror.com/apk/<apkmirror_path>/all-versions/` to enumerate releases. That page lists only the newest releases; for an older version that is no longer listed, the release-page name is inferred from the listed releases (e.g. LinkedIn's `linkedin-community-network-<version>-release`, which differs from the path's last part).
 
 When Cloudflare blocks the `/all-versions/` page (403), the downloader falls back to a Chromium session that resolves the slug via the live page HTML. For Sofascore, the historical slug `soccer-scores-and-sports-livescore-sofascore` was deprecated and is now `sofascore-live-sports-scores`; keep `apkmirror_path` current with APKMirror's current URL.
 

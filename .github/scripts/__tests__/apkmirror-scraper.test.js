@@ -302,6 +302,29 @@ describe('resolveApkmirrorReleaseSlug', () => {
     );
   });
 
+  // /all-versions/ lists only the newest releases. LinkedIn 4.1.1261 had
+  // dropped off it, and its release pages are named
+  // `linkedin-community-network-<ver>-release`, not after the path's last
+  // part, so the path-slug fallback 404'd.
+  test('infers the release name from listed releases when the version is not listed', async () => {
+    const p = 'linkedin/linkedin-linkedin';
+    const html = `
+      <html><body>
+        <a class="fontBlack" href="/apk/${p}/linkedin-community-network-4-1-1271-release/">4.1.1271</a>
+        <a class="fontBlack" href="/apk/${p}/linkedin-community-network-4-1-1269-release/">4.1.1269</a>
+      </body></html>
+    `;
+    const fetchImpl = jest.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve(html) })
+    );
+
+    const url = await resolveApkmirrorReleaseSlug(p, '4.1.1261', { fetchImpl });
+
+    expect(url).toBe(
+      `https://www.apkmirror.com/apk/${p}/linkedin-community-network-4-1-1261-release/`
+    );
+  });
+
   // SD Maid (darken) ships its upstream tag as `2.0.2` but APKMirror
   // lists the same build under `/sd-maid-2-se-system-cleaner-2-0-2-rc0-release/`.
   // The exact `-2-0-2-release/` match misses; the rc0 fallback must pick
