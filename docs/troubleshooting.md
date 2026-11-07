@@ -293,6 +293,25 @@ missing output with another APK. Android build-tools `apksigner verify` checks t
 result before it is uploaded. Signing secrets are supplied only to keystore decode
 and patch/sign steps; downloader processes do not receive them.
 
+## `Signature check failed`
+
+Before patching, the original APK's signing certificate is compared with the
+SHA-256 fingerprints listed for the app in `.github/scripts/apk-signers.json`
+(`src/download/signer.js`). Bundles are checked on their `base.apk`, before the
+merge. Apps that aren't listed are skipped with a notice.
+
+- **`is signed by <digest>, not by <app>'s developer`:** the source served an APK
+  signed by someone else, which usually means a modified APK. Don't patch it: delete
+  the app's APK cache and let another source supply it. If the developer really did
+  add a new key (check the "APK certificate fingerprints" on APKMirror), add the new
+  fingerprint to the app's `sha256` list.
+- **`apksigner could not verify`:** the APK has no valid signature. A cached
+  `<appId>.apk` left by an earlier merge is expected to be unsigned; when its bundle
+  is still in the cache, that bundle is checked and merged again instead. Any other
+  unsigned original fails.
+- **`apksigner not found`:** Android build-tools aren't on `PATH`. `install_aapt.sh`
+  adds them; check that step ran.
+
 ## Runner setup and URL caches
 
 Matrix jobs install production Node dependencies from the npm package cache.
