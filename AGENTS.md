@@ -32,7 +32,7 @@ The repo mixes hand-curated and workflow-generated content. Treat the categories
 **User-managed** (edit freely; preserved across workflow runs):
 
 - `config.json` — the source of truth for `patch_repos`, `cli`, `preferred_arch`, `auto_update_urls`.
-- `patches.json` — the Boolean values you set per patch. New upstream patches use explicit structured `default` Booleans when present (otherwise `true`); MPP-derived metadata uses upstream enabled defaults. Your existing toggles are preserved.
+- `patches.json` — the Boolean values you set per patch. New upstream patches use explicit structured `default` Booleans when present, else `use` (otherwise `true`); MPP-derived metadata uses upstream enabled defaults. Your existing toggles are preserved.
 - `docs/`, `README.md`, `SETUP.md`, `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md` — human-authored documentation.
 - Tests and fixtures under `.github/scripts/__tests__/`.
 
@@ -43,7 +43,7 @@ The repo mixes hand-curated and workflow-generated content. Treat the categories
 - Build artifacts under `apps/`, `tools/`, `out/` — gitignored, produced by the workflow.
 - `tree -a -I '.git|node_modules|coverage|dist|build|tools|apps' -L 3` shows the full tree.
 
-**Rule:** when updating `patches.json`, preserve existing user-selected Boolean values; new upstream patches use an explicit upstream `default` Boolean for structured metadata (otherwise `true`), or their upstream enabled status for MPP-derived metadata. Explicit null compatibility is universal; missing compatibility is malformed. Raw structured metadata may repeat patch names across package declarations and use explicit null target versions for unrestricted compatibility.
+**Rule:** when updating `patches.json`, preserve existing user-selected Boolean values; new upstream patches use an explicit upstream `default` Boolean for structured metadata, else an explicit `use` Boolean (otherwise `true`), or their upstream enabled status for MPP-derived metadata. Explicit null compatibility is universal; missing compatibility is malformed. Raw structured metadata may repeat patch names across package declarations and use explicit null target versions for unrestricted compatibility.
 
 ## Repository Layout (conceptual)
 

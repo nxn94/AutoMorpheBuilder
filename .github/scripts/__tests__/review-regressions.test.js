@@ -53,6 +53,20 @@ test.each([false, true])('preserves a moved false toggle regardless of config or
     .toEqual({ Telemetry: false });
 });
 
+test('a new patch starts at its `use` default when the list has no `default` (HushGram style)', () => {
+  const cfg = { patch_repos: { 'com.instagram.android': { repo: 'h/patches' } } };
+  const lists = { 'h/patches|v1': [
+    { name: 'Hide ads', use: true, compatiblePackages: [{ packageName: 'com.instagram.android' }] },
+    { name: 'Install next to Instagram', use: false, compatiblePackages: [{ packageName: 'com.instagram.android' }] },
+    { name: 'Both keys', default: true, use: false, compatiblePackages: [{ packageName: 'com.instagram.android' }] },
+    { name: 'Neither key', compatiblePackages: [{ packageName: 'com.instagram.android' }] },
+  ] };
+  const original = { 'h/patches': { 'com.instagram.android': { 'Hide ads': false } } };
+  expect(syncSelections(cfg, original, { 'h/patches': 'v1' }, lists)['h/patches']['com.instagram.android']).toEqual({
+    'Hide ads': false, 'Install next to Instagram': false, 'Both keys': true, 'Neither key': true,
+  });
+});
+
 test('syncs each app against its selected tag', () => {
   const lists = Object.fromEntries(['v1', 'v2', 'v3-dev.1'].map((tag) => [`a/patches|${tag}`, [
     { name: tag, compatiblePackages: Object.fromEntries(Object.keys(config.patch_repos).map((pkg) => [pkg, []])) },
