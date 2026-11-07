@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  certDigests, judge, baseEntry, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE,
+  certDigests, judge, baseEntry, bundleApks, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE,
 } = require('../signer');
+const { execFileSync } = require('node:child_process');
 
 const GOOD = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -18,7 +19,7 @@ function fakeRun({ entries = ['AndroidManifest.xml', 'classes.dex'], verify = ()
   const run = (cmd, args) => {
     calls.push([cmd, ...args]);
     if (cmd === 'unzip' && args[0] === '-Z1') return `${entries.join('\n')}\n`;
-    if (cmd === 'unzip' && args[0] === '-p') return Buffer.from('base apk bytes');
+    if (cmd === 'unzip' && args[0] === '-p') return Buffer.from(`bytes of ${args[2]}`);
     if (cmd === 'apksigner') return verify(args[args.length - 1]);
     throw new Error(`unexpected command ${cmd}`);
   };
@@ -64,6 +65,13 @@ describe('baseEntry', () => {
 
   test('ignores nested APKs and returns null when there is no base', () => {
     expect(baseEntry(['assets/base.apk', 'split_config.en.apk'])).toBeNull();
+  });
+});
+
+describe('bundleApks', () => {
+  test('every APK at any depth, but no folders or other files', () => {
+    expect(bundleApks(['base.apk', 'splits/', 'splits/split_config.en.apk', 'manifest.json', 'icon.png', 'Split.APK']))
+      .toEqual(['base.apk', 'splits/split_config.en.apk', 'Split.APK']);
   });
 });
 
@@ -133,16 +141,66 @@ describe('checkSigner', () => {
     expect(error).not.toBeInstanceOf(UnsignedApkError);
   });
 
-  test('checks a bundle on its base.apk and removes the temporary copy', () => {
-    let checked;
+  test('checks every APK in a bundle and removes the temporary copies', () => {
+    const checked = [];
     const { run, calls } = fakeRun({
-      entries: ['manifest.json', 'base.apk', 'split_config.arm64_v8a.apk'],
-      verify: (file) => { checked = file; expect(fs.readFileSync(file, 'utf8')).toBe('base apk bytes'); return printCerts(GOOD); },
+      entries: ['manifest.json', 'base.apk', 'split_config.arm64_v8a.apk', 'splits/split_config.en.apk'],
+      verify: (file) => { checked.push([file, fs.readFileSync(file, 'utf8')]); return printCerts(GOOD); },
     });
     expect(checkSigner('app.apkm', 'com.example', { signers: SIGNERS, run, log }).ok).toBe(true);
-    expect(calls[1]).toEqual(['unzip', '-p', 'app.apkm', 'base.apk']);
-    expect(path.basename(checked)).toBe('base.apk');
-    expect(fs.existsSync(path.dirname(checked))).toBe(false);
+    expect(calls.filter(([cmd, flag]) => cmd === 'unzip' && flag === '-p').map((c) => c[3]))
+      .toEqual(['base.apk', 'split_config.arm64_v8a.apk', 'splits/split_config.en.apk']);
+    expect(checked.map(([, bytes]) => bytes))
+      .toEqual(['bytes of base.apk', 'bytes of split_config.arm64_v8a.apk', 'bytes of splits/split_config.en.apk']);
+    expect(fs.existsSync(path.dirname(checked[0][0]))).toBe(false);
+  });
+
+  test('a genuine base with a split signed by someone else fails, naming the split', () => {
+    const { run } = fakeRun({
+      entries: ['base.apk', 'split_config.arm64_v8a.apk'],
+      verify: (file) => printCerts(fs.readFileSync(file, 'utf8').includes('split_') ? OTHER : GOOD),
+    });
+    expect(() => checkSigner('app.apkm', 'com.example', { signers: SIGNERS, run, log }))
+      .toThrow(/app\.apkm \(split_config\.arm64_v8a\.apk\) is signed by b{64}, not by com\.example's developer/);
+  });
+
+  test('a genuine base with an unsigned split fails as unsigned, naming the split', () => {
+    const { run } = fakeRun({
+      entries: ['base.apk', 'split_config.arm64_v8a.apk'],
+      verify: (file) => {
+        if (fs.readFileSync(file, 'utf8').includes('split_')) throw new Error('DOES NOT VERIFY');
+        return printCerts(GOOD);
+      },
+    });
+    let error;
+    try { checkSigner('app.apkm', 'com.example', { signers: SIGNERS, run, log }); } catch (e) { error = e; }
+    expect(error).toBeInstanceOf(UnsignedApkError);
+    expect(error.message).toBe('apksigner could not verify app.apkm (split_config.arm64_v8a.apk): DOES NOT VERIFY');
+  });
+
+  // A real zip, saved with an .apk name as the downloader does: only
+  // apksigner is faked, and it trusts the base's bytes but not the split's.
+  const zipOk = (() => { try { execFileSync('zip', ['-v'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+  (zipOk ? test : test.skip)('a real bundle saved as .apk with a swapped split fails', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signer-zip-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'base.apk'), 'genuine');
+      fs.writeFileSync(path.join(dir, 'split_config.arm64_v8a.apk'), 'tampered');
+      const bundle = path.join(dir, 'app.apk');
+      execFileSync('zip', ['-q', '-j', bundle, path.join(dir, 'base.apk'), path.join(dir, 'split_config.arm64_v8a.apk')]);
+      const verified = [];
+      const run = (cmd, args, opts) => {
+        if (cmd !== 'apksigner') return execFileSync(cmd, args, opts);
+        const bytes = fs.readFileSync(args[args.length - 1], 'utf8');
+        verified.push(bytes);
+        return printCerts(bytes === 'genuine' ? GOOD : OTHER);
+      };
+      expect(() => checkSigner(bundle, 'com.example', { signers: SIGNERS, run, log }))
+        .toThrow(/app\.apk \(split_config\.arm64_v8a\.apk\) is signed by b{64}/);
+      expect(verified).toEqual(['genuine', 'tampered']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('a bundle with no base APK fails', () => {

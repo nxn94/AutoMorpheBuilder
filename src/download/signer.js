@@ -9,9 +9,10 @@
  * fallback source serves a repackaged APK, the build fails instead of
  * patching and publishing it.
  *
- * Bundles (.apkm/.xapk/.apks, or a bundle saved as .apk) are checked on
- * their base.apk, before APKEditor merges them (the merged APK is
- * unsigned). Apps not in the list are skipped with a notice. A wrong
+ * In a bundle (.apkm/.xapk/.apks, or a bundle saved as .apk) every APK
+ * is checked, base and splits, before APKEditor merges them (the merged
+ * APK is unsigned): the merge takes all of them, so a genuine base with a
+ * swapped split must fail too. Apps not in the list are skipped with a notice. A wrong
  * signer fails. So does an APK that apksigner can't verify, because an
  * unsigned or broken original can't be trusted either.
  */
@@ -84,39 +85,61 @@ function checkSigner(file, appId, { signers = readSigners(), apksigner = 'apksig
   const names = run('unzip', ['-Z1', file], { encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] })
     .split('\n').map((n) => n.trim()).filter(Boolean);
   const isBundle = !names.includes('AndroidManifest.xml');
-  let target = file;
-  let tmp = null;
-  let out;
-  try {
-    if (isBundle) {
-      const base = baseEntry(names);
-      if (!base) throw new Error(`no base APK inside ${path.basename(file)} to check the signature of`);
-      tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'signer-'));
-      target = path.join(tmp, 'base.apk');
-      fs.writeFileSync(target, run('unzip', ['-p', file, base], { maxBuffer: APK_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] }));
-    }
-    try {
-      out = run(apksigner, ['verify', '--print-certs', target], {
-        encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (e) {
-      // A missing apksigner is a broken runner, not an unsigned APK.
-      if (e && e.code === 'ENOENT') throw new Error(`${apksigner} not found; is Android build-tools on PATH?`, { cause: e });
-      const why = String((e && (e.stderr || e.message)) || '').split('\n').find(Boolean) || 'unknown error';
-      throw new UnsignedApkError(`apksigner could not verify ${path.basename(file)}${isBundle ? ' (base.apk)' : ''}: ${why}`, { cause: e });
-    }
-  } finally {
-    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  if (!isBundle) {
+    const verdict = expectSigner(signers, appId, path.basename(file), verifyCerts(file, path.basename(file), apksigner, run));
+    log(`Signer of ${path.basename(file)} matches apk-signers.json (${verdict.matched}).`);
+    return verdict;
   }
-  const verdict = judge(signers, appId, certDigests(out));
+  if (!baseEntry(names)) throw new Error(`no base APK inside ${path.basename(file)} to check the signature of`);
+  // APKEditor merges every APK in the bundle, so every one of them must be
+  // the developer's: a genuine base with a swapped split must not pass.
+  const entries = bundleApks(names);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'signer-'));
+  let verdict;
+  try {
+    entries.forEach((entry, i) => {
+      const label = `${path.basename(file)} (${entry})`;
+      const target = path.join(tmp, `${i}.apk`);
+      fs.writeFileSync(target, run('unzip', ['-p', file, entry], { maxBuffer: APK_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] }));
+      verdict = expectSigner(signers, appId, label, verifyCerts(target, label, apksigner, run));
+      fs.rmSync(target, { force: true });
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  log(`Signers of all ${entries.length} APKs in ${path.basename(file)} match apk-signers.json (${verdict.matched}).`);
+  return verdict;
+}
+
+/** Every APK inside a bundle, at any depth: APKEditor merges whatever it finds. */
+function bundleApks(names) {
+  return names.filter((n) => /\.apk$/i.test(n) && !n.endsWith('/'));
+}
+
+/** The certificate digests apksigner reports for one APK. */
+function verifyCerts(target, label, apksigner, run) {
+  try {
+    return certDigests(run(apksigner, ['verify', '--print-certs', target], {
+      encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'],
+    }));
+  } catch (e) {
+    // A missing apksigner is a broken runner, not an unsigned APK.
+    if (e && e.code === 'ENOENT') throw new Error(`${apksigner} not found; is Android build-tools on PATH?`, { cause: e });
+    const why = String((e && (e.stderr || e.message)) || '').split('\n').find(Boolean) || 'unknown error';
+    throw new UnsignedApkError(`apksigner could not verify ${label}: ${why}`, { cause: e });
+  }
+}
+
+/** The verdict for one APK, or the "wrong signer" error. */
+function expectSigner(signers, appId, label, digests) {
+  const verdict = judge(signers, appId, digests);
   if (!verdict.ok) {
-    throw new Error(`${path.basename(file)} is signed by ${verdict.got.join(', ') || 'nothing apksigner recognised'}, `
+    throw new Error(`${label} is signed by ${verdict.got.join(', ') || 'nothing apksigner recognised'}, `
       + `not by ${appId}'s developer (${verdict.known.join(', ')} in .github/scripts/apk-signers.json). `
       + 'The source may be serving a modified APK. If the developer really changed their key, add the new '
       + 'fingerprint from APKMirror to .github/scripts/apk-signers.json.');
   }
-  log(`Signer of ${path.basename(file)} matches apk-signers.json (${verdict.got.find((d) => verdict.known.includes(d))}).`);
-  return verdict;
+  return { ...verdict, matched: verdict.got.find((d) => verdict.known.includes(d)) };
 }
 
-module.exports = { certDigests, judge, baseEntry, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE };
+module.exports = { certDigests, judge, baseEntry, bundleApks, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE };
