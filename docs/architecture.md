@@ -160,6 +160,8 @@ Signing is enforced end-to-end. The previous `build` ↔ `sign` job split (which
 
 Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` (auto-detected as the keystore's first alias via `keytool -list` when unset — morphe-desktop's own default `"Morphe"` is hardcoded and not first-alias), `KEY_PASSWORD` (defaults to `KEYSTORE_PASSWORD` when unset — same morphe-desktop default caveat).
 
+**Original APK signer.** Before any merge or patch, `download-supported-apk.js` checks that the original APK (or, in a bundle, every APK the merge will use: the base and every split) is signed by a certificate listed for the app in `.github/scripts/apk-signers.json`, using `apksigner verify --print-certs` (`src/download/signer.js`). A wrong signer or an unverifiable original fails the app. Unlisted apps are skipped with a notice. The one exception is this builder's own cached merge (`<appId>.apk`, unsigned by nature): its bundle is checked and merged again instead.
+
 ## Failure model
 
 The workflow is **fail-open** on version resolution (per app) and **fail-closed** on signing and on patch availability. See `docs/troubleshooting.md` for the catalogue of common failure modes and their remediation.

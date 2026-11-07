@@ -1,0 +1,37 @@
+{
+  "_comment": "SHA-256 of each developer's APK signing certificate, from APKMirror's 'APK certificate fingerprints' on the release named in 'seen'. src/download/signer.js checks every original APK against this before patching; apps not listed aren't checked. If a developer adds a new key, add its fingerprint to the list.",
+  "com.google.android.youtube": {
+    "sha256": ["3d7a1223019aa39d9ea0e3436ab7c0896bfb4fb679f4de5fe7c23f326c8f994a"],
+    "subject": "CN=Unknown, OU=\"Google, Inc\", O=\"Google, Inc\", L=Mountain View, ST=CA, C=US",
+    "seen": "21.44.535"
+  },
+  "com.google.android.apps.youtube.music": {
+    "sha256": ["a2a1ad7ba7f41dfca4514e2afeb90691719af6d0fdbed4b09bbf0ed897701ceb"],
+    "subject": "CN=ytmusic, OU=Android, O=Google Inc., L=Mountain View, ST=California, C=US",
+    "seen": "9.45.51"
+  },
+  "com.reddit.frontpage": {
+    "sha256": ["970b91143813b4c9d5f3634f672c9fcaa5621b4efaaedafd6c235cbbb869736f"],
+    "subject": "CN=Mobile Apps, O=reddit Inc., L=San Francisco, ST=CA, C=US",
+    "seen": "2026.45.0"
+  },
+  "com.sofascore.results": {
+    "sha256": ["ecd3a2c9902adbef2653b105924a97f1755bbebb93c5f2b2a1fb56c7b009f841"],
+    "subject": "CN=Sofa Score, OU=Mobile, O=SofaScore, L=UK, ST=UK, C=UK",
+    "seen": "26.10.26"
+  },
+  "tv.twitch.android.app": {
+    "sha256": ["1338f9b049893cc70b78432a177582f90bd4bc6296ea4ed35bcc7df59687ac53"],
+    "subject": "CN=Alec Lee, OU=Twitch, O=Twitch, L=San Francisco, ST=California",
+    "seen": "31.9.0"
+  },
+  "com.kevinforeman.nzb360": {
+    "sha256": ["73411ec19c17cfaf4e6b577037001fe16771d29cc18ce36cb73406981aed98e4"],
+    "subject": "CN=Kevin Foreman, L=Troy, ST=MI, C=US",
+    "seen": "25.3"
+  },
+  "com.flightradar24free": {
+    "sha256": ["4648132fa0a6f268717aa3d2436f750a63c5272a50e76dd7189591f83707dfec"],
+    "seen": "11.14.0"
+  }
+}

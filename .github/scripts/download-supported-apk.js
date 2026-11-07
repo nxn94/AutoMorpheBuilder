@@ -26,6 +26,7 @@ const {
 } = require('./apk-selection');
 const { validateApkBoundary, validateArchiveSafe } = require('../../src/apk/validate-boundary');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
+const { checkSigner, UnsignedApkError } = require('../../src/download/signer');
 
 const APP_ID = process.env.APP_ID;
 const TARGET_VERSION = process.env.TARGET_VERSION || '';
@@ -436,6 +437,29 @@ if (
     `Switching to bundle ${path.basename(bundleInDir)} for universal merge.`,
   );
   apkCandidate = bundleInDir;
+}
+
+// 6c. The original must be signed by the app's developer
+//     (src/download/signer.js). Checked before any merge, because the
+//     merged APK is unsigned. A cached, unsigned <appId>.apk is this
+//     builder's own merge of a bundle from an earlier build: then the
+//     bundle it came from is checked and merged again. Only an unsigned
+//     file gets that second chance; a wrong signer always fails.
+try {
+  try {
+    checkSigner(apkCandidate, APP_ID);
+  } catch (error) {
+    const bundle = findBundleInDir(APKS_DIR);
+    if (!(error instanceof UnsignedApkError) || path.basename(apkCandidate) !== `${APP_ID}.apk` || !bundle) throw error;
+    console.log(`${path.basename(apkCandidate)} is an earlier merge (unsigned); checking the bundle and merging it again.`);
+    checkSigner(bundle, APP_ID);
+    // Patch only what was checked: drop the cached merge and merge the bundle again below.
+    fs.unlinkSync(apkCandidate);
+    apkCandidate = bundle;
+  }
+} catch (error) {
+  console.error(`::error::Signature check failed: ${error.message}`);
+  process.exit(1);
 }
 
 // 7. If the candidate is an APK without classes.dex, try to swap to a
