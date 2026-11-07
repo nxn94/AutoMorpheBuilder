@@ -14,7 +14,7 @@ If a failure you see is not listed here, capture a redacted workflow log and fil
 
 **Cause:** Play may not retain the requested build, metadata discovery may be blocked, the optional installer may have failed, or the delivered variant may not match. Verified stock ARM64 codes are a fast path, not a complete historical catalogue.
 
-**Fix:** keep the existing fallbacks enabled. Unmapped versions use exact-release/architecture metadata discovery, then an explicit requested version name if discovery fails. Do not switch to an implicit latest download, derive stock codes from patched APKs, or disable integrity/version/ABI checks. Inspect the final provider outcome: a goopdl warning alone is not a failed app build. Never publish `tools/goopdl-home/`, authentication logs or signed delivery URLs.
+**Fix:** keep the existing fallbacks enabled. Unmapped versions use exact-release/architecture metadata discovery (APKMirror first, then APKPure's listing for ARM64), then an explicit requested version name if discovery fails. Do not switch to an implicit latest download, derive stock codes from patched APKs, or disable integrity/version/ABI checks. Inspect the final provider outcome: a goopdl warning alone is not a failed app build. Never publish `tools/goopdl-home/`, authentication logs or signed delivery URLs.
 
 ## APKMirror Cloudflare block / missing download button
 
