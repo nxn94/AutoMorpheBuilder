@@ -278,6 +278,11 @@ For downloader-specific failures, use the `download-resolver-failure.yml` templa
 
 The final selected or merged APK must expose the configured package ID and exact
 target `versionName` through `aapt`/`aapt2`. Unreadable metadata fails the build.
+A label after the version number is allowed, because some apps add one: Gboard's
+`18.5.4.993608717-release-arm64-v8a` matches `18.5.4.993608717`, and Discord's
+`351.11 - Stable` matches `351.11`. The number must still match in full, and a
+test-build label such as `-beta2` or ` rc1` is rejected
+(`src/download/version-match.js`). The release is named by the target version.
 Delete a stale app APK cache if it contains another package or an invalid file;
 check the upstream source before retrying. Two-part versions such as `24.3` are
 supported. Bundles containing inner APKs are merged even when saved as `.apk` or

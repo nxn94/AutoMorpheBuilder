@@ -1,5 +1,7 @@
 'use strict';
 
+const { versionMatches } = require('./version-match');
+
 /**
  * APKPure protobuf URL parsing extracted from
  * `.github/scripts/unified-downloader.js#resolveApkeepVariant`.
@@ -83,7 +85,7 @@ function pickSmallestMatchingVariant(body, version) {
     try {
       const parsed = new URL(u);
       const inner = decodeApkeepCParam(parsed.searchParams.get('c'));
-      return inner != null && inner.vn === version;
+      return inner != null && versionMatches(inner.vn, version);
     } catch {
       return false;
     }

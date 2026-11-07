@@ -8,6 +8,7 @@ const { promisify } = require('node:util');
 const versionCodes = require('./goopdl-version-codes.json');
 const { loadConfig } = require('../../src/download/config');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
+const { versionMatches } = require('../../src/download/version-match');
 
 /** Download an exact Play build; return the same file contract as other providers. */
 async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
@@ -80,7 +81,7 @@ async function downloadWithGoopdl(packageId, version, outputDir, opts = {}) {
       if (!code && /^\d+$/.test(attrs.versionCode) && Number.isSafeInteger(Number(attrs.versionCode)) && Number(attrs.versionCode) > 0) code = Number(attrs.versionCode);
       if (!code || attrs.name !== packageId || attrs.versionCode !== String(code)) throw new Error('Google Play package/version code mismatch');
       if (!attrs.split) {
-        if (base || attrs.versionName !== version) throw new Error('Google Play base/version mismatch');
+        if (base || !versionMatches(attrs.versionName, version)) throw new Error('Google Play base/version mismatch');
         base = item.path;
       }
     }

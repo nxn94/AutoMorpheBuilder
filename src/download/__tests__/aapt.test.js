@@ -71,6 +71,13 @@ describe('download/aapt', () => {
       expect(result.error).toBe('version mismatch: got 1.2.3, wanted 9.9.9');
     });
 
+    test('accepts a label after the version, not a pre-release one', () => {
+      const ok = validateApkVersion('/path/to.apk', '351.11', { execFileSyncImpl: fakeExec([`package: name='com.x' versionName='351.11 - Stable'`]) });
+      expect(ok).toEqual({ valid: true, actualVersion: '351.11 - Stable' });
+      const beta = validateApkVersion('/path/to.apk', '351.11', { execFileSyncImpl: fakeExec([`package: name='com.x' versionName='351.11-beta2'`]) });
+      expect(beta.valid).toBe(false);
+    });
+
     test('falls back to aapt2 when aapt throws ENOENT', () => {
       const dump = `package: name='com.x' versionName='4.5.6'`;
       const execFileSyncImpl = fakeExec([dump]);
