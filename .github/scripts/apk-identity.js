@@ -1,5 +1,7 @@
 'use strict';
 
+const { versionMatches } = require('../../src/download/version-match');
+
 function parseIdentity(badging) {
   const packageLine = badging.split('\n').find((line) => line.startsWith('package:')) || '';
   return {
@@ -11,7 +13,7 @@ function parseIdentity(badging) {
 function assertIdentity(identity, packageName, version) {
   if (!identity.packageName || !identity.version) throw new Error('APK package/version metadata is unreadable');
   if (identity.packageName !== packageName) throw new Error(`Wrong APK package: ${identity.packageName}; expected ${packageName}`);
-  if (identity.version !== version) throw new Error(`Wrong APK version: ${identity.version}; expected ${version}`);
+  if (!versionMatches(identity.version, version)) throw new Error(`Wrong APK version: ${identity.version}; expected ${version}`);
   return identity;
 }
 

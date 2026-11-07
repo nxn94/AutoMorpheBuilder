@@ -72,6 +72,9 @@ test('fails closed on wrong packages, wrong versions and unreadable metadata', (
   expect(assertIdentity(identity, 'com.expected', '24.3')).toBe(identity);
   expect(() => assertIdentity(identity, 'com.other', '24.3')).toThrow('Wrong APK package');
   expect(() => assertIdentity(identity, 'com.expected', '24.4')).toThrow('Wrong APK version');
+  expect(() => assertIdentity(identity, 'com.expected', '24')).toThrow('Wrong APK version');
+  const labelled = parseIdentity("package: name='com.expected' versionCode='1' versionName='24.3-release-arm64-v8a'");
+  expect(assertIdentity(labelled, 'com.expected', '24.3')).toBe(labelled);
   expect(() => inspectIdentity('/file.apk', 'com.expected', '24.3', () => { throw new Error('unreadable'); }))
     .toThrow('unreadable');
 });

@@ -10,6 +10,7 @@
  */
 
 const { inspectIdentity } = require('./apk-identity');
+const { versionMatches } = require('../../src/download/version-match');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync, spawnSync } = require('node:child_process');
@@ -482,7 +483,7 @@ if (isSplitPackageFile(apkCandidate)) {
     console.log('Validating merged APK version...');
     const mergedVersion = readApkVersion(outApk);
     console.log(`::debug::Merged APK version: ${mergedVersion} (expected: ${effectiveTargetVersion})`);
-    if (mergedVersion && mergedVersion !== effectiveTargetVersion) {
+    if (mergedVersion && !versionMatches(mergedVersion, effectiveTargetVersion)) {
       console.error(`::error::Merged APK has wrong version: ${mergedVersion} (expected ${effectiveTargetVersion})`);
       process.exit(1);
     }
@@ -562,5 +563,9 @@ try {
   process.exit(1);
 }
 setOutput('apk', finalApk);
-setOutput('version', identity.version);
+// Name the build by the version the patches asked for. An APK whose
+// versionName adds a label (Gboard's "...-release-arm64-v8a") would
+// otherwise get a release tag the up-to-date check never finds, so the app
+// would rebuild on every run.
+setOutput('version', versionMatches(identity.version, effectiveTargetVersion) ? effectiveTargetVersion : identity.version);
 console.log(`Downloaded ${APP_ID} → ${finalApk} (v${identity.version})`);

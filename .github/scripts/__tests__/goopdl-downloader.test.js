@@ -11,7 +11,7 @@ let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goopdl-test-')); });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-function fixture({ wrongVersion = false, corrupt = false, traversal = false, wrongAbi = false } = {}) {
+function fixture({ wrongVersion = false, betaVersion = false, labelled = false, corrupt = false, traversal = false, wrongAbi = false } = {}) {
   const wrapped = jest.fn(async (command, args, opts) => {
     if (command === 'flock') return wrapped(args[4], args.slice(5), opts);
     if (command === process.execPath) {
@@ -34,7 +34,7 @@ function fixture({ wrongVersion = false, corrupt = false, traversal = false, wro
     }
     if (command === 'aapt') {
       const split = args[2].includes('config.') ? " split='config.arm64_v8a'" : '';
-      return { stdout: `package: name='com.test' versionCode='123' versionName='${wrongVersion ? '9.9' : '1.2'}'${split}\n` };
+      return { stdout: `package: name='com.test' versionCode='123' versionName='${wrongVersion ? '9.9' : betaVersion ? '1.2-beta1' : labelled ? '1.2 - Stable' : '1.2'}'${split}\n` };
     }
     return { stdout: execFileSync(command, args, opts) };
   });
@@ -42,6 +42,7 @@ function fixture({ wrongVersion = false, corrupt = false, traversal = false, wro
 }
 test.each([
   ['wrongVersion', /base\/version mismatch/],
+  ['betaVersion', /base\/version mismatch/],
   ['corrupt', /digest mismatch/],
   ['traversal', /artifact path/],
   ['wrongAbi', /no split containing lib\/arm64-v8a/],
@@ -49,6 +50,10 @@ test.each([
   const exec = fixture({ [failure]: true });
   await expect(download('com.test', '1.2', dir, options(exec))).rejects.toThrow(message);
   expect(fs.readdirSync(dir).filter(name => name !== 'pool')).toEqual([]);
+});
+
+test('accepts a base APK whose versionName adds a label after the version', async () => {
+  await expect(download('com.test', '1.2', dir, options(fixture({ labelled: true })))).resolves.toBeTruthy();
 });
 
 test('artifact validation opens files without following links before inspecting their bytes', async () => {

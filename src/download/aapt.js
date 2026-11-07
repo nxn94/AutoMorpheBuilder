@@ -28,6 +28,8 @@
  * untrusted download whose filename originates upstream).
  */
 
+const { versionMatches } = require('./version-match');
+
 const VERSION_NAME_RE = /versionName='([^']+)'/;
 
 /**
@@ -99,7 +101,7 @@ function validateApkVersion(apkPath, expectedVersion, opts = {}) {
     };
   }
 
-  if (actualVersion !== expectedVersion) {
+  if (!versionMatches(actualVersion, expectedVersion)) {
     return {
       valid: false,
       actualVersion,
