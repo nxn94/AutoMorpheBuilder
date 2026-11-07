@@ -76,7 +76,7 @@ Runs first. Failures here short-circuit the rest of the workflow.
 | Node dependencies | `actions/setup-node` + `npm ci` | Installed once before configuration validation; matrix jobs use the npm cache with `npm ci --omit=dev`. |
 | Cache + install Playwright | `actions/cache@v5` + `pipeline/install_playwright.sh` | The custom installer bypasses a yauzl extraction bug in Playwright 1.58. |
 | Install apkeep + aapt | `pipeline/install_apkeep.sh` + `pipeline/install_aapt.sh` | apkeep is pinned to SHA-256 against `APKEEP_VERSION`. |
-| Install optional goopdl | `pipeline/install_goopdl.sh` | Commit-pinned Python virtualenv; installation failure warns without disabling existing sources. Also installed in each build job. |
+| Install optional goopdl | `pipeline/install_goopdl.sh` | Commit-pinned Python virtualenv; installation failure warns without disabling existing sources. Also installed in each build job. Skipped on GitHub-hosted runners unless repository variable `GOOPDL_ON_GITHUB_RUNNERS` is `on`. |
 | Pre-download APKs in parallel | `pipeline/pre_download_apks.sh` | Per-app `&` + `wait`. Honours `SKIP_LIST` from the filter step. Calls `update-download-urls.js` per app (writes back only when `auto_update_urls=true` and no `pin_version` is set). |
 
 **Notes:**
@@ -87,6 +87,8 @@ Runs first. Failures here short-circuit the rest of the workflow.
 ### Google Play first
 
 `unified-downloader.js` tries `goopdl-downloader.js` before the existing URL cache and providers. The optional installer pins upstream goopdl 1.2.2 to commit `30c43eb0f4e06d5ab0a45e39c559a2869a2c7d68` in a Python virtualenv under `tools/goopdl/`. No personal Google account is required.
+
+On GitHub-hosted runners the installer is skipped unless the repository variable `GOOPDL_ON_GITHUB_RUNNERS` is `on`: Google Play's anonymous token dispenser answers their IP ranges with HTTP 403 for every device profile, so the attempt only adds time. Self-hosted runners and local runs are unchanged. Without the binary, the downloader skips Play and continues with the existing sources.
 
 - `.github/scripts/goopdl-version-codes.json` provides verified **stock ARM64** codes as a fast path. For unmapped versions, the downloader discovers a code from APKMirror's exact release and architecture-specific variant metadata, checking both package and version name. If APKMirror can't help (no mapping, or blocked), it takes the ARM64 build number from APKPure's version listing, the same variant APKPure's own download step picks. If neither works, it passes the explicit version name to goopdl's resolver. A discovered code is only a hint: if Play can't deliver it, or the delivery fails any check, the downloader asks again by the exact version name, with the same checks. It never requests an unversioned/latest download. Other architectures still fall back to existing providers. Never derive stock codes from patched APKs or treat current rollout cohorts as a historical catalogue.
 - Each delivery explicitly includes splits. Every APK is checked against the delivery's SHA-256/size and its package/version-code manifest; the base must match the requested version name. The existing ABI validator rejects wrong-architecture deliveries before success. Split deliveries become local `.apkm` bundles for the existing APKEditor merge and final validation path; standalone APKs stay `.apk`.

@@ -97,7 +97,7 @@ Signed builds are enforced — missing `KEYSTORE_BASE64` or `KEYSTORE_PASSWORD` 
 
 Validated local/pre-downloaded APKs under `tools/apks/` are reused first. Otherwise the downloader tries **goopdl (Google Play)** → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via **apkeep** (APKPure), **APKMirror-API** (if credentials are set), and the **APKMirror scraper**, followed by the full-browser download fallback. The parallel resolver preserves fixed source priority (`apkeep` → `apkmirror-api` → `apkmirror`); validation failures continue through the existing fallbacks.
 
-Google Play uses verified stock ARM64 version-code mappings or discovers the exact requested version and architecture from APKMirror metadata. If discovery is unavailable, goopdl receives the explicit version name, never an implicit "latest". No personal Google account is required. Optional installation, download or validation failures do not disable the other providers.
+Google Play uses verified stock ARM64 version-code mappings or discovers the exact requested version and architecture from APKMirror metadata. If discovery is unavailable, goopdl receives the explicit version name, never an implicit "latest". No personal Google account is required. On GitHub-hosted runners, where Play refuses anonymous logins, it's skipped unless the repository variable `GOOPDL_ON_GITHUB_RUNNERS` is `on`. Optional installation, download or validation failures do not disable the other providers.
 
 APKMirror uses a warmed full-Chromium session with a matching Chrome user-agent and bounded challenge waits/retries. Persistent Cloudflare blocks are reported explicitly; no browser setup guarantees access from every runner IP.
 

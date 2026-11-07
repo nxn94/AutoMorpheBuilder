@@ -179,7 +179,9 @@ jobs:
           key: apkeep-${{ runner.os }}-v1
 
       - name: Install optional Google Play downloader
-        if: steps.filter.outputs.should-build == 'true'
+        # Google Play refuses anonymous logins from GitHub-hosted runners, so skip
+        # it there unless repository variable GOOPDL_ON_GITHUB_RUNNERS is 'on'.
+        if: steps.filter.outputs.should-build == 'true' && (runner.environment != 'github-hosted' || vars.GOOPDL_ON_GITHUB_RUNNERS == 'on')
         run: bash .github/scripts/pipeline/install_goopdl.sh
 
       - name: Install apkeep
@@ -324,6 +326,9 @@ jobs:
         run: npm ci --omit=dev --no-audit --no-fund
 
       - name: Install optional Google Play downloader
+        # Google Play refuses anonymous logins from GitHub-hosted runners, so skip
+        # it there unless repository variable GOOPDL_ON_GITHUB_RUNNERS is 'on'.
+        if: (runner.environment != 'github-hosted' || vars.GOOPDL_ON_GITHUB_RUNNERS == 'on')
         run: bash .github/scripts/pipeline/install_goopdl.sh
 
       - name: Ensure apkeep is available
