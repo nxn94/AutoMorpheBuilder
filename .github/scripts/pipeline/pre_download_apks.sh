@@ -24,8 +24,16 @@ rm -f "$RESULTS_DIR"/*.txt "$RESULTS_DIR"/*.failed 2>/dev/null || true
 
 resolve_version_for() {
   local pkg="$1"
-  local pin
+  local pin slug repo generated_versions
+  slug="$(node "$(dirname "$0")/../build-plan.js" | jq -r --arg pkg "$pkg" '.[] | select(.appId == $pkg) | .patchSlug')"
+  repo="$(app_config "$pkg" '.repo')"
   pin="$(pinned_version "$pkg")"
+  if [ -f "$TOOLS_DIR/${slug}.metadata.json" ] && jq -e '.generated == true' "$TOOLS_DIR/${slug}.metadata.json" >/dev/null; then
+    generated_versions="$(APP_ID="$pkg" PATCH_REPO="$repo" PATCH_SLUG="$slug" PINNED_VERSION="$pin" \
+      node "$(dirname "$0")/../patch-metadata-runtime.js" versions)" || return 1
+    printf '%s\n' "$generated_versions" | head -n1
+    return 0
+  fi
   if [ -n "$pin" ] && [ "$pin" != "null" ]; then
     log "  [$pkg] using pinned version $pin"
     printf '%s' "$pin"
@@ -37,30 +45,17 @@ resolve_version_for() {
   if [ -n "$resolved" ]; then printf '%s' "$resolved"; return 0; fi
 
   # Resolve the patch repo for this app and find its .mpp file.
-  local slug mpp
-  slug="$(node "$(dirname "$0")/../build-plan.js" | jq -r --arg pkg "$pkg" '.[] | select(.appId == $pkg) | .patchSlug')"
+  local mpp
   mpp="$TOOLS_DIR/${slug}.mpp"
   if [ ! -f "$mpp" ] || [ ! -f "$TOOLS_DIR/morphe-desktop.jar" ]; then
     log_warn "  [$pkg] no .mpp or morphe-desktop.jar; cannot resolve version"
     return 1
   fi
 
-  # Pass the per-app .mpp directly to morphe-desktop. The previous code
-  # copied all per-app .mpp files to a single shared $TOOLS_DIR/patches.mpp
-  # and ran the java call against that — but `download_for()` runs in
-  # parallel for every app, so a copy from a later app would overwrite
-  # the .mpp an earlier app's java call was still reading. Sofascore was
-  # failing "could not determine version" because the in-flight copy had
-  # been replaced with MorpheApp-morphe-patches.mpp (which doesn't list
-  # com.sofascore.results) by the time its java call ran.
   local versions version
-  # Sort the version list descending (numeric-aware) before picking head —
-  # the CLI does not guarantee "latest first" (e.g. Twitch's RookieEnough/
-  # De-Vanced mpp prints 16.9.1 before 25.3.0). The regex accepts 2+
-  # segment versions so 24.3 (nzb360), 25.3.0 (Twitch), 26.07.27 (Sofascore)
-  # all match.
-  versions="$(java -jar "$TOOLS_DIR/morphe-desktop.jar" list-versions -f "$pkg" --patches="$mpp" 2>/dev/null || true)"
-  version="$(printf '%s\n' "$versions" | grep -oE '[0-9]+(\.[0-9]+)+' | sort -Vr | head -n1 || true)"
+  versions="$(APP_ID="$pkg" PATCH_REPO="$repo" PATCH_SLUG="$slug" PINNED_VERSION="$pin" \
+    node "$(dirname "$0")/../patch-metadata-runtime.js" versions)" || return 1
+  version="$(printf '%s\n' "$versions" | head -n1)"
   if [ -z "$version" ]; then
     log_warn "  [$pkg] could not determine version"
     return 1

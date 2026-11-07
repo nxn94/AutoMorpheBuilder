@@ -32,7 +32,14 @@ if [ ! -f "$jar" ] || [ ! -f "$mpp" ]; then
   exit 1
 fi
 
-if [ -n "$PINNED_VERSION" ] && [ "$PINNED_VERSION" != "null" ]; then
+if [ -f "$TOOLS_DIR/patches-list.json" ] && jq -e '.generated == true' "$TOOLS_DIR/patches-list.json" >/dev/null 2>&1; then
+  versions="$(node .github/scripts/patch-metadata-runtime.js versions)"
+  version="$(printf '%s\n' "$versions" | head -n1)"
+  if [ -n "${RESOLVED_VERSION:-}" ] && [ "$version" != "$RESOLVED_VERSION" ]; then
+    echo "::error::Generated metadata version disagrees with preflight target"
+    exit 1
+  fi
+elif [ -n "$PINNED_VERSION" ] && [ "$PINNED_VERSION" != "null" ]; then
   version="$PINNED_VERSION"
 elif [ -n "${RESOLVED_VERSION:-}" ]; then
   version="$RESOLVED_VERSION"
@@ -41,7 +48,7 @@ else
   # descending so Twitch's 16.9.1 does not beat a later 25.3.0.
   # The numeric matcher accepts two-, three-, and four-segment versions.
   version="$(java -jar "$jar" list-versions -f "$APP_ID" --patches="$mpp" \
-    | grep -oE '[0-9]+(\.[0-9]+)+' | sort -Vr | head -n1 || true)"
+    | node .github/scripts/patch-metadata-runtime.js tokens | head -n1 || true)"
 fi
 
 if [ -z "$version" ]; then

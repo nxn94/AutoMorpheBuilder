@@ -27,7 +27,7 @@ function buildMatrix(config, versions) {
 }
 
 function supportedVersions(stdout) {
-  return [...new Set(stdout.match(/\d+(?:\.\d+)+/g) || [])]
+  return [...new Set(stdout.match(/(?<![\w./-])\d+(?:\.\d+)+(?:[-+][A-Za-z0-9][A-Za-z0-9._+-]*)?(?![\w./-])/g) || [])]
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
 }
 

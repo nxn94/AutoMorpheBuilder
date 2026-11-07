@@ -88,6 +88,14 @@ The pre-download step also passes the per-app `.mpp` directly to `morphe-desktop
 
 ---
 
+## Raw patch metadata is missing or lists only patch names
+
+A raw `patches-list.json` 404 does not by itself mean the app is unsupported. The resolver tries metadata on the same release and, when compatibility is still unavailable (including arrays of string names), derives it from that release's verified MPP using the configured verified CLI. Logs report `raw`, `release`, or `mpp` provenance and the exact tag. The initial preflight reports `deferred` rather than unsupported; the post-download validation must finish successfully before filtering releases or fetching APKs.
+
+A missing release, malformed JSON/schema, HTTP 401/403/429, exhausted transport retries, missing asset digest, SHA mismatch, incompatible CLI, or unexpected CLI text output stops fallback. Check the exact configured patch pin and CLI release; do not replace the requested release with latest or bypass integrity checks. Standalone sync logs a warning and preserves existing choices on resolution failure.
+
+For generated metadata, `No compatible version for enabled patches` means the enabled/default patch intersection is empty, or every selected patch is unrestricted without an exact `pin_version`. Check explicit opt-ins and exclusions in `patches.json`. Experimental-only compatibility is not unrestricted and never supplies an auto-selected version. Full version suffixes must be preserved through every phase.
+
 ## `java.lang.NoSuchMethodError: ...BytecodePatchBuilder.extendWithAll(Supplier)` during `list-versions`
 
 **Symptom:** the `Compat probe` step fails with a `NoSuchMethodError`, `NoClassDefFoundError`, `IncompatibleClassChangeError`, `VerifyError`, or `LinkageError` referencing a morphe-patcher class.

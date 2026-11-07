@@ -44,6 +44,8 @@
 
 const { patchTag, patchSlug, supportedVersions } = require('./build-plan');
 const fs = require('node:fs');
+const { generatedVersions, atomicWrite } = require('./patch-metadata');
+const { readGenerated, readSelections } = require('./patch-metadata-runtime');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
@@ -102,7 +104,7 @@ function classifyStderr(stderr) {
  * pass a stub. The 30s timeout matches the user's worst-case cold-start
  * for a fresh `morphe-desktop.jar` (mostly JVM warmup).
  */
-async function probe({ config, repoVersions, toolsDir = './tools', execImpl = execFileAsync }) {
+async function probe({ config, repoVersions, toolsDir = './tools', execImpl = execFileAsync, selections = {} }) {
   const rows = [];
 
   if (!config || !config.patch_repos || typeof config.patch_repos !== 'object') {
@@ -160,12 +162,15 @@ async function probe({ config, repoVersions, toolsDir = './tools', execImpl = ex
       // the patches loaded cleanly. Anything we want to flag is in
       // stderr.
       const stderr = (out && out.stderr) || '';
+      const generated = readGenerated(toolsDir, patchSlug(appId, entry, repoVersions));
+      const versions = generated ? generatedVersions(generated, appId, selections[repo]?.[appId] || {}, entry.pin_version || '') : supportedVersions(out?.stdout || '');
+      if (generated && !versions.length) throw new Error(`No compatible version for enabled patches of ${appId}; unrestricted patches require pin_version`);
       rows.push({
         appId,
         repo,
         tag,
         status: classifyStderr(stderr) ? 'STDOUT_ERROR' : 'OK',
-        versions: supportedVersions(out?.stdout || ''),
+        versions,
         symbol: null,
         error: classifyStderr(stderr) ? stderr.trim().split('\n').slice(0, 3).join(' | ') : null,
       });
@@ -243,7 +248,7 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  probe({ config, repoVersions, toolsDir }).then((rows) => {
+  probe({ config, repoVersions, toolsDir, selections: readSelections() }).then((rows) => {
     let errors = 0;
     for (const r of rows) {
       if (r.appId === null) {
@@ -285,7 +290,7 @@ if (require.main === module) {
       }
       process.exit(1);
     }
-    fs.writeFileSync(path.join(toolsDir, 'supported-versions.json'), JSON.stringify(Object.fromEntries(rows.map((r) => [r.appId, r.versions || []]))));
+    atomicWrite(path.join(toolsDir, 'supported-versions.json'), JSON.stringify(Object.fromEntries(rows.map((r) => [r.appId, r.versions || []]))));
     process.exit(0);
   }).catch((e) => {
     console.error(`::error::probe threw: ${e.stack || e.message}`);

@@ -120,6 +120,14 @@ jobs:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
         run: bash .github/scripts/pipeline/download_morphe_tools.sh
 
+      - name: Validate deferred patch metadata
+        env:
+          CONFIG_FILE: ${{ github.workspace }}/config.json
+          REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
+          CLI_TAG: ${{ steps.check.outputs.cli-version }}
+          TOOLS_DIR: ${{ env.TOOLS_DIR }}
+        run: node .github/scripts/preflight-apps.js
+
       - name: Compat probe (per-app runtime check)
         # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError" for the full rationale.
         id: compat

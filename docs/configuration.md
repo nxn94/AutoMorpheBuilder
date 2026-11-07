@@ -149,7 +149,7 @@ When Cloudflare blocks the `/all-versions/` page (403), the downloader falls bac
 | Required | no |
 | Example | `"20.45.36"` |
 
-Lock the build to this exact APK version, bypassing `morphe-desktop list-versions`. Useful when:
+Lock the build to this exact APK version, bypassing `morphe-desktop list-versions`. For MPP-derived metadata, the pin must satisfy every enabled patch; an incompatible pin fails before APK downloads. Useful when:
 
 - The latest Morphe-supported version only ships as a BUNDLE variant on APKMirror and produces `Chosen APK has no classes.dex`.
 - A specific upstream version is known to have arm64-v8a libs (and a later universal bundle is mislabeled).
@@ -218,6 +218,16 @@ Hard-fail if missing.
 | Default | `"main"` |
 
 The branch to query for the latest release tag. Hard-fail if missing.
+
+## Patch metadata and selections
+
+The shared resolver reads `patches-list.json` from the exact resolved or `pin_patch_tag` tag. If raw metadata is absent (HTTP 404), it tries the asset on that same release. A names-only list, or a list without usable compatibility, requires fallback to the exact release's MPP. The configured `cli.repo` and resolved CLI tag load that bundle with `list-patches -p -v --with-descriptions=false` (options and descriptions are unused and omitted); both binaries must match the GitHub release API's SHA-256 digests. There is no latest-release or third-party metadata fallback. Malformed metadata, auth errors, rate limits and transport failures are errors rather than evidence of an unsupported package.
+
+Legacy structured metadata keeps its existing sync rule: new patches use an explicit upstream `default` Boolean when present (otherwise `true`), existing choices survive, and patch execution uses CLI defaults with explicit exclusions. For generated metadata, new patches use upstream enabled defaults; explicit `true` and `false` choices survive sync and repo moves. Explicit `true` opt-ins are also passed with `-e` when executing these bundles. This corrects the former mismatch where a selected default-disabled patch was never enabled by the patch command. Legacy all-true selections do not acquire new diagnostic opt-ins. Explicit `compatiblePackages: null` is universal compatibility; an omitted compatibility field is malformed. Raw metadata may repeat patch names across package declarations; generated CLI metadata requires unique names. Structured target rows may explicitly use `version: null` for unrestricted compatibility; a missing version is malformed.
+
+Generated version resolution intersects compatible versions across the effective selection, preserving full names such as `12.40.1-prod.01`. Experimental targets are excluded. Universal CLI patches (no package section or `(universal)`) apply to every package. Optional version-code rows are validated without altering version names. An explicitly unrestricted patch adds no version constraint; if all selected patches are unrestricted, set an exact `pin_version`. Missing or malformed compatibility is never interpreted as unrestricted. Preflight, the release matrix, predownload and target resolution use the same selection semantics.
+
+Standalone `bash scripts/sync-patches.sh` requires Java 21 when MPP fallback is needed. The update workflow sets Java up automatically. The script resolves the configured CLI tag; the resolver downloads and verifies fallback tools lazily under `tools/metadata-artifacts/`. A failed metadata resolution preserves the app's previous selection and emits a warning.
 
 ## `download_urls`
 

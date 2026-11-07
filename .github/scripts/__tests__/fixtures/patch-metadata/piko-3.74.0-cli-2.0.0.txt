@@ -1,0 +1,586 @@
+INFO: Morphe data root: /scratch/morphe-data (JAR-adjacent)
+INFO: Index: 0
+Name: NewX: Remove ads
+Description: Filters promoted posts and modules from NewX timelines.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 1
+Name: NewX: Disable blur effects
+Description: Disables Haze blur in NewX Compose UI while preserving configured fallback tint and scrim effects.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 2
+Name: NewX: Restore Twitter branding
+Description: Bring back old Twitter icons and name
+Enabled: false
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 3
+Name: NewX: Browse tweet object
+Description: Adds a debug option to browse the tweet object in NewX post menus.
+Enabled: false
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 4
+Name: NewX: Open canonical URLs
+Description: Opens the expanded (canonical) URL directly when clicking links instead of the shortened t.co link.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 5
+Name: NewX: Clone
+Description: Changes the package name and the app name. This allows you to install the patched X alongside the original X or other patched X.
+Enabled: false
+Options:
+	Title: packageName
+	Description: A new package name for the patched app.
+	Required: true
+	Key: packageName
+	Default: com.twitter.android.piko
+	Type: String
+	
+	Title: appName
+	Description: A new app name (label). Entering "X" will skip changing the app name.
+	Required: true
+	Key: appName
+	Default: X Piko
+	Type: String
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 6
+Name: NewX: Crash logs
+Description: Saves crash logs and shows a notification with share and copy actions.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 7
+Name: NewX: Custom font
+Description: Customise font style
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 8
+Name: NewX: Custom sharing domain
+Description: Allows for using domains like fxtwitter when sharing tweets/posts.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 9
+Name: NewX: Permanent share links
+Description: Uses stable account and post IDs in shared links when enabled.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 10
+Name: NewX: Remove share tracking parameters
+Description: Adds a Links setting to remove the a= and s= attribution parameters from shared X URLs.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 11
+Name: NewX: Customize drawer items
+Description: Lets you hide selected items from the NewX navigation drawer, and optionally add Messages and Grok shortcuts.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 12
+Name: NewX: Theme
+Description: Chooses between the original NewX colors and the Material You, high-contrast, and Dim themes.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 13
+Name: NewX: Feature switch overrides
+Description: Adds searchable, typed NewX feature switch overrides.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 14
+Name: NewX: Enable quality-of-life feature flags
+Description: Enables profile Photos and Videos tabs and sharing post screenshots.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 15
+Name: NewX: Customize inline actions
+Description: Lets you hide selected actions from NewX post action bars.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 16
+Name: NewX: Inline download button
+Description: Adds a Download button below NewX posts and saves media to a folder you choose, with a customizable filename template.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 17
+Name: NewX: Redirect downloads to chosen folder
+Description: Saves media downloaded with NewX's own download buttons into the folders chosen for the download feature, using the configured filename template.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 18
+Name: NewX: Log HLS audio renditions
+Description: Diagnostic only. Logs HLS playlist URIs and how rendition ids match the audio pattern. Needs piko logging enabled.
+Enabled: false
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 19
+Name: NewX: Customize media menu items
+Description: Lets you hide selected items from the NewX photo and video long-press menu.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 20
+Name: NewX: Set default media tab
+Description: Lets you choose the default sub-tab (Photos or Videos) for the NewX profile media tab.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 21
+Name: NewX: Gallery profile Photos tab
+Description: Replaces the profile Photos timeline with a three-column media gallery.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 22
+Name: NewX: Customize navigation bar
+Description: Reorder, hide, and replace NewX bottom navigation bar items.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 23
+Name: NewX: Hide post author actions
+Description: Hides the Follow and Message buttons for post authors on post details.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 24
+Name: NewX: Hide post reply bar
+Description: Hides the persistent post-detail reply bar while keeping the compose button available.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 25
+Name: NewX: Customize post menu items
+Description: Lets you hide selected items from the NewX post menu.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 26
+Name: NewX: Set default profile post sorting
+Description: Lets you choose whether profile posts open sorted by the most recent or popular posts.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 27
+Name: NewX: Customize profile tabs
+Description: Reorder and hide the tabs shown on profile screens.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 28
+Name: NewX: Set default reply sorting
+Description: Lets you choose the default reply sorting order for NewX post detail.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 29
+Name: NewX: Server error logging
+Description: Captures parsed NewX server errors in memory and exports them on demand.
+Enabled: false
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 30
+Name: NewX: Disable video player scrolling
+Description: Disables vertical swipes in the NewX video player while keeping playback controls and other gestures available.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 31
+Name: NewX: Hide premium upsell
+Description: Hides the premium upsell chip from the NewX home top bar.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 32
+Name: NewX: Unlock color customization
+Description: Unlocks the built-in app color selector for non-Premium users.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 33
+Name: NewX: Unlock downloads
+Description: Unlocks media downloads and offline video saving in NewX.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 34
+Name: NewX: Customize timeline tabs
+Description: Lets you hide the For You or Following tab from the NewX home timeline.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 35
+Name: NewX: Disable automatic timeline refresh
+Description: Prevents automatic timeline jumps on startup and foregrounding.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 36
+Name: NewX: Filter For You by topic
+Description: Restricts the NewX For You timeline to selected topics.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 37
+Name: NewX: Hide AI-generated posts
+Description: Hides selected AI-generated posts from NewX timelines.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 38
+Name: NewX: Hide Discover more
+Description: Removes the Discover more module from post-detail timelines.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 39
+Name: NewX: Hide compose button
+Description: Removes the compose button from NewX timelines.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 40
+Name: NewX: Hide new posts pill
+Description: Hides the new posts pill in NewX timelines.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 41
+Name: NewX: Hide post dividers
+Description: Removes post and reply dividers shown in NewX timelines.
+Enabled: false
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 42
+Name: NewX: Hide Spaces bar
+Description: Hides the Spaces bar above NewX timelines.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 43
+Name: NewX: Hide timeline tabs bar
+Description: Removes the For You and Following tabs bar from NewX home timelines, with an option to hide the add-tab (+) button.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 44
+Name: NewX: Hide who to follow
+Description: Hides recommended-user sections ("Who to follow") from NewX timelines and profile pages.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 45
+Name: NewX: Restore pinned home tab
+Description: Reopens the pinned list, topic or community tab you last viewed when the app starts.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 46
+Name: NewX: Restore timeline position
+Description: Persists supported timeline positions, then restores them after the app process restarts.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 47
+Name: NewX: Show poll results
+Description: Adds an option to show NewX poll results without voting.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 48
+Name: NewX: Show sensitive media
+Description: Shows sensitive and age-restricted media without confirmation in NewX.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 49
+Name: NewX: Hide posts by verified account type
+Description: Hides posts and replies authored by selected timeline-reported verification types.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 50
+Name: NewX: Filter posts by keyword
+Description: Filters NewX posts using user-defined words and phrases.
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01
+
+Index: 51
+Name: NewX: Translator
+Description: Adds a Translate post-menu option and optional inline translation with free or custom translators (Google, FxTwitter, OpenAI-compatible, DeepL, LibreTranslate).
+Enabled: true
+Compatible packages:
+	Package name: com.twitter.android
+	Compatible versions:
+		12.38.1-prod.01
+		12.39.0-prod.01
+		12.40.1-prod.01

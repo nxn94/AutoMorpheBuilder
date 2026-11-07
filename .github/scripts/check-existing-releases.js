@@ -51,7 +51,9 @@
  */
 
 const { appFingerprint, pipelineDigest, releaseIsCurrent } = require('./build-fingerprint');
-const { buildMatrix } = require('./build-plan');
+const { generatedVersions } = require('./patch-metadata');
+const { readGenerated, readSelections } = require('./patch-metadata-runtime');
+const { buildMatrix, supportedVersions } = require('./build-plan');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -99,8 +101,10 @@ function setOutput(key, value) {
   fs.appendFileSync(GITHUB_OUTPUT, line + '\n');
 }
 
-function resolveApkVersion(appId, jarPath, mppPath, config) {
+function resolveApkVersion(appId, jarPath, mppPath, config, selections = readSelections()) {
   const pin = config.patch_repos?.[appId]?.pin_version;
+  const generated = readGenerated(path.dirname(mppPath), path.basename(mppPath, '.mpp'));
+  if (generated) return generatedVersions(generated, appId, selections[config.patch_repos[appId].repo]?.[appId] || {}, pin || '')[0] || '';
   if (pin) {
     console.log(`  [${appId}] using pinned version ${pin}`);
     return pin;
@@ -119,8 +123,8 @@ function resolveApkVersion(appId, jarPath, mppPath, config) {
       ['-jar', jarPath, 'list-versions', '-f', appId, `--patches=${mppPath}`],
       { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] },
     );
-    const m = out.match(/\d+(?:\.\d+)+/g);
-    if (!m) return '';
+    const m = supportedVersions(out);
+    if (!m.length) return '';
     // Sort descending (numeric-aware) so the head picks the recommended
     // version, not whatever order the CLI happens to print — e.g. Twitch's
     // RookieEnough/De-Vanced mpp prints 16.9.1 before 25.3.0.
@@ -199,7 +203,7 @@ function main() {
   const apkVersions = {};
   for (const entry of matrix) {
     const mppPath = path.join(TOOLS_DIR, `${entry.patchSlug}.mpp`);
-    apkVersions[entry.appId] = entry.targetVersion || resolveApkVersion(entry.appId, jarPath, mppPath, config);
+    apkVersions[entry.appId] = entry.targetVersion || resolveApkVersion(entry.appId, jarPath, mppPath, config, patches);
   }
 
   for (const entry of matrix) entry.targetVersion = apkVersions[entry.appId];
