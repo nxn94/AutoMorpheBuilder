@@ -14,7 +14,7 @@ If a failure you see is not listed here, capture a redacted workflow log and fil
 
 **Cause:** Play may not retain the requested build, metadata discovery may be blocked, the optional installer may have failed, or the delivered variant may not match. Verified stock ARM64 codes are a fast path, not a complete historical catalogue.
 
-**Fix:** keep the existing fallbacks enabled. Unmapped versions use exact-release/architecture metadata discovery, then an explicit requested version name if discovery fails. Do not switch to an implicit latest download, derive stock codes from patched APKs, or disable integrity/version/ABI checks. Inspect the final provider outcome: a goopdl warning alone is not a failed app build. Never publish `tools/goopdl-home/`, authentication logs or signed delivery URLs.
+**Fix:** keep the existing fallbacks enabled. Unmapped versions use exact-release/architecture metadata discovery (APKMirror first, then APKPure's listing for ARM64), then an explicit requested version name if discovery fails or Play can't deliver the discovered code. Do not switch to an implicit latest download, derive stock codes from patched APKs, or disable integrity/version/ABI checks. Inspect the final provider outcome: a goopdl warning alone is not a failed app build. Never publish `tools/goopdl-home/`, authentication logs or signed delivery URLs.
 
 ## APKMirror Cloudflare block / missing download button
 
@@ -278,6 +278,11 @@ For downloader-specific failures, use the `download-resolver-failure.yml` templa
 
 The final selected or merged APK must expose the configured package ID and exact
 target `versionName` through `aapt`/`aapt2`. Unreadable metadata fails the build.
+A label after the version number is allowed, because some apps add one: Gboard's
+`18.5.4.993608717-release-arm64-v8a` matches `18.5.4.993608717`, and Discord's
+`351.11 - Stable` matches `351.11`. The number must still match in full, and a
+test-build label such as `-beta2` or ` rc1` is rejected
+(`src/download/version-match.js`). The release is named by the target version.
 Delete a stale app APK cache if it contains another package or an invalid file;
 check the upstream source before retrying. Two-part versions such as `24.3` are
 supported. Bundles containing inner APKs are merged even when saved as `.apk` or
@@ -287,6 +292,26 @@ The patch command must create its declared output. Directory scans cannot replac
 missing output with another APK. Android build-tools `apksigner verify` checks the
 result before it is uploaded. Signing secrets are supplied only to keystore decode
 and patch/sign steps; downloader processes do not receive them.
+
+## `Signature check failed`
+
+Before patching, the original APK's signing certificate is compared with the
+SHA-256 fingerprints listed for the app in `.github/scripts/apk-signers.json`
+(`src/download/signer.js`). In a bundle, every APK is checked (the base and every
+split), before the merge; the message names the one that failed. Apps that aren't
+listed are skipped with a notice.
+
+- **`is signed by <digest>, not by <app>'s developer`:** the source served an APK
+  signed by someone else, which usually means a modified APK. Don't patch it: delete
+  the app's APK cache and let another source supply it. If the developer really did
+  add a new key (check the "APK certificate fingerprints" on APKMirror), add the new
+  fingerprint to the app's `sha256` list.
+- **`apksigner could not verify`:** the APK has no valid signature. A cached
+  `<appId>.apk` left by an earlier merge is expected to be unsigned; when its bundle
+  is still in the cache, that bundle is checked and merged again instead. Any other
+  unsigned original fails.
+- **`apksigner not found`:** Android build-tools aren't on `PATH`. `install_aapt.sh`
+  adds them; check that step ran.
 
 ## Runner setup and URL caches
 

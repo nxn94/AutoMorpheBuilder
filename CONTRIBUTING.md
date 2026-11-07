@@ -20,7 +20,8 @@ This is a config-only change:
 2. (Optional) Set `pin_version` to lock the build to a specific APK version, or `pin_patch_tag` to lock the patches release.
 3. Trigger `.github/workflows/update-patches.yml` manually to populate `patches.json` from the upstream repo.
 4. Edit `patches.json` to enable/disable specific patches.
-5. Push — the next scheduled or manual build picks up the app via the dynamic matrix.
+5. (Recommended) Add the developer's signing-certificate SHA-256 to `.github/scripts/apk-signers.json`. It's under "APK certificate fingerprints" on any APKMirror download page for the app. Apps not listed build without the check.
+6. Push — the next scheduled or manual build picks up the app via the dynamic matrix.
 
 No `morphe-build.yml` edits are needed; the matrix is derived from `config.json`. See `docs/configuration.md` for field semantics.
 

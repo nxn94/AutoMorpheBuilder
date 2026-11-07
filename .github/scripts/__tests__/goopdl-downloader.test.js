@@ -11,7 +11,7 @@ let dir;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goopdl-test-')); });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
-function fixture({ wrongVersion = false, corrupt = false, traversal = false, wrongAbi = false } = {}) {
+function fixture({ wrongVersion = false, betaVersion = false, labelled = false, corrupt = false, traversal = false, wrongAbi = false } = {}) {
   const wrapped = jest.fn(async (command, args, opts) => {
     if (command === 'flock') return wrapped(args[4], args.slice(5), opts);
     if (command === process.execPath) {
@@ -34,7 +34,7 @@ function fixture({ wrongVersion = false, corrupt = false, traversal = false, wro
     }
     if (command === 'aapt') {
       const split = args[2].includes('config.') ? " split='config.arm64_v8a'" : '';
-      return { stdout: `package: name='com.test' versionCode='123' versionName='${wrongVersion ? '9.9' : '1.2'}'${split}\n` };
+      return { stdout: `package: name='com.test' versionCode='123' versionName='${wrongVersion ? '9.9' : betaVersion ? '1.2-beta1' : labelled ? '1.2 - Stable' : '1.2'}'${split}\n` };
     }
     return { stdout: execFileSync(command, args, opts) };
   });
@@ -42,6 +42,7 @@ function fixture({ wrongVersion = false, corrupt = false, traversal = false, wro
 }
 test.each([
   ['wrongVersion', /base\/version mismatch/],
+  ['betaVersion', /base\/version mismatch/],
   ['corrupt', /digest mismatch/],
   ['traversal', /artifact path/],
   ['wrongAbi', /no split containing lib\/arm64-v8a/],
@@ -49,6 +50,10 @@ test.each([
   const exec = fixture({ [failure]: true });
   await expect(download('com.test', '1.2', dir, options(exec))).rejects.toThrow(message);
   expect(fs.readdirSync(dir).filter(name => name !== 'pool')).toEqual([]);
+});
+
+test('accepts a base APK whose versionName adds a label after the version', async () => {
+  await expect(download('com.test', '1.2', dir, options(fixture({ labelled: true })))).resolves.toBeTruthy();
 });
 
 test('artifact validation opens files without following links before inspecting their bytes', async () => {
@@ -73,6 +78,43 @@ test('unknown versions discover an architecture-specific exact code instead of s
   await download('com.test', '1.2', dir, { ...options(exec), versionCodes: {}, resolveVersionCode });
   expect(resolveVersionCode).toHaveBeenCalledWith('com.test', '1.2', 'arm64-v8a');
   expect(exec.mock.calls[0][1]).toEqual(expect.arrayContaining(['--version', '123']));
+});
+
+test('a discovered code Play cannot deliver falls back to the exact version name', async () => {
+  // Mixed variants: the listing's smallest variant (code 122) isn't served to
+  // the ARM64 profile; asking by name delivers code 123.
+  const real = fixture();
+  const exec = jest.fn(async (command, args, opts) => {
+    if (command === 'flock' && args.includes('122')) throw new Error('not available for this device');
+    return real(command, args, opts);
+  });
+  const result = await download('com.test', '1.2', dir, { ...options(exec), versionCodes: {}, resolveVersionCode: async () => 122 });
+  const asked = exec.mock.calls.filter(([command]) => command === 'flock').map(([, args]) => args[args.indexOf('--version') + 1]);
+  expect(asked).toEqual(['122', '1.2']);
+  expect(result.file).toMatch(/com\.test_1\.2_goopdl\.apkm$/);
+  expect(fs.readdirSync(dir).filter(name => name.startsWith('.goopdl-'))).toEqual([]);
+});
+
+test('a discovered code whose delivery fails the checks also retries by name, with the same checks', async () => {
+  // Play serves code 122 but the delivery says 123: rejected, then by name.
+  const exec = fixture();
+  await download('com.test', '1.2', dir, { ...options(exec), versionCodes: {}, resolveVersionCode: async () => 122 });
+  const asked = exec.mock.calls.filter(([command]) => command === 'flock').map(([, args]) => args[args.indexOf('--version') + 1]);
+  expect(asked).toEqual(['122', '1.2']);
+});
+
+test('the name retry keeps every check and fails closed', async () => {
+  const exec = fixture({ wrongVersion: true });
+  await expect(download('com.test', '1.2', dir, { ...options(exec), versionCodes: {}, resolveVersionCode: async () => 123 }))
+    .rejects.toThrow(/base\/version mismatch/);
+  expect(exec.mock.calls.filter(([command]) => command === 'flock')).toHaveLength(2);
+  expect(fs.readdirSync(dir).filter(name => name !== 'pool')).toEqual([]);
+});
+
+test('a code from the stock mapping is not retried by name', async () => {
+  const exec = jest.fn(async () => { throw new Error('unavailable'); });
+  await expect(download('com.test', '1.2', dir, options(exec))).rejects.toThrow(/unavailable or timed out/);
+  expect(exec).toHaveBeenCalledTimes(1);
 });
 
 test('unknown versions use goopdl exact-name resolution when metadata is unavailable', async () => {

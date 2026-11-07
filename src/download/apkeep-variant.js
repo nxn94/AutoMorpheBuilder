@@ -1,5 +1,7 @@
 'use strict';
 
+const { versionMatches } = require('./version-match');
+
 /**
  * APKPure protobuf URL parsing extracted from
  * `.github/scripts/unified-downloader.js#resolveApkeepVariant`.
@@ -83,7 +85,7 @@ function pickSmallestMatchingVariant(body, version) {
     try {
       const parsed = new URL(u);
       const inner = decodeApkeepCParam(parsed.searchParams.get('c'));
-      return inner != null && inner.vn === version;
+      return inner != null && versionMatches(inner.vn, version);
     } catch {
       return false;
     }
@@ -109,7 +111,27 @@ function pickSmallestMatchingVariant(body, version) {
   return withSize[0].url;
 }
 
+/**
+ * The build number (`vc`) inside an APKPure download URL's `c` param.
+ *
+ * @param {string|null} url A URL from pickSmallestMatchingVariant.
+ * @returns {number|null} A positive whole number, or null when the URL
+ *   has none (or an unusable one).
+ */
+function versionCodeOf(url) {
+  if (typeof url !== 'string') return null;
+  try {
+    const inner = decodeApkeepCParam(new URL(url).searchParams.get('c'));
+    const raw = inner?.vc || '';
+    const code = Number(raw);
+    return /^\d+$/.test(raw) && Number.isSafeInteger(code) && code > 0 ? code : null;
+  } catch {
+    return null;
+  }
+}
+
 module.exports = {
   decodeApkeepCParam,
   pickSmallestMatchingVariant,
+  versionCodeOf,
 };

@@ -3,6 +3,7 @@
 const {
   decodeApkeepCParam,
   pickSmallestMatchingVariant,
+  versionCodeOf,
 } = require('../apkeep-variant');
 
 // Same fixture URLs used in
@@ -113,6 +114,30 @@ describe('download/apkeep-variant', () => {
         'noise after',
       ].join('\n');
       expect(pickSmallestMatchingVariant(body, '26.07.27')).toBe(FAKE_URL_ARM64);
+    });
+  });
+
+  describe('versionCodeOf', () => {
+    const url = (inner) => `https://download.pureapk.com/b/XAPK/abc?_fn=x&c=1|APP|${Buffer.from(inner).toString('base64')}`;
+
+    test('reads the build number from a real listing URL', () => {
+      expect(versionCodeOf(FAKE_URL_ARM64)).toBe(260727002);
+    });
+
+    test.each([
+      ['missing', 'dev=x&vn=1.0'],
+      ['empty', 'dev=x&vn=1.0&vc='],
+      ['not a number', 'dev=x&vn=1.0&vc=12a'],
+      ['negative', 'dev=x&vn=1.0&vc=-5'],
+      ['zero', 'dev=x&vn=1.0&vc=0'],
+      ['too big', 'dev=x&vn=1.0&vc=99999999999999999999'],
+    ])('returns null when the build number is %s', (_, inner) => {
+      expect(versionCodeOf(url(inner))).toBeNull();
+    });
+
+    test('returns null for a URL without a c param', () => {
+      expect(versionCodeOf('https://download.pureapk.com/b/XAPK/abc')).toBeNull();
+      expect(versionCodeOf(null)).toBeNull();
     });
   });
 });
