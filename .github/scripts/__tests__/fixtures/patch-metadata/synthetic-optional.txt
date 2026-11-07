@@ -1,0 +1,19 @@
+Index: 0
+Name: Universal
+Enabled: true
+
+Index: 1
+Name: Universal opt-in
+Enabled: false
+Compatible packages:
+	Package name: (universal)
+
+Index: 2
+Name: Versioned universal
+Enabled: true
+Compatible packages:
+	Package name: (universal)
+	Compatible versions:
+		12.40.1-prod.01
+	Version codes:
+		12.40.1-prod.01: ARM64_V8A=123, ARMEABI_V7A=124

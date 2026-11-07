@@ -37,8 +37,8 @@
  * @param {object<string, object<string, boolean>>} args.defaultsForTargetRepo
  *   Defaults built from the upstream patches-list.json, scoped to apps
  *   whose config.patch_repos[pkg].repo === targetRepo. Keys are package
- *   ids; values are `{patchName: true, ...}` (every compatible patch
- *   on by default).
+ *   ids; values are `{patchName: boolean, ...}` (legacy metadata uses true;
+ *   generated metadata uses upstream enabled defaults).
  * @param {object<string, object<string, object<string, boolean>>>} args.baseAllRepos
  *   The full existing patches.json. Top-level keys are repo names
  *   (owner/repo); the values are `{pkg: {patchName: bool, ...}}`.
@@ -81,7 +81,7 @@ function mergeRepoEntries({ defaultsForTargetRepo, baseAllRepos, targetRepo }) {
       // `has()` semantics: explicit `false` from the user must survive.
       mergedPkg[patchName] = Object.prototype.hasOwnProperty.call(pkgExisting, patchName)
         ? pkgExisting[patchName]
-        : true;
+        : defaults[pkg][patchName];
     }
     merged[pkg] = mergedPkg;
   }

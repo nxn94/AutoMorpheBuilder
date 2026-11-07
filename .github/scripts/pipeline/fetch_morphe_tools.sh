@@ -7,7 +7,7 @@
 # Replaces the ~60-line `run:` block in the workflow's "Get latest
 # Morphe patches + CLI + APKEditor" step. Behaviour is identical:
 #   - download patches-<ver>.mpp into $TOOLS_DIR/<slug>.mpp if missing
-#   - always fetch patches-list.json (small, always fresh)
+#   - resolve exact-tag metadata after verified tools are available
 #   - download morphe-desktop-<ver>-all.jar into $TOOLS_DIR if missing
 #   - resolve the latest APKEditor release tag + asset and download
 #   - emit apkeditor_jar=<abs-path> to $GITHUB_OUTPUT for downstream
@@ -30,8 +30,8 @@
 #   `APKEditor.jar`, the downloaded artifact is also checked against
 #   that digest. A mismatch hard-fails the build. The `<slug>.mpp` is
 #   NOT pinned in the global manifest (its SHA changes per release
-#   tag); the existing `gh release download <tag>` + tag check is the
-#   primary gate.
+#   tag); it is checked against the exact release API digest. MPP-derived
+#   metadata additionally requires both the MPP and CLI API digests.
 
 set -Eeuo pipefail
 
@@ -174,25 +174,6 @@ if [ ! -f "$MPP_DEST" ]; then
   exit 1
 fi
 json_set_output patches_tag "$PATCH_TAG"
-
-# --- patches-list.json (always fresh) -----------------------------------
-
-# Hardened curl: --fail exits non-zero on 4xx/5xx; --max-time /
-# --connect-timeout cap handshake stalls; --retry-all-errors covers
-# connection-level failures. Outer with_retry layers one more
-# exponential-backoff cycle on top of curl's --retry.
-with_retry 3 5 curl \
-  --fail \
-  --location \
-  --show-error \
-  --silent \
-  --connect-timeout 15 \
-  --max-time 300 \
-  --retry 3 \
-  --retry-delay 5 \
-  --retry-all-errors \
-  --output "$TOOLS_DIR/patches-list.json" \
-  "https://raw.githubusercontent.com/${PATCH_REPO}/${PATCH_TAG}/patches-list.json"
 
 # --- morphe-desktop.jar --------------------------------------------------
 
@@ -348,3 +329,5 @@ fi
 
 json_set_output apkeditor_jar "$APKEDITOR_JAR_PATH"
 log "Downloaded APKEditor ${APKEDITOR_TAG}: ${APKEDITOR_ASSET}"
+# Resolve only after exact tool downloads and integrity checks succeed.
+node "$(dirname "$0")/../patch-metadata-runtime.js" resolve

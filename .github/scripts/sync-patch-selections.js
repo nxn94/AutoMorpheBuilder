@@ -1,10 +1,13 @@
 'use strict';
 
+const { matchesPackage } = require('./patch-metadata');
 const { patchTag } = require('./build-plan');
 const { mergeRepoEntries } = require('../../scripts/merge-patches');
 
 function compatiblePackages(patch) {
-  const packages = patch.compatiblePackages || patch.compatible_packages || {};
+  const packages = Object.hasOwn(patch, 'compatiblePackages') ? patch.compatiblePackages : patch.compatible_packages;
+  if (packages === null) return ['(universal)'];
+  if (packages === undefined) return [];
   return Array.isArray(packages)
     ? packages.flatMap((entry) => [entry.packageName, entry.name].filter(Boolean))
     : Object.keys(packages);
@@ -23,8 +26,8 @@ function syncSelections(config, original, versions, lists) {
         || Object.values(original).find((apps) => apps?.[appId])?.[appId] || {};
     } else {
       const defaults = Object.fromEntries((list.patches || list)
-        .filter((patch) => compatiblePackages(patch).includes(appId))
-        .map((patch) => [patch.name, true]));
+        .filter((patch) => compatiblePackages(patch).some((name) => matchesPackage(name, appId)))
+        .map((patch) => [patch.name, list.generated ? patch.use === true : patch.default ?? true]));
       selection = mergeRepoEntries({
         defaultsForTargetRepo: { [appId]: defaults },
         baseAllRepos: original,
@@ -38,7 +41,8 @@ function syncSelections(config, original, versions, lists) {
 
 async function main() {
   const fs = require('node:fs');
-  const { execFileSync } = require('node:child_process');
+  const { createMetadataResolver, atomicWrite } = require('./patch-metadata');
+  const resolveMetadata = createMetadataResolver();
   const config = JSON.parse(fs.readFileSync(process.env.CONFIG_FILE || 'config.json', 'utf8'));
   const patchesFile = process.env.PATCHES_FILE || 'patches.json';
   const original = fs.existsSync(patchesFile) ? JSON.parse(fs.readFileSync(patchesFile, 'utf8')) : {};
@@ -49,20 +53,16 @@ async function main() {
     const key = `${entry.repo}|${tag}`;
     if (Object.hasOwn(lists, key)) continue;
     try {
-      const body = execFileSync('curl', ['--fail', '--location', '--silent', '--show-error',
-        '--connect-timeout', '15', '--max-time', '120', '--retry', '2',
-        `https://raw.githubusercontent.com/${entry.repo}/${encodeURIComponent(tag)}/patches-list.json`],
-      { encoding: 'utf8', timeout: 390000, maxBuffer: 16 * 1024 * 1024 });
-      const list = JSON.parse(body);
-      if (!Array.isArray(list.patches || list)) throw new Error('Invalid patches-list format');
+      const { list, status } = await resolveMetadata({ repo: entry.repo, tag,
+        cli: { repo: config.cli.repo, tag: process.env.CLI_TAG }, toolsDir: process.env.TOOLS_DIR || './tools' });
+      if (status !== 'ready') throw new Error('Metadata deferred; Java and resolved CLI_TAG required');
       lists[key] = list;
     } catch (error) {
       console.error(`::warning::Could not sync ${key}; preserving choices: ${error.message}`);
       lists[key] = null;
     }
   }
-  fs.writeFileSync(`${patchesFile}.tmp`, JSON.stringify(syncSelections(config, original, versions, lists), null, 2) + '\n');
-  fs.renameSync(`${patchesFile}.tmp`, patchesFile);
+  atomicWrite(patchesFile, JSON.stringify(syncSelections(config, original, versions, lists), null, 2) + '\n');
 }
 
 if (require.main === module) main().catch((error) => { console.error(error); process.exitCode = 1; });

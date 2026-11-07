@@ -1,0 +1,33 @@
+{
+  "NOTE": "Do NOT manually edit this file. This file is automatically updated when semantic release (release.yml) runs. Manually editing this file can break your releases and break third party tools that use this file.",
+  "version": "1.47.0",
+  "patches": [
+    {
+      "name": "Unlimited skips",
+      "description": "Disables the limit for skipping songs during playback.",
+      "default": true,
+      "category": null,
+      "dependencies": [],
+      "compatiblePackages": [
+        {
+          "packageName": "com.pandora.android",
+          "name": "Pandora",
+          "description": null,
+          "apkFileType": null,
+          "appIconColor": "#E83040",
+          "signatures": null,
+          "targets": [
+            {
+              "version": null,
+              "versionCodes": null,
+              "isExperimental": false,
+              "minSdk": null,
+              "description": null
+            }
+          ]
+        }
+      ],
+      "options": []
+    }
+  ]
+}

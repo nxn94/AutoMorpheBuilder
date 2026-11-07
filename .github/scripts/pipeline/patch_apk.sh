@@ -139,6 +139,12 @@ while IFS= read -r patch_name; do
   PATCH_ARGS+=("-d" "$patch_name")
 done <<< "$DISABLED_PATCHES"
 
+# Generated metadata honors explicit opt-ins. Structured sources retain their
+# historical CLI-default behavior (legacy sync sets every new patch true).
+ENABLE_ARGS_JSON="$(node "$(dirname "$0")/../patch-metadata-runtime.js" enables)"
+mapfile -d '' -t ENABLE_ARGS < <(jq -j '.[] + "\u0000"' <<< "$ENABLE_ARGS_JSON")
+PATCH_ARGS+=("${ENABLE_ARGS[@]}")
+
 # --- patch (signed) -------------------------------------------------------
 
 MARKER="$RUNNER_TEMP/morphe_${APP_NAME}_start.marker"

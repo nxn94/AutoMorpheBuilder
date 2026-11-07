@@ -21,7 +21,8 @@ flowchart TD
     B1 --> B2[Set up Java 21]
     B2 --> B3[Preflight per-app patch availability<br/>preflight-apps.js]
     B3 --> B4[Download morphe-desktop + per-repo .mpp<br/>download_morphe_tools.sh]
-    B4 --> B6[Compat probe per app<br/>compat-probe.js runs list-versions, classifies stderr<br/>for NoSuchMethodError / NoClassDefFoundError / VerifyError]
+    B4 --> B5[Validate deferred metadata<br/>exact verified MPP + configured CLI]
+    B5 --> B6[Compat probe per app<br/>compat-probe.js runs list-versions, classifies stderr<br/>for NoSuchMethodError / NoClassDefFoundError / VerifyError]
     B6 --> B7[Filter matrix by complete matching releases<br/>check_existing_releases.sh]
     B7 --> B8{should-build?}
     B8 -->|false| Z1[build + create-release skipped<br/>no-op day]
@@ -67,8 +68,9 @@ Runs first. Failures here short-circuit the rest of the workflow.
 |------|--------|---------|
 | Resolve latest Morphe + CLI versions | `pipeline/check_versions.sh` | Emits the optimistic default (`should-build=true`, full matrix) — the downstream filter overrides it. |
 | Set up Java 21 | `actions/setup-java@v5` | Required for `java -jar morphe-desktop.jar`. Default runner Java is older and fails to invoke the jar. |
-| Preflight per-app patch availability | `scripts/preflight-apps.js` | Hits each patch repo's `patches-list.json` at the resolved tag and confirms the app's package id is in `compatiblePackages`. Fail-fast per-app table on upstream rename or typo'd package id. |
+| Preflight per-app patch availability | `scripts/preflight-apps.js` | Uses the shared resolver for exact tagged raw metadata or a same-release asset. Missing usable compatibility is explicitly deferred until verified tools exist; usable metadata rejects unsupported packages. |
 | Download morphe-desktop + patches `.mpp` | `pipeline/download_morphe_tools.sh` | Provides the jar + per-repository/tag `.mpp` files the filter step needs. Runs **unconditionally** so the filter step runs before the expensive Playwright / apkeep / aapt installs. |
+| Validate deferred patch metadata | `scripts/preflight-apps.js` with `CLI_TAG` | Immediately after verified tool download, derives missing metadata from the exact MPP and configured CLI, validates packages, and writes per-tag metadata atomically. Errors stop before APK downloads and filtering. |
 | Compat probe | `scripts/compat-probe.js` | Actually invokes `morphe-desktop list-versions` per app to catch runtime API mismatches the static preflight can't see (e.g. hoo-dles/morphe-patches using `BytecodePatchBuilder.extendWithAll(Supplier)` added to morphe-patcher 2026-07-27, which only morphe-desktop v1.13.2+ carries). |
 | Filter matrix by existing releases | `pipeline/check_existing_releases.sh` | For each app, resolves the APK version (pinned or via `morphe-desktop list-versions`) and drops entries whose release has matching build-input provenance and all required assets. **Fail-open**: if version resolution or `gh release view` errors, the app is kept in the matrix. `FORCE_BUILD=1` on `workflow_dispatch` skips the check. |
 | Node dependencies | `actions/setup-node` + `npm ci` | Installed once before configuration validation; matrix jobs use the npm cache with `npm ci --omit=dev`. |
@@ -105,7 +107,7 @@ Gated by the `signing` GitHub environment so `KEYSTORE_BASE64` / `KEYSTORE_PASSW
 | Checkout + Java 21 | Standard runner setup. |
 | Restore apkeep / pre-downloaded APKs | `actions/download-artifact@v8` from `check-versions` artifacts. |
 | Cache + fetch morphe tools | `fetch_morphe_tools.sh` re-downloads `morphe-desktop.jar` fresh, then per-app `.mpp` and `APKEditor.jar`. The `.mpp` is restored from cache with **exact-key match only** — no `restore-keys` fallback. A `restore-keys: morphe-patches-<slug>-` would silently restore an `.mpp` from an older patch tag when the matrix moves forward (e.g. Twitch `v1.3.1` → `v1.3.2`), which `morphe-desktop list-versions` would then read to produce a stale APK version; the build would silently re-create an already-released APK and the former publisher would skip the upload. Forcing an exact-key match forces `fetch_morphe_tools.sh` to re-download the `.mpp` from `gh release download` whenever the patch tag moves. The `.mpp` is verified against the per-asset digest served by the GitHub release API (`gh_asset_sha256`) before the build continues — a stale cache entry that survived a matrix-tag move fails the SHA check, is deleted, and re-downloaded, for the current run. Exact-key entries are immutable; delete a corrupt entry or advance its key to repair storage. |
-| Resolve supported version | `prepare_target_version.sh` + `list-versions`. Pinned apps skip the CLI call. `sort -Vr` selects the newest supported version even when upstream output is unsorted. Twitch now uses `ryykitty/twitch-patched`; the retired De-Vanced source is not configured. |
+| Resolve supported version | `prepare_target_version.sh` + `list-versions`. Legacy pinned apps skip the CLI call. Shared token extraction preserves complete version suffixes. Generated metadata intersects effective patch compatibility and validates pins; the probe passes the same target into the matrix and predownload. Twitch now uses `ryykitty/twitch-patched`; the retired De-Vanced source is not configured. |
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
 | Download supported APK | `download-supported-apk.js`. Reuse validated local/pre-downloaded APKs; otherwise try **goopdl (Google Play)** → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via apkeep (APKPure), APKMirror-API (if creds), APKMirror scraper (curl → Chromium fallback). **Cleanup on failure** removes partial APK on ABI / version validation throw so a stale file does not pre-empt the good one. |
@@ -140,7 +142,9 @@ Runs after `build` succeeds (`needs: [check-versions, build]`). Also gated by th
 
 config.json                Build config (this repo's "settings")
 patches.json               Patch toggles (repo-keyed: { "owner/repo": { "pkg": { "Patch": true } } })
-patches-list.json          Per-repo, per-tag cache of compatiblePackages from the patches .mpp (managed)
+patches-list.json          Per-matrix metadata from the shared exact-tag resolver (managed)
+<patchSlug>.metadata.json  Check-versions metadata isolated by repo/tag (managed)
+metadata-artifacts/        Digest-addressed verified fallback binaries; disposable CLI execution state
 LICENSE                    GPL-3.0
 SECURITY.md                Vulnerability disclosure policy
 CONTRIBUTING.md            How to file issues, send PRs, validate locally

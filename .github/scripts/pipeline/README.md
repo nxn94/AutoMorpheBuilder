@@ -59,14 +59,18 @@ bash .github/scripts/pipeline/install_apkeep.sh
 bash .github/scripts/pipeline/check_versions.sh
 ```
 
-For the JSON state scripts, you can dry-run them against the local
-`config.json` / `patches.json`:
+For metadata sync, run the standalone entry point against local
+`config.json` / `patches.json` (this updates `patches.json`):
 
 ```bash
-# sync-patches.sh is invoked from the manual update-patches.yml workflow.
-REPO_VERSIONS='{"MorpheApp/morphe-patches":"v1.32.0"}' \
-  bash .github/scripts/pipeline/sync-patches.sh
+# Resolves exact patch tags and the configured CLI tag.
+# Java 21 is required if metadata must be derived from a verified MPP.
+bash scripts/sync-patches.sh
 ```
+
+The lower-level `pipeline/sync-patches.sh` accepts resolved `REPO_VERSIONS`
+and `CLI_TAG`. Metadata fallback shares `../patch-metadata.js` with preflight
+and matrix tool setup; failures preserve existing selections.
 
 ## Validation
 

@@ -56,6 +56,11 @@ REPO_VERSIONS="$(jq -c --argjson tags "$TAGS_JSON" '
   .patch_repos | to_entries | map({(.key): $tags[(.value.repo + "|" + (.value.branch | ascii_downcase) + "|" + (.value.pin_patch_tag // ""))]}) | add
 ' "$CONFIG_FILE")"
 
+CLI_REPO="$(jq -r '.cli.repo' "$CONFIG_FILE")"
+CLI_BRANCH="$(jq -r '.cli.branch' "$CONFIG_FILE")"
+CLI_TAG="$(resolve_release_tag "$CLI_REPO" "$CLI_BRANCH")"
+
+CLI_TAG="$CLI_TAG" \
 REPO_VERSIONS="$REPO_VERSIONS" \
   CONFIG_FILE="$CONFIG_FILE" \
   PATCHES_FILE="$PATCHES_FILE" \

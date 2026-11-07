@@ -2,48 +2,18 @@
 'use strict';
 
 /**
- * preflight-apps.js — per-app validation before the matrix spins up.
- *
- * For every (appId, patchRepo, tag) tuple derived from config.json +
- * the tags resolved by check_versions.sh, fetch the upstream
- * `patches-list.json` at that tag and verify:
- *
- *   1. The tag exists upstream (the fetch itself doesn't 404).
- *   2. The `compatiblePackages` / `compatible_packages` array lists
- *      the app's package id (so `morphe-desktop list-versions -f <pkg>`
- *      won't return an empty list and trip the
- *      "Could not resolve a Morphe-supported version" hard-fail
- *      mid-build).
- *
- * This is Layer B of the "adding a new app must just work" robustness
- * fix. Without it, an upstream patch repo rename or a typo in the
- * package id surfaces as a hard fail 30 minutes into the build, with
- * the operator none the wiser about which app is the cause.
- *
- * Network is abstracted through `fetchImpl` (defaults to global
- * `fetch`) so the jest suite can stub it. The pure function
- * `preflight(config, repoVersions, fetchImpl)` returns:
- *
- *   {
- *     rows:     [{appId, name, repo, tag, pkgListed, fetchOk, error?}, ...],
- *     errors:   [{appId, message}, ...],
- *     warnings: [{appId, message}, ...],
- *   }
- *
- * Per (repo, tag) we cache one patches-list.json response across all
- * apps that share the (repo, tag), so a config with N apps on M repos
- * — and apps with mixed pin_patch_tag overrides — does exactly the
- * minimum number of upstream GETs.
- *
- * CLI: reads $CONFIG_FILE + $REPO_VERSIONS from env, calls `preflight`,
- * writes a markdown table to $GITHUB_STEP_SUMMARY, prints one log
- * line per row, and exits non-zero on any error.
+ * Validate package availability using shared exact-tag metadata resolution.
+ * Before verified tool setup, explicitly defer MPP-derived compatibility.
+ * With CLI_TAG, finish validation before the probe/filter/APK downloads and
+ * atomically materialize per-tag lists for generated selection resolution.
+ * Errors remain distinct from unknown/deferred and unsupported packages.
  */
 
-const { patchTag } = require('./build-plan');
+const { patchTag, patchSlug } = require('./build-plan');
 const fs = require('node:fs');
 
-const RAW_BASE = 'https://raw.githubusercontent.com';
+const { atomicWrite, createMetadataResolver } = require('./patch-metadata');
+const path = require('node:path');
 
 /**
  * Extract package id names from a single patch entry's compatiblePackages.
@@ -61,6 +31,7 @@ function compatPkgNames(patch) {
   const keys = ['compatiblePackages', 'compatible_packages'];
   for (const k of keys) {
     const v = patch[k];
+    if (v === null) return ['(universal)'];
     if (!v) continue;
     if (Array.isArray(v)) {
       return [...new Set(
@@ -98,7 +69,7 @@ function collectPkgIds(patchesList) {
  * is the network abstraction. Tests pass a stub; production uses
  * global `fetch`.
  */
-async function preflight({ config, repoVersions, fetchImpl = fetch }) {
+async function preflight({ config, repoVersions, fetchImpl = fetch, resolveMetadata = createMetadataResolver({ fetchImpl }), cli, toolsDir = './tools', onMetadata = () => {} }) {
   const rows = [];
   const errors = [];
   const warnings = [];
@@ -135,21 +106,15 @@ async function preflight({ config, repoVersions, fetchImpl = fetch }) {
       listCache.set(cacheKey, p);
       return p;
     }
-    const url = `${RAW_BASE}/${repo}/${tag}/patches-list.json`;
+    const appId = Object.keys(config.patch_repos).find((id) => config.patch_repos[id].repo === repo && patchTag(id, config.patch_repos[id], repoVersions) === tag);
     const p = (async () => {
       try {
-        const resp = await fetchImpl(url);
-        if (!resp || !resp.ok) {
-          return {
-            ok: false, status: resp ? resp.status : 0, json: null,
-            error: `HTTP ${resp ? resp.status : 'no response'} fetching ${url}`,
-          };
-        }
-        const json = await resp.json();
-        return { ok: true, status: resp.status, json, error: null };
-      } catch (e) {
-        return { ok: false, status: 0, json: null, error: `${e.message} fetching ${url}` };
-      }
+        const result = await resolveMetadata({ repo, tag, cli, toolsDir,
+          mppPath: path.join(toolsDir, `${patchSlug(appId, config.patch_repos[appId], repoVersions)}.mpp`),
+          jarPath: path.join(toolsDir, 'morphe-desktop.jar') });
+        if (result.status === 'ready') onMetadata({ appId, list: result.list });
+        return { ok: result.status === 'ready', status: result.status, json: result.list, provenance: result.provenance };
+      } catch (error) { return { ok: false, error: error.message }; }
     })();
     listCache.set(cacheKey, p);
     return p;
@@ -173,18 +138,17 @@ async function preflight({ config, repoVersions, fetchImpl = fetch }) {
 
       for (const { appId, entry, tag: appTag } of group) {
         const pkgListed = listResult.ok
-          ? pkgIdsInList.has(appId)
+          ? (pkgIdsInList.has(appId) || pkgIdsInList.has('(universal)'))
           : null; // null = unknown (fetch failed)
 
         let error;
-        if (!listResult.ok) {
+        if (listResult.status === 'deferred') {
+          warnings.push({ appId, message: `[${repo}@${tag}] metadata deferred until verified MPP/CLI download; package support is unknown.` });
+        } else if (!listResult.ok) {
           error = listResult.error;
           errors.push({
             appId,
-            message:
-              `[${repo}@${tag}] could not fetch patches-list.json: ${listResult.error}. ` +
-              `Either the tag doesn't exist upstream or GitHub is rate-limiting. ` +
-              `Run \`gh release view --repo ${repo} --json tagName\` to verify the tag.`,
+            message: `[${repo}@${tag}] could not resolve patch metadata: ${listResult.error}.`,
           });
         } else if (!pkgListed) {
           const sample = [...pkgIdsInList].slice(0, 5).join(', ') || '(none)';
@@ -200,7 +164,9 @@ async function preflight({ config, repoVersions, fetchImpl = fetch }) {
           repo,
           tag: appTag,
           pkgListed: pkgListed === null ? '?' : pkgListed ? 'yes' : 'NO',
-          fetchOk: listResult.ok ? 'yes' : 'NO',
+          fetchOk: listResult.status === 'deferred' ? 'deferred' : listResult.ok ? 'yes' : 'NO',
+          status: listResult.status,
+          provenance: listResult.provenance,
           error,
         });
       }
@@ -258,7 +224,13 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  preflight({ config, repoVersions }).then(({ rows, errors, warnings }) => {
+  preflight({ config, repoVersions, toolsDir: process.env.TOOLS_DIR || './tools',
+    cli: process.env.CLI_TAG ? { repo: config.cli.repo, tag: process.env.CLI_TAG } : undefined,
+    onMetadata: ({ appId, list }) => {
+      if (!process.env.CLI_TAG) return;
+      const dest = path.join(process.env.TOOLS_DIR || './tools', `${patchSlug(appId, config.patch_repos[appId], repoVersions)}.metadata.json`);
+      atomicWrite(dest, JSON.stringify(list));
+    } }).then(({ rows, errors, warnings }) => {
     // Log a one-line-per-app summary to the workflow log.
     for (const r of rows) {
       const tag = r.error ? '::error::' : '';

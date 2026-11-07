@@ -53,6 +53,13 @@ jobs:
           PATCHES_FILE: patches.json
         run: node scripts/detect-new-repos.js
 
+      - name: Set up Java for verified MPP metadata fallback
+        if: github.event_name == 'workflow_dispatch' || steps.detect.outputs.has_new_repos == 'true'
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Sync patches.json (skip if no new repos on auto-trigger)
         if: github.event_name == 'workflow_dispatch' || steps.detect.outputs.has_new_repos == 'true'
         env:

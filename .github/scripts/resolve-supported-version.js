@@ -25,6 +25,9 @@
  * be resolved — matches the bash step's behavior exactly.
  */
 
+const { supportedVersions } = require('./build-plan');
+const { generatedVersions } = require('./patch-metadata');
+const { readSelections } = require('./patch-metadata-runtime');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -157,7 +160,7 @@ function tryMorpheCli(jarPath, mppFile) {
     console.error(`morphe-desktop list-versions failed: ${e.message}`);
     return null;
   }
-  const versions = out.match(/\d+\.\d+\.\d+/g) || [];
+  const versions = supportedVersions(out);
   versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
   return versions;
 }
@@ -224,6 +227,15 @@ if (!patchesList) {
   setOutput('versions', '');
   console.error('::error::Could not resolve a Morphe-supported version from patches list.');
   process.exit(1);
+}
+
+// Generated lists use the same enabled-patch intersection as preflight.
+if (patchesList.generated) {
+  const versions = generatedVersions(patchesList, APP_ID, readSelections()[PATCH_REPO]?.[APP_ID] || {}, PINNED_VERSION && PINNED_VERSION !== 'null' ? PINNED_VERSION : '');
+  if (!versions.length) throw new Error('No compatible version for enabled patches; unrestricted patches require pin_version');
+  setOutput('version', versions[0]);
+  setOutput('versions', versions.join(','));
+  process.exit(0);
 }
 
 // 1. Pinned-version path
