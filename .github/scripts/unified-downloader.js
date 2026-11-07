@@ -45,7 +45,7 @@ const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
-const { pickSmallestMatchingVariant } = require('../../src/download/apkeep-variant');
+const { pickSmallestMatchingVariant, versionCodeOf } = require('../../src/download/apkeep-variant');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -327,6 +327,36 @@ async function verifyUrl(url) {
 }
 
 /**
+ * APKPure's version listing for a package (the protobuf body that
+ * resolveApkeepVariant and the Google Play build-number lookup read).
+ *
+ * @param {string} packageId
+ * @param {typeof fetch} [fetchImpl]
+ * @returns {Promise<string>}
+ */
+async function fetchApkpureVersionListing(packageId, fetchImpl = fetch) {
+  const apiUrl = `https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=${encodeURIComponent(packageId)}`;
+  // codeql[js/file-access-to-http] reason: apiUrl is the public APKPure
+  // protobuf endpoint; only the response text is returned, never
+  // written to disk.
+  const response = await fetchImpl(apiUrl, {
+    signal: AbortSignal.timeout(TIMEOUTS.sourceResolve),
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'x-cv': '3172501',
+      'x-sv': '29',
+      'x-gp': '1',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`APKPure API returned ${response.status}`);
+  }
+
+  return response.text();
+}
+
+/**
  * Query APKPure's backend protobuf for every XAPK variant URL of a
  * given package, returning the arm64-v8a variant URL specifically.
  *
@@ -357,25 +387,7 @@ async function verifyUrl(url) {
  * @returns {Promise<string>} Direct download URL for the arm64-v8a variant
  */
 async function resolveApkeepVariant(packageId, version) {
-  const apiUrl = `https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=${packageId}`;
-  // codeql[js/file-access-to-http] reason: apiUrl is the public APKPure
-  // protobuf endpoint; only the JSON-parsed bytes are returned, never
-  // written to disk.
-  const response = await fetch(apiUrl, {
-    signal: AbortSignal.timeout(TIMEOUTS.sourceResolve),
-    headers: {
-      'User-Agent': 'Mozilla/5.0',
-      'x-cv': '3172501',
-      'x-sv': '29',
-      'x-gp': '1',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`APKPure API returned ${response.status}`);
-  }
-
-  const body = await response.text();
+  const body = await fetchApkpureVersionListing(packageId);
 
   // URL/variant-selection logic (regex match, base64 `c` param
   // decode, version filter, size-based pick) lives in
@@ -1209,8 +1221,45 @@ async function downloadWithApkmirror(packageId, version, outputDir) {
   };
 }
 
+/**
+ * Find the Google Play build number (versionCode) for an exact version.
+ *
+ * APKMirror's listing is tried first: it names the build per CPU type. It
+ * often blocks GitHub's runners, and then Google Play was only asked by
+ * version name, which doesn't find older builds. So APKPure's listing is
+ * the second choice: the build number of the variant APKPure's own step
+ * picks (the arm64-v8a one, see resolveApkeepVariant). A wrong number
+ * can't slip through: downloadWithGoopdl still checks the package, version
+ * name, build number and the arm64-v8a split of what Play delivers.
+ */
+async function resolveGooglePlayVersionCode(packageId, version, arch, opts = {}) {
+  let apkmirrorError;
+  try {
+    return await resolveGooglePlayVersionCodeViaApkmirror(packageId, version, arch);
+  } catch (error) {
+    apkmirrorError = error;
+  }
+  try {
+    const code = await resolveGooglePlayVersionCodeViaApkpure(packageId, version, arch, opts);
+    console.error(`[goopdl] APKMirror couldn't give the build number (${apkmirrorError.message}); using APKPure's: ${code}`);
+    return code;
+  } catch (error) {
+    throw new Error(`${apkmirrorError.message}; APKPure: ${error.message}`, { cause: error });
+  }
+}
+
+/** The arm64-v8a build number APKPure lists for an exact version. */
+async function resolveGooglePlayVersionCodeViaApkpure(packageId, version, arch, { fetchImpl = fetch } = {}) {
+  // APKPure's URLs don't say which CPU they're for; the arm64-v8a choice
+  // rests on the size order resolveApkeepVariant relies on.
+  if (arch !== 'arm64-v8a') throw new Error(`no ${arch} build numbers`);
+  const code = versionCodeOf(pickSmallestMatchingVariant(await fetchApkpureVersionListing(packageId, fetchImpl), version));
+  if (!code) throw new Error(`no build number listed for ${packageId}@${version}`);
+  return code;
+}
+
 /** Discover a stock Play code from an exact-version, architecture-specific listing. */
-async function resolveGooglePlayVersionCode(packageId, version, arch) {
+async function resolveGooglePlayVersionCodeViaApkmirror(packageId, version, arch) {
   const apkmirrorPath = getApkmirrorPath(packageId);
   if (!apkmirrorPath) throw new Error('No APKMirror mapping for version discovery');
   const { browser, page } = await openApkmirror(chromium);
@@ -1556,6 +1605,8 @@ module.exports = {
   resolveApkmirrorReleaseSlug,
   resolveApkmirrorReleaseSlugViaChromium,
   resolveGooglePlayVersionCode,
+  resolveGooglePlayVersionCodeViaApkpure,
+  fetchApkpureVersionListing,
   resolveApkmirrorUrl,
   resolveApkeep,
   resolveApkeepVariant,
