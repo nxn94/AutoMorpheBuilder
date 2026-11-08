@@ -46,6 +46,27 @@ The downloader now uses content-based split-package detection (`detectApkShape` 
 
 ---
 
+## A patch fails on the input APK's `META-INF`
+
+**Symptom:** `morphe-desktop patch` aborts on a bundle-sourced app with a patch that reads the original APK's metadata, for example:
+
+```
+ERROR: Patching aborted: Patching failed: Patch "Disable analytics" failed: The patch
+"Disable analytics" depends on "Spoof signature", which raised an exception
+Caused by: PatchException: Expected one AliExpress signing certificate entry
+  at ...aliexpress.misc.signin.SigningDataPatchKt.signingDataPatch$lambda$0$0(SigningDataPatch.kt:17)
+```
+
+or `META-INF not found in the input APK` from `iiec`'s `BypassSignatureCheckPatch`.
+
+**Cause:** the APKEditor merge used to pass `-clean-meta`, which deletes the bundle's whole `META-INF` directory. Patches that read the original APK's metadata then find nothing. Only bundle-sourced apps were affected — a monolithic APK skips the merge entirely.
+
+**Fix:** none needed on current `main`; the merge keeps `META-INF` (see `apkeditorMergeArgs` in `src/download/merge-args.js`). If you see this on an older checkout, update, or drop `-clean-meta` from the merge argv. Keeping the directory does not ship a stale signature: `morphe-desktop` signs the patched APK and its signer replaces the v1 signature files, so the released APK carries only its own `META-INF/<alias>.{SF,RSA}`.
+
+A patch can still fail for its own reasons after this. If the error names a resource or method rather than `META-INF`, it is a patch-side problem — reproduce against the unmerged `base.apk` from the bundle to tell the two apart, and report it to the patch repository.
+
+---
+
 ## `Wrong version of key store` / `keystore password was incorrect`
 
 **Symptom:** the `Patch and sign ${{ matrix.name }} with morphe-desktop` step fails with `Couldn't decrypt keystore — wrong password or alias` from morphe-desktop, with the underlying Java stack trace typically `java.io.IOException: keystore password was incorrect` at `sun.security.pkcs12.PKCS12KeyStore.engineLoad` (PKCS12) or `BadPaddingException` deep down.

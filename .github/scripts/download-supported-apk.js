@@ -27,6 +27,7 @@ const {
 const { validateApkBoundary, validateArchiveSafe } = require('../../src/apk/validate-boundary');
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { checkSigner, UnsignedApkError } = require('../../src/download/signer');
+const { apkeditorMergeArgs } = require('../../src/download/merge-args');
 
 const APP_ID = process.env.APP_ID;
 const TARGET_VERSION = process.env.TARGET_VERSION || '';
@@ -161,14 +162,10 @@ function readApkVersion(apkPath) {
  * Merge a split package with APKEditor. Returns true on success (writes
  * `outApk`), false otherwise. Mirrors merge_split_package_with_apkeditor.
  *
- * Flags:
- *   -clean-meta   Strips the META-INF signature block before re-emit.
- *                 morphe-desktop re-signs the merged APK anyway, and the
- *                 original signature is for the per-split contents —
- *                 leaving it in place has caused post-merge install
- *                 failures on some downstream tools. Always safe; the
- *                 cost is one extra pass over the bundle's signature
- *                 entries.
+ * The flag set lives in `apkeditorMergeArgs`, which documents why the
+ * merge keeps the bundle's `META-INF`: patches may read the original
+ * APK's metadata, and morphe-desktop's signer replaces the v1
+ * signature files, so keeping it ships nothing stale.
  */
 function mergeSplitPackageWithApkeditor(splitPkg, outApk) {
   if (!APKEDITOR_JAR || !fs.existsSync(APKEDITOR_JAR)) {
@@ -183,7 +180,7 @@ function mergeSplitPackageWithApkeditor(splitPkg, outApk) {
     // Same fd for both streams: opens the file once instead of twice,
     // which removes the openSync-twice TOCTOU CodeQL flagged.
     const logFd = fs.openSync(mergeLog, 'a');
-    r = spawnSync('java', ['-jar', APKEDITOR_JAR, 'm', '-clean-meta', '-i', splitPkg, '-o', outApk], {
+    r = spawnSync('java', apkeditorMergeArgs(APKEDITOR_JAR, splitPkg, outApk), {
       encoding: 'utf8', stdio: ['ignore', logFd, logFd],
     });
   } catch (e) {
