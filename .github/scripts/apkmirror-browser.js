@@ -1,24 +1,41 @@
 'use strict';
+const { withApkmirrorPacing } = require('./apkmirror-pacing');
 
 async function navigateApkmirror(page, url) {
   const target = new URL(url);
   if (target.protocol !== 'https:' || target.hostname !== 'www.apkmirror.com' || target.username || target.password || target.port) {
     throw new Error('Invalid APKMirror URL');
   }
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await page.goto(target.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    // Let browser challenges complete before checking status or parsing the DOM.
-    await page.waitForTimeout(attempt ? 8000 : 1500);
-    const title = await page.title();
-    const status = response?.status() || 0;
-    const blocked = /attention required|just a moment|checking your browser|cloudflare/i.test(title);
-    if (!blocked && status >= 200 && status < 400) return;
-    if (attempt) {
-      const error = new Error(`APKMirror ${blocked ? 'Cloudflare block' : 'navigation failure'} (HTTP ${status})`);
-      if (!blocked) error.status = status;
-      throw error;
+  return withApkmirrorPacing(async gate => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let latest;
+      const onResponse = response => {
+        if (response.request().isNavigationRequest() && response.frame() === page.mainFrame()) latest = response;
+      };
+      page.on?.('response', onResponse);
+      try {
+        const initial = await page.goto(target.href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+        // Automatic challenge navigations replace goto's original response.
+        if (!latest) latest = initial;
+        await page.waitForTimeout(attempt ? 8000 : 1500);
+        const challengeTitle = /attention required|just a moment|checking your browser|cloudflare/i;
+        let title = await page.title();
+        if (challengeTitle.test(title) && ![404, 429].includes(latest?.status())) {
+          // Give the current challenge a bounded chance to navigate itself.
+          await page.waitForTimeout(8000);
+          title = await page.title();
+        }
+        const status = latest?.status() || 0;
+        const blocked = challengeTitle.test(title);
+        if (!blocked && status >= 200 && status < 400) return;
+        const error = Object.assign(new Error(`APKMirror ${blocked ? 'Cloudflare block' : 'navigation failure'} (HTTP ${status})`), { status });
+        if (status === 429) await gate.cooldown((await latest.allHeaders?.())?.['retry-after']);
+        if (attempt || !blocked || status === 404 || status === 429) throw error;
+      } finally {
+        page.off?.('response', onResponse);
+      }
     }
-  }
+  });
 }
 
 async function openApkmirror(chromium) {

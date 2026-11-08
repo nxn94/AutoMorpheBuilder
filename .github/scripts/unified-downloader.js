@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { withApkmirrorPacing } = require('./apkmirror-pacing');
 
 /**
  * Unified APK Downloader
@@ -150,12 +151,8 @@ function getApkmirrorPath(packageId) {
  * @returns {Promise<string>} Absolute release-page URL
  */
 async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
-  // Cloudflare's bot edge blocks BOTH Node fetch and curl from the
-  // GitHub Actions runner's outbound IP block on /all-versions/
-  // (HTTP 403). Chromium's TLS fingerprint passes; when Playwright is
-  // already running, reuse its page for this scrape. Curl from a local
-  // dev machine has a different fingerprint and sails through, so the
-  // curl default still works for local runs.
+  // Reuse the warmed browser when available; curl remains the standalone
+  // HTML path. Either transport may still be blocked by the runner's IP.
   const page = opts.page;
   const fetchImpl = opts.fetchImpl || apkmirrorFetch;
   const cheerioImpl = opts.cheerioImpl || cheerio;
@@ -185,7 +182,7 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
         },
       });
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
       }
       html = await response.text();
     }
@@ -220,6 +217,7 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
     inferred = inferReleaseUrl($('a[href$="-release/"]').map((_, a) => $(a).attr('href')).get(), apkmirrorPath, version);
     if (!inferred) throw new Error(`No release link found ending in any of: ${tailCandidates.join(', ')}`);
   } catch (err) {
+    if (err.status === 429) throw err;
     console.error(`[apkmirror-slug-resolve] ${apkmirrorPath} v${version} → fallback (${err.message})`);
     return fallback;
   }
@@ -235,7 +233,7 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
       }
     } catch (err) {
       // A blocked request or network error does not prove that the guessed page is absent.
-      if (err.status !== 404) throw err;
+      if (err.status !== 404 || /Cloudflare block/.test(err.message)) throw err;
       console.error(`[apkmirror-slug-resolve] inferred release not found → ${fallback}`);
       return fallback;
     }
@@ -245,39 +243,50 @@ async function resolveApkmirrorReleaseSlug(apkmirrorPath, version, opts = {}) {
 }
 
 /**
- * Make a request with browser-like headers using curl subprocess.
- * Node's built-in fetch has a different TLS fingerprint that Cloudflare detects.
- * curl's TLS fingerprint matches real browsers and passes Cloudflare bot detection.
+ * Fetch HTML through the shared APKMirror origin gate using curl.
+ * Neither curl nor Chromium guarantees access through upstream challenges.
  */
 async function apkmirrorFetch(url, cookies = {}, referer = null) {
-  const execAsync = require('node:util').promisify(require('node:child_process').execFile);
-  const args = [
-    '-s', '-L', '--max-time', '30',
-    '-A', 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
-    '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    '-H', 'Accept-Language: en-US,en;q=0.9',
-    '-H', 'DNT: 1',
-    '-w', '\n%{http_code}',
-  ];
-  if (referer) args.push('-H', `Referer: ${referer}`);
-  if (Object.keys(cookies).length > 0) {
-    args.push('-H', `Cookie: ${Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ')}`);
-  }
-  args.push(url);
+  return withApkmirrorPacing(async gate => {
+    const execAsync = require('node:util').promisify(require('node:child_process').execFile);
+    const args = [
+      '-s', '-L', '--proto', '=https', '--proto-redir', '=https', '--max-time', '30', '-D', '-',
+      '-A', 'Mozilla/5.0 (X11; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0',
+      '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      '-H', 'Accept-Language: en-US,en;q=0.9',
+      '-H', 'DNT: 1',
+      '-w', '\n%{http_code}',
+    ];
+    if (referer) args.push('-H', `Referer: ${referer}`);
+    if (Object.keys(cookies).length > 0) {
+      args.push('-H', `Cookie: ${Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ')}`);
+    }
+    const target = new URL(url);
+    if (target.protocol !== 'https:' || target.hostname !== 'www.apkmirror.com' || target.username || target.password || target.port) throw new Error('Invalid APKMirror URL');
+    args.push('--', target.href);
 
-  const { stdout: output } = await execAsync('curl', args, { timeout: 35000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
-  const lastNewline = output.lastIndexOf('\n');
-  const statusCode = parseInt(output.slice(lastNewline + 1).trim(), 10);
-  const body = output.slice(0, lastNewline);
+    const { stdout: output } = await execAsync('curl', args, { timeout: 35000, maxBuffer: 10 * 1024 * 1024, encoding: 'utf8' });
+    const lastNewline = output.lastIndexOf('\n');
+    const statusCode = parseInt(output.slice(lastNewline + 1).trim(), 10);
+    let body = output.slice(0, lastNewline);
+    let retryAfter;
+    while (/^HTTP\/\S+ \d{3}/.test(body)) {
+      const end = body.search(/\r?\n\r?\n/);
+      if (end < 0) break;
+      retryAfter = body.slice(0, end).match(/^retry-after:\s*(.+)$/im)?.[1]?.trim();
+      body = body.slice(end).replace(/^\r?\n\r?\n/, '');
+    }
+    if (statusCode === 429) await gate.cooldown(retryAfter);
 
-  if (statusCode >= 400) throw Object.assign(new Error(`HTTP ${statusCode} for ${url}`), { status: statusCode });
+    if (statusCode >= 400) throw Object.assign(new Error(`HTTP ${statusCode} for ${url}`), { status: statusCode });
 
-  return {
-    text: async () => body,
-    headers: { getSetCookie: () => [] },
-    ok: statusCode < 400,
-    status: statusCode,
-  };
+    return {
+      text: async () => body,
+      headers: { getSetCookie: () => [] },
+      ok: statusCode < 400,
+      status: statusCode,
+    };
+  });
 }
 
 // getCachedUrl / saveCachedUrl / cleanupOldUrls now live in
