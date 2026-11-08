@@ -63,6 +63,7 @@ jobs:
       - name: Sync patches.json (skip if no new repos on auto-trigger)
         if: github.event_name == 'workflow_dispatch' || steps.detect.outputs.has_new_repos == 'true'
         env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           CONFIG_FILE: config.json
           PATCHES_FILE: patches.json
         run: bash scripts/sync-patches.sh

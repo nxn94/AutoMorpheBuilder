@@ -12,6 +12,22 @@ resolve_release_tag() {
   local branch="$2"
   local stable_tag selected_tag
 
+  # Non-GitHub patch sources (e.g. "gitlab:owner/project") resolve through
+  # patch-source-runtime.js, which reads the forge's own registry and is unit
+  # tested without network. `gh` cannot address them at all.
+  if [ "$(node "$(dirname "${BASH_SOURCE[0]}")/../patch-source-runtime.js" host "$repo")" != "github" ]; then
+    selected_tag="$(node "$(dirname "${BASH_SOURCE[0]}")/../patch-source-runtime.js" tag "$repo" "$branch" | tr -d '\r\n')" || {
+      log_error "Could not resolve patches tag for ${repo} (branch=${branch})."
+      exit 1
+    }
+    if [ -z "$selected_tag" ]; then
+      log_error "Could not resolve patches tag for ${repo} (branch=${branch})."
+      exit 1
+    fi
+    echo "$selected_tag"
+    return 0
+  fi
+
   # Prefer the latest non-prerelease release (gh release view's default).
   # Fall back to the latest release of any kind if the repo only ships
   # pre-releases/drafts (e.g. an in-progress dev tag) so the build can

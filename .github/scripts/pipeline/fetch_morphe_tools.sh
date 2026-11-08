@@ -78,11 +78,30 @@ MPP_DEST="$TOOLS_DIR/${PATCH_SLUG}.mpp"
 # `gh_asset_sha256` uses internally. If the API call fails (rate limit,
 # private fork without workflow auth), we fall back to the legacy
 # `patches-*.mpp` glob and skip SHA verification with a warning.
-mpp_asset_name="$(gh release view "$PATCH_TAG" --repo "$PATCH_REPO" --json assets \
-  --jq '[.assets[] | select(.name | startswith("patches-")) | select(.name | endswith(".mpp")) | .name][0] // empty' \
-  2>/dev/null || true)"
-if [ -z "$mpp_asset_name" ]; then
-  log_warn "${PATCH_REPO}@${PATCH_TAG}: could not resolve patches-*.mpp asset name from release API; SHA-256 verification will be skipped for this run."
+PATCH_HOST="$(node "$(dirname "$0")/../patch-source-runtime.js" host "$PATCH_REPO")"
+MPP_ASSET_URL=""
+if [ "$PATCH_HOST" != "github" ]; then
+  # Non-GitHub sources resolve their bundle and its per-file SHA-256 from the
+  # forge's own package registry. Unlike the GitHub route below there is no
+  # "no digest available" fallback: an unverifiable bundle fails the build.
+  bundle="$(node "$(dirname "$0")/../patch-source-runtime.js" mpp "$PATCH_REPO" "$PATCH_TAG")" || {
+    log_error "${PATCH_REPO}@${PATCH_TAG}: could not resolve a verifiable patches bundle."
+    exit 1
+  }
+  mpp_asset_name="$(printf '%s' "$bundle" | cut -f1)"
+  MPP_ASSET_URL="$(printf '%s' "$bundle" | cut -f2)"
+  api_mpp_sha_override="$(printf '%s' "$bundle" | cut -f3)"
+  if [ -z "$mpp_asset_name" ] || [ -z "$MPP_ASSET_URL" ] || [ -z "$api_mpp_sha_override" ]; then
+    log_error "${PATCH_REPO}@${PATCH_TAG}: incomplete patches bundle metadata."
+    exit 1
+  fi
+else
+  mpp_asset_name="$(gh release view "$PATCH_TAG" --repo "$PATCH_REPO" --json assets \
+    --jq '[.assets[] | select(.name | startswith("patches-")) | select(.name | endswith(".mpp")) | .name][0] // empty' \
+    2>/dev/null || true)"
+  if [ -z "$mpp_asset_name" ]; then
+    log_warn "${PATCH_REPO}@${PATCH_TAG}: could not resolve patches-*.mpp asset name from release API; SHA-256 verification will be skipped for this run."
+  fi
 fi
 
 # Pre-resolve the API digest so the verify-and-re-fetch loop can compare
@@ -90,7 +109,9 @@ fi
 # returns "" on failure (network / auth / asset missing), in which case
 # `verify_or_fetch_mpp` falls back to "file must exist, no SHA check".
 api_mpp_sha=""
-if [ -n "$mpp_asset_name" ]; then
+if [ "$PATCH_HOST" != "github" ]; then
+  api_mpp_sha="$api_mpp_sha_override"
+elif [ -n "$mpp_asset_name" ]; then
   api_mpp_sha="$(gh_asset_sha256 "$PATCH_REPO" "$PATCH_TAG" "$mpp_asset_name" || true)"
 fi
 
@@ -139,7 +160,15 @@ verify_or_fetch_mpp() {
   fi
 
   log "Downloading patches from ${repo}@${tag}..."
-  if [ -n "$asset_name" ]; then
+  if [ -n "$MPP_ASSET_URL" ]; then
+    # Non-GitHub source: the registry download URL resolved above. The
+    # post-download SHA check below is the only gate, and it is mandatory.
+    if ! with_retry 3 5 curl -fsSL --proto '=https' --tlsv1.2 \
+        -o "$dest" -- "$MPP_ASSET_URL"; then
+      log_error "Failed to download ${asset_name} from ${repo}@${tag}."
+      return 1
+    fi
+  elif [ -n "$asset_name" ]; then
     gh_release_download "$repo" "$tag" "$asset_name" "$TOOLS_DIR" >/dev/null || true
     if [ -f "$TOOLS_DIR/$asset_name" ] && [ "$TOOLS_DIR/$asset_name" != "$dest" ]; then
       mv "$TOOLS_DIR/$asset_name" "$dest"

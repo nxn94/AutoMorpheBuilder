@@ -122,6 +122,8 @@ function metadataUsable(list) {
   return usable;
 }
 
+const { parsePatchSource, resolveGitlabBundle, gitlabRawFileUrl } = require('./patch-source');
+
 const RELEASE_ASSET_API = /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/releases\/assets\/\d+$/;
 
 // Only explicit 404 is absence. HTTP/auth/rate-limit and transport failures
@@ -138,8 +140,12 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
         try {
           const parsed = new URL(url);
           if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Metadata requires credential-free HTTPS');
+          // gitlab.com's unauthenticated API is rate limited hard enough to
+          // fail a build; an optional token raises the ceiling. Never logged.
           const headers = parsed.hostname === 'api.github.com' && process.env.GH_TOKEN
-            ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {};
+            ? { Authorization: `Bearer ${process.env.GH_TOKEN}` }
+            : parsed.hostname === 'gitlab.com' && process.env.GITLAB_TOKEN
+              ? { 'PRIVATE-TOKEN': process.env.GITLAB_TOKEN } : {};
           if (accept) headers.Accept = accept;
           const response = await fetchImpl(url, { signal: AbortSignal.timeout(120000), headers });
           if (optional && response.status === 404) return absent;
@@ -176,6 +182,29 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
     if (!tag) throw new Error(`No resolved tag for ${repo}`);
     const key = JSON.stringify([repo, tag, cli, options.mppPath, options.jarPath]);
     if (!results.has(key)) results.set(key, (async () => {
+      const source = parsePatchSource(repo);
+      // GitLab keeps the same two-step shape as GitHub: the exact tagged raw
+      // patches-list.json first, then metadata derived from the digest-verified
+      // MPP. What has no GitLab equivalent is the middle step — GitLab's
+      // release assets are bare links with no digest — so the bundle is taken
+      // from the generic package registry, the only route that publishes a
+      // per-file SHA-256 for `verifiedAsset` to enforce.
+      if (source.host === 'gitlab') {
+        const gitlabRaw = await request(gitlabRawFileUrl(source, tag, 'patches-list.json'), { optional: true });
+        if (gitlabRaw !== absent && metadataUsable(gitlabRaw)) {
+          log(`[metadata] ${repo}@${tag}: raw`);
+          return { status: 'ready', provenance: 'raw', list: gitlabRaw };
+        }
+        if (!cli?.repo || !cli?.tag) {
+          log(`[metadata] ${repo}@${tag}: deferred; verified MPP + configured CLI required`);
+          return { status: 'deferred', provenance: 'mpp', list: null };
+        }
+        const bundle = await resolveGitlabBundle(source, { tag, branch: options.branch, request });
+        const derived = await derive({ ...options, release: bundle, request, requestAsset });
+        if (!metadataUsable(derived)) throw new Error('Malformed metadata from CLI');
+        log(`[metadata] ${repo}@${tag}: mpp (${cli.repo}@${cli.tag})`);
+        return { status: 'ready', provenance: 'mpp', list: derived };
+      }
       const raw = await request(`https://raw.githubusercontent.com/${repo}/${encodeURIComponent(tag)}/patches-list.json`, { optional: true });
       let list = raw;
       let provenance = 'raw';
