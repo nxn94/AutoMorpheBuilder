@@ -67,6 +67,24 @@ Do not downgrade Jest or disguise the vulnerable package version just to clear
 the audit. Upgrade when an upstream fix is available, and reopen the alert if
 this dependency reaches runtime code or begins merging untrusted remote input.
 
+## Security maintenance checks
+
+The npm overrides require `minimatch >=11.0.1` (GHSA-g3hv-75wg-m249) and
+`glob >=14.0.2` (GHSA-3g3m-2fjr-6pw4). The lockfile resolves these to 11.0.5
+and 14.0.4. Both support the project's Node.js 24 runtime. Verify override
+compatibility with a clean `npm ci` and `npm run check`, including Jest test
+discovery and coverage; check both the full audit and `npm audit --omit=dev`.
+The unpatched, test-only `deepmerge` advisory above remains a separate risk.
+
+Security analysis includes tests. Bash harnesses pass checkout paths as quoted
+environment data instead of inserting them into shell source. The pin-validation
+regression covers both accepted and rejected pins in a path containing spaces
+and a quote. The sync test uses a static fetch preload under `test/fixtures/`
+instead of generating JavaScript containing a filesystem path; it remains
+outside Jest's `__tests__` discovery. Its `NODE_OPTIONS` preload path is quoted
+and escaped, with a spaces-and-quote path regression. Keep `'use strict'` before executable
+statements so it is an actual directive, not an ignored string expression.
+
 ## Attribution
 
 We follow coordinated disclosure. Reporters who file a valid advisory will be credited in the fix commit (unless they prefer anonymity).

@@ -91,21 +91,25 @@ test('shell version fallbacks and generated patch opt-ins delegate to shared run
   }
 });
 
-test('predownload validates generated pins against selected patches before accepting them', () => {
+test.each(['12.40.1-prod.01', '12.39.0-prod.01'])('predownload validates generated pin %s even with quotes in the checkout path', (pin) => {
   const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
   const { execFileSync } = require('node:child_process');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'predownload-metadata-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'predownload-"quoted path-'));
   try {
-    const scriptPath = path.join(__dirname, '../pipeline/pre_download_apks.sh');
+    fs.symlinkSync(path.join(__dirname, '..'), path.join(tmp, 'scripts'), 'dir');
+    const scriptPath = path.join(tmp, 'scripts/pipeline/pre_download_apks.sh');
     const source = fs.readFileSync(scriptPath, 'utf8').split('\ndownload_for()')[0]
-      .replaceAll('$(dirname "$0")', path.dirname(scriptPath));
+      .replaceAll('$(dirname "$0")', '${SCRIPT_DIR}');
     const configFile = path.join(tmp, 'config.json');
-    fs.writeFileSync(configFile, JSON.stringify({ patch_repos: { 'com.example.app': { repo: 'owner/repo', pin_version: '12.40.1-prod.01' } } }));
+    fs.writeFileSync(configFile, JSON.stringify({ patch_repos: { 'com.example.app': { repo: 'owner/repo', pin_version: pin } } }));
     const patchesFile = path.join(tmp, 'patches.json');
     fs.writeFileSync(patchesFile, JSON.stringify({ 'owner/repo': { 'com.example.app': { 'Opt-in': true } } }));
     fs.writeFileSync(path.join(tmp, 'owner-repo.metadata.json'), JSON.stringify(list));
-    expect(() => execFileSync('bash', ['-c', source + '\nresolve_version_for com.example.app'], { stdio: 'pipe', env: { ...process.env,
-      CONFIG_FILE: configFile, PATCHES_FILE: patchesFile, TOOLS_DIR: tmp, APK_DIR: path.join(tmp, 'apks'), RESULTS_DIR: path.join(tmp, 'results'), REPO_VERSIONS: '{}' } })).toThrow();
+    // Checkout paths are quoted shell data, never interpolated shell source.
+    const run = () => execFileSync('bash', ['-s'], { input: source + '\nresolve_version_for com.example.app', stdio: 'pipe', env: { ...process.env,
+      SCRIPT_DIR: path.dirname(scriptPath), CONFIG_FILE: configFile, PATCHES_FILE: patchesFile, TOOLS_DIR: tmp, APK_DIR: path.join(tmp, 'apks'), RESULTS_DIR: path.join(tmp, 'results'), REPO_VERSIONS: '{}' } });
+    if (pin === '12.39.0-prod.01') expect(run().toString().trim()).toBe(pin);
+    else expect(run).toThrow(`Pinned version ${pin} incompatible with enabled patches`);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
@@ -159,15 +163,14 @@ test('authentic null universal filtering and explicit generated opt-ins agree', 
 test('production sync entrypoint preserves explicit null-universal choices and disables new default-false patches', () => {
   const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
   const { execFileSync } = require('node:child_process');
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-null-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-null-"quoted path-'));
   try {
-    const fixture = path.join(__dirname, 'fixtures/patch-metadata/morphe-2.1.0-excerpt.json');
-    const preload = path.join(tmp, 'fetch.cjs');
-    fs.writeFileSync(preload, `global.fetch = async () => ({ ok: true, status: 200, json: async () => require(${JSON.stringify(fixture)}) });`);
+    fs.symlinkSync(path.resolve(__dirname, '../../..'), path.join(tmp, 'checkout'), 'dir');
+    const preload = path.join(tmp, 'checkout/test/fixtures/fetch-null-universal.cjs');
     const configFile = path.join(tmp, 'config.json'); const patchesFile = path.join(tmp, 'choices.json');
     fs.writeFileSync(configFile, JSON.stringify({ ...config, cli: { repo: 'cli/repo' } }));
     fs.writeFileSync(patchesFile, JSON.stringify({ 'owner/repo': { 'com.example.app': { 'Clone app': true, 'Spoof signature': false } } }));
-    execFileSync('bash', ['.github/scripts/pipeline/sync-patches.sh'], { env: { ...process.env, NODE_OPTIONS: `--require=${preload}`, CONFIG_FILE: configFile, PATCHES_FILE: patchesFile, REPO_VERSIONS: JSON.stringify(versions) }, stdio: 'pipe' });
+    execFileSync('bash', ['.github/scripts/pipeline/sync-patches.sh'], { env: { ...process.env, NODE_OPTIONS: `--require=${JSON.stringify(preload)}`, CONFIG_FILE: configFile, PATCHES_FILE: patchesFile, REPO_VERSIONS: JSON.stringify(versions) }, stdio: 'pipe' });
     expect(JSON.parse(fs.readFileSync(patchesFile))['owner/repo']['com.example.app']).toEqual({
       'Change installer source': false, 'Clone app': true, 'Disable Play Store updates': false, 'Override certificate pinning': false, 'Spoof signature': false,
     });
