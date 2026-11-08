@@ -22,7 +22,7 @@ If a failure you see is not listed here, capture a redacted workflow log and fil
 
 **Cause:** the browser received a challenge, not necessarily an app variant page. A blocked page does not prove the requested version or ARM64 variant is absent.
 
-**Fix:** use the installed full Chromium (`channel: chromium`) and the shared warmed browser context with its matching Chrome user-agent. The helper waits and retries once, then reports a persistent block. Verify the exact release and architecture-specific variant in a browser; multiple variants may exist for one version. Cloudflare may still block a runner IP, so retain Google Play/APKPure/API fallbacks. Share only redacted status/title diagnostics, never cookies or signed URLs.
+**Fix:** use the installed full Chromium (`channel: chromium`) and the shared warmed browser context with its matching Chrome user-agent. The helper tracks main-frame document responses, allowing an automatic 403 → 200 challenge recovery without reloading. Normal-looking HTTP errors still fail; genuine 404/500 and 429 do not trigger a challenge retry. Persistent challenges get at most one retry, with status preserved. Browser navigation and curl HTML requests share a Linux `flock` gate on the same runner: 1.5-second spacing after each operation and a 45-second lock acquisition timeout. HTTP 429 sets shared cooldown; Retry-After seconds or HTTP-date is honored in full without sleeping through the delay (invalid/missing: 30 seconds, minimum cooldown: 1.5 seconds). Extremely large numeric delays saturate at the largest safe timestamp rather than overflow or allow an early retry. During cooldown, subsequent same-origin paths fail before requesting, including fresh browser sessions. Parallel providers remain available. `pre_download_apks.sh` creates and cleans timestamp-only job temp state via `APKMIRROR_PACING_DIR`; standalone callers use workspace-keyed runner/temp state. Different runners do not coordinate. Verify the exact release and architecture-specific variant in a browser; multiple variants may exist for one version. Cloudflare may still block a runner IP, so retain Google Play/APKPure/API fallbacks. Share only redacted status/title diagnostics, never cookies or signed URLs.
 
 ---
 
@@ -127,7 +127,7 @@ The repo defends against this in three layers:
 
 **Fix:**
 
-1. Re-run the workflow. APKMirror rate-limits clear within minutes.
+1. Re-run the workflow. Allow the reported cooldown to expire; runner-IP blocks may persist.
 2. Verify `apkmirror_path` slugs in `config.json` `patch_repos` are still valid by visiting `https://www.apkmirror.com/apk/<apkmirror_path>/all-versions/` in a browser. Sofascore's slug changed from `soccer-scores-and-sports-livescore-sofascore` (deprecated) to `sofascore-live-sports-scores`; keep the current slug in `config.json`.
 3. The `resolveApkmirrorReleaseSlugViaChromium` helper covers the `/all-versions/` 403 case — if it is not engaging, file an issue with the workflow run URL.
 4. Set `APKMIRROR_API_USER` and `APKMIRROR_API_PASS` as repository secrets to skip the Playwright fallback entirely (faster, more reliable).

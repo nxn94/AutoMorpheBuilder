@@ -19,6 +19,12 @@ SKIP_LIST="${SKIP_LIST:-[]}"
 
 mkdir -p "$APK_DIR" "$RESULTS_DIR"
 
+# All child downloaders share one job-local APKMirror origin gate.
+APKMIRROR_PACING_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/amb-apkmirror.XXXXXX")"
+export APKMIRROR_PACING_DIR
+trap 'rm -rf -- "$APKMIRROR_PACING_DIR"' EXIT
+
+
 # Clean any prior results so we don't accidentally merge stale entries.
 rm -f "$RESULTS_DIR"/*.txt "$RESULTS_DIR"/*.failed 2>/dev/null || true
 

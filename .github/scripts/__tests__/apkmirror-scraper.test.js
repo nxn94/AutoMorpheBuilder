@@ -1,3 +1,4 @@
+jest.mock('../apkmirror-pacing', () => ({ withApkmirrorPacing: jest.fn(fn => fn({ cooldown: jest.fn() })) }));
 // .github/scripts/__tests__/apkmirror-scraper.test.js
 'use strict';
 
@@ -376,7 +377,7 @@ describe('resolveApkmirrorReleaseSlug', () => {
       `https://www.apkmirror.com/apk/${path}/old-app-name-1-0-0-release/`
     );
     expect(page.goto.mock.calls.map(([url]) => url)).toEqual([
-      `https://www.apkmirror.com/apk/${path}/all-versions/`, inferredUrl, inferredUrl,
+      `https://www.apkmirror.com/apk/${path}/all-versions/`, inferredUrl,
     ]);
   });
 
@@ -439,7 +440,7 @@ describe('resolveApkmirrorReleaseSlug', () => {
     };
 
     await expect(resolveApkmirrorReleaseSlug(path, '1.0.0', { page })).rejects.toThrow('Cloudflare block');
-    expect(page.goto).toHaveBeenCalledTimes(3);
+    expect(page.goto).toHaveBeenCalledTimes(2);
   });
 
   // SD Maid (darken) ships its upstream tag as `2.0.2` but APKMirror
@@ -631,4 +632,24 @@ describe('resolveApkmirrorReleaseSlugViaChromium', () => {
     );
     expect(close).toHaveBeenCalledTimes(1);
   });
+});
+
+test('list-page 429 propagates rather than requesting a fallback release', async () => {
+  const fetchImpl = jest.fn(async () => { throw Object.assign(new Error('throttled'), { status: 429 }); });
+  await expect(resolveApkmirrorReleaseSlug('example/app', '1.0', { fetchImpl })).rejects.toMatchObject({ status: 429 });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+test.each(['2', 'Sun, 08 Nov 2026 12:00:00 GMT', 'invalid', '999999'])('curl HTML 429 shares Retry-After %s and does not resolve another slug', async value => {
+  const { resolveApkmirrorReleaseSlug } = require('../unified-downloader');
+  const cooldown = jest.fn();
+  const { withApkmirrorPacing } = require('../apkmirror-pacing');
+  withApkmirrorPacing.mockImplementationOnce(fn => fn({ cooldown }));
+  const execAsync = jest.fn(async () => ({ stdout: `HTTP/1.1 429 Too Many Requests\r\nRetry-After: ${value}\r\n\r\nblocked\n429` }));
+  const spy = jest.spyOn(require('node:util'), 'promisify').mockReturnValue(execAsync);
+  try {
+    await expect(resolveApkmirrorReleaseSlug('example/app', '1.0')).rejects.toMatchObject({ status: 429 });
+    expect(cooldown).toHaveBeenCalledWith(value);
+    expect(execAsync).toHaveBeenCalledTimes(1);
+  } finally { spy.mockRestore(); }
 });
