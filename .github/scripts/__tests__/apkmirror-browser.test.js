@@ -1,5 +1,5 @@
-jest.mock('../apkmirror-pacing', () => ({ withApkmirrorPacing: jest.fn((fn) => fn({ cooldown: async () => {} })) }), { virtual: true });
 'use strict';
+jest.mock('../apkmirror-pacing', () => ({ withApkmirrorPacing: jest.fn((fn) => fn({ cooldown: async () => {} })) }), { virtual: true });
 const cheerio = require('cheerio');
 const { openApkmirror, navigateApkmirror, extractVersionCode } = require('../apkmirror-browser');
 

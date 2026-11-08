@@ -1,6 +1,6 @@
+'use strict';
 jest.mock('../apkmirror-pacing', () => ({ withApkmirrorPacing: jest.fn(fn => fn({ cooldown: jest.fn() })) }));
 // .github/scripts/__tests__/apkmirror-scraper.test.js
-'use strict';
 
 // We'll import helpers once they're exported from unified-downloader.js
 const {
