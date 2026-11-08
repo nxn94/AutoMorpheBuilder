@@ -212,3 +212,86 @@ test('authentic hoo-dles explicit null target resolves raw; omitted version rema
   delete bad.patches[0].compatiblePackages[0].targets[0].version;
   expect(() => require('../patch-metadata').metadataUsable(bad)).toThrow(/Malformed metadata/);
 });
+
+describe('release asset routes', () => {
+  const apiUrl = 'https://api.github.com/repos/owner/repo/releases/assets/7';
+  const downloadUrl = 'https://github.com/owner/repo/releases/download/v1/patches-list.json';
+  const asset = { name: 'patches-list.json', url: apiUrl, browser_download_url: downloadUrl };
+  const options = { repo: 'owner/repo', tag: 'v1' };
+  const token = process.env.GH_TOKEN;
+  beforeEach(() => { process.env.GH_TOKEN = 'test-token'; });
+  afterAll(() => { if (token === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = token; });
+  const routed = (apiRoute, downloadRoute, item = asset) => network({
+    [release]: [200, { assets: [item] }], [apiUrl]: apiRoute, [downloadUrl]: downloadRoute,
+  });
+  const calls = (fetchImpl, url) => fetchImpl.mock.calls.filter(([u]) => u === url);
+
+  test('download URL outage does not matter when the API route answers', async () => {
+    const fetchImpl = routed([200, legacy], [504, null]);
+    const resolve = createMetadataResolver({ fetchImpl, retryDelay: 0, log: () => {} });
+    expect(await resolve(options)).toMatchObject({ list: legacy, provenance: 'release', status: 'ready' });
+    expect(calls(fetchImpl, downloadUrl)).toHaveLength(0);
+    expect(calls(fetchImpl, apiUrl)[0][1].headers).toMatchObject({ Accept: 'application/octet-stream', Authorization: 'Bearer test-token' });
+  });
+  test.each([403, 404, 503])('API HTTP %s falls back to the download URL without sending the token', async (status) => {
+    const log = jest.fn();
+    const fetchImpl = routed([status, null], [200, legacy]);
+    const resolve = createMetadataResolver({ fetchImpl, retryDelay: 0, log });
+    expect(await resolve(options)).toMatchObject({ list: legacy, provenance: 'release' });
+    expect(calls(fetchImpl, downloadUrl)[0][1].headers).toEqual({});
+    expect(log.mock.calls.flat().join(' ')).toContain(`HTTP ${status}`);
+  });
+  test('both routes down stops resolution: never deferred, never derived', async () => {
+    const derive = jest.fn();
+    const fetchImpl = routed([504, null], [504, null]);
+    const resolve = createMetadataResolver({ fetchImpl, derive, retryDelay: 0, log: () => {} });
+    await expect(resolve({ ...options, cli: { repo: 'cli/repo', tag: 'v2' } })).rejects.toThrow('HTTP 504');
+    expect(derive).not.toHaveBeenCalled();
+    expect(calls(fetchImpl, apiUrl)).toHaveLength(3);
+    expect(calls(fetchImpl, downloadUrl)).toHaveLength(3);
+  });
+  test('malformed content is final and does not switch routes', async () => {
+    const fetchImpl = jest.fn(async (url) => url === release
+      ? { ok: true, status: 200, json: async () => ({ assets: [asset] }) }
+      : url === apiUrl
+        ? { ok: true, status: 200, json: async () => { throw new SyntaxError('bad'); } }
+        : { ok: false, status: 404, json: async () => null });
+    await expect(createMetadataResolver({ fetchImpl, retryDelay: 0, log: () => {} })(options)).rejects.toThrow('Malformed metadata JSON');
+    expect(calls(fetchImpl, downloadUrl)).toHaveLength(0);
+  });
+  test.each([
+    ['missing', undefined],
+    ['another host', 'https://example.com/repos/owner/repo/releases/assets/7'],
+    ['not an asset', 'https://api.github.com/repos/owner/repo/releases/7'],
+  ])('%s asset API URL uses only the download URL', async (_label, url) => {
+    const fetchImpl = routed([200, []], [200, legacy], { ...asset, url });
+    expect(await createMetadataResolver({ fetchImpl, retryDelay: 0, log: () => {} })(options)).toMatchObject({ list: legacy });
+    expect(fetchImpl.mock.calls.flatMap(([, init]) => (init.headers.Authorization ? [] : [init.headers.Accept])).filter(Boolean)).toEqual([]);
+  });
+  test('MPP and CLI bytes use the API route and are still digest-verified', async () => {
+    const toolsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'metadata-routes-'));
+    const mpp = Buffer.from('bundle');
+    const jar = Buffer.from('CLI');
+    const mppAsset = { name: 'patches-1.mpp', digest: digest(mpp), url: 'https://api.github.com/repos/owner/repo/releases/assets/8', browser_download_url: 'https://github.com/owner/repo/releases/download/v1/patches-1.mpp' };
+    const jarAsset = { name: 'morphe-desktop-2-all.jar', digest: digest(jar), url: 'https://api.github.com/repos/cli/repo/releases/assets/9', browser_download_url: 'https://github.com/cli/repo/releases/download/v2/morphe-desktop-2-all.jar' };
+    const cliRelease = 'https://api.github.com/repos/cli/repo/releases/tags/v2';
+    const bytes = (body) => ({ ok: true, status: 200, arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.length) });
+    const fetchImpl = jest.fn(async (url) => {
+      if (url === raw) return { ok: true, status: 200, json: async () => ['Patch'] };
+      if (url === release) return { ok: true, status: 200, json: async () => ({ assets: [mppAsset] }) };
+      if (url === cliRelease) return { ok: true, status: 200, json: async () => ({ assets: [jarAsset] }) };
+      if (url === mppAsset.url) return bytes(fetchImpl.corrupt ? Buffer.from('wrong') : mpp);
+      if (url === jarAsset.url) return bytes(jar);
+      return { ok: false, status: 504, json: async () => null };
+    });
+    const derive = (o) => deriveMetadata({ ...o, toolsDir, execImpl: async () => ({ stdout: real, stderr: '' }) });
+    const cliOption = { ...options, cli: { repo: 'cli/repo', tag: 'v2' } };
+    try {
+      expect(await createMetadataResolver({ fetchImpl, derive, retryDelay: 0, log: () => {} })(cliOption)).toMatchObject({ provenance: 'mpp', status: 'ready' });
+      expect(fetchImpl.mock.calls.some(([url]) => url.includes('/releases/download/'))).toBe(false);
+      fs.rmSync(toolsDir, { recursive: true, force: true });
+      fetchImpl.corrupt = true;
+      await expect(createMetadataResolver({ fetchImpl, derive, retryDelay: 0, log: () => {} })(cliOption)).rejects.toThrow(/SHA-256/);
+    } finally { fs.rmSync(toolsDir, { recursive: true, force: true }); }
+  });
+});

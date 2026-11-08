@@ -122,13 +122,15 @@ function metadataUsable(list) {
   return usable;
 }
 
+const RELEASE_ASSET_API = /^https:\/\/api\.github\.com\/repos\/[^/]+\/[^/]+\/releases\/assets\/\d+$/;
+
 // Only explicit 404 is absence. HTTP/auth/rate-limit and transport failures
 // retain bounded retries and an abort deadline including response-body reads.
 function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, retryDelay = 1000, log = console.error } = {}) {
   const absent = Symbol('HTTP 404');
   const requests = new Map();
   const results = new Map();
-  async function request(url, { optional = false, binary = false } = {}) {
+  async function request(url, { optional = false, binary = false, accept } = {}) {
     const key = `${url}|${binary}`;
     if (!requests.has(key)) requests.set(key, (async () => {
       for (let attempt = 0; ; attempt++) {
@@ -138,6 +140,7 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
           if (parsed.protocol !== 'https:' || parsed.username || parsed.password) throw new Error('Metadata requires credential-free HTTPS');
           const headers = parsed.hostname === 'api.github.com' && process.env.GH_TOKEN
             ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {};
+          if (accept) headers.Accept = accept;
           const response = await fetchImpl(url, { signal: AbortSignal.timeout(120000), headers });
           if (optional && response.status === 404) return absent;
           if (!response.ok) {
@@ -154,6 +157,20 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
     })());
     return requests.get(key);
   }
+  // Two routes to the same release asset: the REST asset endpoint (the route
+  // `gh release download` uses), then the public download URL. Unavailability
+  // of one route is not absence; the asset is still required from the other.
+  // Bad content is final, because both routes serve the same bytes.
+  async function requestAsset(asset, options = {}) {
+    if (!RELEASE_ASSET_API.test(asset.url || '')) return request(asset.browser_download_url, options);
+    try {
+      return await request(asset.url, { ...options, accept: 'application/octet-stream' });
+    } catch (error) {
+      if (error.message.startsWith('Malformed metadata') || !asset.browser_download_url) throw error;
+      log(`[metadata] release asset ${asset.name}: API route failed (${error.message}); trying download URL`);
+      return request(asset.browser_download_url, options);
+    }
+  }
   async function resolve(options) {
     const { repo, tag, cli } = options;
     if (!tag) throw new Error(`No resolved tag for ${repo}`);
@@ -167,7 +184,7 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
         release = await request(`https://api.github.com/repos/${repo}/releases/tags/${encodeURIComponent(tag)}`);
         if (!Array.isArray(release?.assets)) throw new Error('Malformed metadata release assets');
         const asset = release.assets.find((a) => a.name === 'patches-list.json');
-        list = asset ? await request(asset.browser_download_url) : absent;
+        list = asset ? await requestAsset(asset) : absent;
         provenance = 'release';
       }
       if (list === absent || !metadataUsable(list)) {
@@ -175,7 +192,7 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
           log(`[metadata] ${repo}@${tag}: deferred; verified MPP + configured CLI required`);
           return { status: 'deferred', provenance: 'mpp', list: null };
         }
-        list = await derive({ ...options, release, request });
+        list = await derive({ ...options, release, request, requestAsset });
         if (!metadataUsable(list)) throw new Error('Malformed metadata from CLI');
         provenance = 'mpp';
       }
@@ -187,7 +204,7 @@ function createMetadataResolver({ fetchImpl = fetch, derive = deriveMetadata, re
   return resolve;
 }
 
-async function deriveMetadata({ repo, tag, cli, release, request, toolsDir = './tools', mppPath, jarPath,
+async function deriveMetadata({ repo, tag, cli, release, request, requestAsset = (asset, options) => request(asset.browser_download_url, options), toolsDir = './tools', mppPath, jarPath,
   execImpl = require('node:util').promisify(require('node:child_process').execFile) }) {
   const fs = require('node:fs');
   const path = require('node:path');
@@ -207,7 +224,7 @@ async function deriveMetadata({ repo, tag, cli, release, request, toolsDir = './
     let bytes;
     if (localPath && fs.existsSync(localPath)) bytes = fs.readFileSync(localPath);
     else if (fs.existsSync(dest)) bytes = fs.readFileSync(dest);
-    else bytes = await request(asset.browser_download_url, { binary: true });
+    else bytes = await requestAsset(asset, { binary: true });
     if (sha(bytes) !== expected) throw new Error(`SHA-256 mismatch for metadata asset ${asset.name}`);
     atomicWrite(dest, bytes);
     return dest;
