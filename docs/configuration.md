@@ -97,17 +97,34 @@ Must be unique across `patch_repos`. The schema enforces `^[a-z0-9][a-z0-9-]*$`;
 
 | | |
 |---|---|
-| Type | `string` (`owner/repo`) |
+| Type | `string` (`owner/repo`, or `gitlab:owner/project`) |
 | Required | yes |
-| Example | `"MorpheApp/morphe-patches"` |
+| Example | `"MorpheApp/morphe-patches"`, `"gitlab:johninnld/nl-morphe-patches"` |
 
-GitHub `owner/repo` slug pointing at a Morphe-compatible patches repository. The workflow:
+A bare `owner/repo` slug is a GitHub repository — the default, and what every existing entry means. A `gitlab:owner/project` prefix points at a top-level gitlab.com project instead (see [GitLab patch sources](#gitlab-patch-sources) below). The forge is encoded in this one string so the rest of the pipeline — `patches.json` keys, patch slugs, caches, README tables, relocation detection — keeps treating it as a single opaque identity.
+
+For a GitHub source the workflow:
 
 1. Lists the latest release tag of this repo (used as the `patches-version`).
 2. Downloads the `patches-<tag>.mpp` artifact attached to that release.
 3. Calls `morphe-desktop.jar patch --patches <mpp>` with this `.mpp` to patch the APK.
 
 The repo **must** publish `.mpp` artifacts. If it does not, the per-app `Preflight per-app patch availability` step fails the workflow before the build matrix spins up.
+
+##### GitLab patch sources
+
+`"repo": "gitlab:owner/project"` builds from a patches project hosted on gitlab.com. Roughly a dozen Morphe patch sources (around 60 apps) publish only there, and some patch an APK that no GitHub source handles — `com.alibaba.aliexpresshd` is the case this support was added for.
+
+What is supported, and why it is drawn this narrowly:
+
+1. **Top-level gitlab.com projects only.** `gitlab:owner/project`. Subgroup paths (`gitlab:group/sub/project`), other GitLab instances and other forges are rejected by `npm run validate:config` and by the resolver with a message naming the problem — never half-supported.
+2. **The patches bundle comes from the generic package registry**, not from GitLab's release assets. GitLab's release API returns asset links with **no digest field of any kind**, so a release-driven route could not be verified. The generic package registry publishes `file_sha256` per file (`GET /projects/:id/packages` → `GET /projects/:id/packages/:package_id/package_files`), and that digest is enforced byte-for-byte — exactly the gate `gh_asset_sha256` provides for GitHub. **A bundle with no `file_sha256`, more than one `patches-*.mpp` name, or no `patches-*.mpp` at all fails the build rather than being trusted.**
+3. **Tags are package versions.** With no `pin_patch_tag`, the newest generic package by `created_at` wins — a stable version on `branch: "main"`, a pre-release version on any other branch, mirroring the GitHub channel choice. The tag is reported as `v<version>` (e.g. package `1.54.0` → tag `v1.54.0`), which is also how these projects tag their git refs. `pin_patch_tag` matches a package version exactly; `v1.54.0` and `1.54.0` both address `1.54.0`.
+4. **Patch metadata uses the same two steps as GitHub:** the exact tagged `patches-list.json` via GitLab's raw-file route, then metadata derived from the digest-verified `.mpp` through the configured CLI. There is no GitLab equivalent of the middle "same release's `patches-list.json` asset" step, because that is the undigested route above.
+
+Optional `GITLAB_TOKEN`: gitlab.com rate-limits its unauthenticated API hard enough to fail a build (the raw-file and releases endpoints returned HTTP 429 for several minutes from a single developer machine during this feature's testing). If `GITLAB_TOKEN` is present in the environment it is sent as a `PRIVATE-TOKEN` header on gitlab.com requests only, and never logged. A read-only personal access token with the `read_api` scope is enough. Without it, public projects still work, but a busy runner IP may see 429s.
+
+`cli.repo` is unchanged and remains a GitHub slug — morphe-desktop is only published there.
 
 ##### Moving an app to a different patch repo
 

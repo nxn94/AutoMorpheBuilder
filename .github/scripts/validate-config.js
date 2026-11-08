@@ -68,8 +68,14 @@ const KNOWN_APP_KEYS = new Set([
   'display_name',
 ]);
 
+const { parsePatchSource } = require('./patch-source');
+
 /** owner/repo slug — used by every <owner>/<repo> entry. */
 const REPO_RE = /^[^/\s]+\/[^/\s]+$/;
+
+/** Patch source: a bare GitHub slug, or `<host>:owner/project`. The host is
+ * only shape-checked here; parsePatchSource decides which hosts exist. */
+const PATCH_SOURCE_RE = /^(?:[a-z][a-z0-9]*:)?[^/\s:]+\/[^/\s]+$/;
 
 /** APKMirror path — `publisher/package-name`, no slashes beyond the one. */
 const APK_PATH_RE = /^[^/\s]+\/[^/\s]+$/;
@@ -255,15 +261,24 @@ function validateConfig(config) {
       }
     }
 
-    // repo
-    if (typeof entry.repo !== 'string' || !REPO_RE.test(entry.repo)) {
+    // repo — a bare "owner/repo" GitHub slug, or "gitlab:owner/project".
+    // parsePatchSource is the single authority on what the pipeline can
+    // actually address and verify; anything else is rejected here rather
+    // than failing an hour into the matrix.
+    if (typeof entry.repo !== 'string' || !PATCH_SOURCE_RE.test(entry.repo)) {
       issues.push({
         level: 'error',
         appId,
         message:
-          `repo must be an "owner/repo" slug ` +
-          `(no slashes, no whitespace). Got: ${JSON.stringify(entry.repo)}.`,
+          `repo must be an "owner/repo" slug or "gitlab:owner/project" ` +
+          `(no extra slashes, no whitespace). Got: ${JSON.stringify(entry.repo)}.`,
       });
+    } else {
+      try {
+        parsePatchSource(entry.repo);
+      } catch (error) {
+        issues.push({ level: 'error', appId, message: error.message });
+      }
     }
 
     // branch
@@ -373,6 +388,7 @@ module.exports = {
   KNOWN_TOP_LEVEL,
   KNOWN_APP_KEYS,
   REPO_RE,
+  PATCH_SOURCE_RE,
   APK_PATH_RE,
   NAME_RE,
   PACKAGE_ID_RE,

@@ -295,3 +295,93 @@ describe('release asset routes', () => {
     } finally { fs.rmSync(toolsDir, { recursive: true, force: true }); }
   });
 });
+
+describe('GitLab patch sources', () => {
+  const SHA = '478fa865b7f000f8a7a528bfbfa09c3affc7fea71b6b163fe514f8695be007ce';
+  const repo = 'gitlab:johninnld/nl-morphe-patches';
+  const project = 'johninnld%2Fnl-morphe-patches';
+  const pkgs = `https://gitlab.com/api/v4/projects/${project}/packages?package_type=generic&per_page=100&order_by=created_at&sort=desc`;
+  const pkgFiles = `https://gitlab.com/api/v4/projects/${project}/packages/75765241/package_files?per_page=100`;
+  const gitlabNetwork = (extra = {}) => network({
+    ...extra,
+    [pkgs]: [200, [{ id: 75765241, name: 'morphe-patches', version: '1.54.0', package_type: 'generic', status: 'default', created_at: '2026-11-08T15:32:28.536Z' }]],
+    [pkgFiles]: [200, [{ id: 386844507, file_name: 'patches-1.54.0.mpp', size: 33196609, created_at: '2026-11-08T15:32:28.578Z', file_md5: null, file_sha1: null, file_sha256: SHA }]],
+  });
+  const cli = { repo: 'MorpheApp/morphe-desktop', tag: 'v2' };
+  const gitlabRaw = `https://gitlab.com/api/v4/projects/${project}/repository/files/patches-list.json/raw?ref=v1.54.0`;
+
+  test('a usable tagged raw list is preferred, exactly as on GitHub', async () => {
+    const fetchImpl = network({ [gitlabRaw]: [200, legacy] });
+    const resolve = createMetadataResolver({ fetchImpl, retryDelay: 0, log: () => {} });
+    expect(await resolve({ repo, tag: 'v1.54.0', cli })).toMatchObject({ list: legacy, provenance: 'raw', status: 'ready' });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([gitlabRaw]);
+  });
+
+  test('a names-only raw list falls through to the MPP route', async () => {
+    const fetchImpl = gitlabNetwork({ [gitlabRaw]: [200, ['Patch']] });
+    const resolve = createMetadataResolver({ fetchImpl, derive: async () => parseListPatches(real), retryDelay: 0, log: () => {} });
+    expect(await resolve({ repo, tag: 'v1.54.0', cli })).toMatchObject({ provenance: 'mpp', status: 'ready' });
+  });
+
+  test('a malformed raw list is final and never silently replaced', async () => {
+    const fetchImpl = gitlabNetwork({ [gitlabRaw]: [200, [{ name: 'Patch' }]] });
+    const resolve = createMetadataResolver({ fetchImpl, derive: async () => parseListPatches(real), retryDelay: 0, log: () => {} });
+    await expect(resolve({ repo, tag: 'v1.54.0', cli })).rejects.toThrow(/Malformed metadata schema/);
+  });
+
+  test('metadata comes from the digest-verified MPP; no GitHub URL is ever requested', async () => {
+    const fetchImpl = gitlabNetwork();
+    const derive = jest.fn(async () => parseListPatches(real));
+    const resolve = createMetadataResolver({ fetchImpl, derive, retryDelay: 0, log: () => {} });
+    expect(await resolve({ repo, tag: 'v1.54.0', cli })).toMatchObject({ status: 'ready', provenance: 'mpp' });
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([gitlabRaw, pkgs, pkgFiles]);
+    // The release object handed to deriveMetadata carries the registry digest,
+    // which verifiedAsset enforces byte-for-byte.
+    expect(derive.mock.calls[0][0].release).toMatchObject({
+      tag_name: 'v1.54.0',
+      assets: [{ name: 'patches-1.54.0.mpp', digest: `sha256:${SHA}` }],
+    });
+  });
+
+  test('before verified tools exist the GitLab route defers, exactly like GitHub', async () => {
+    const fetchImpl = gitlabNetwork();
+    const resolve = createMetadataResolver({ fetchImpl, retryDelay: 0, log: () => {} });
+    expect(await resolve({ repo, tag: 'v1.54.0' })).toMatchObject({ status: 'deferred', provenance: 'mpp', list: null });
+    // Only the absent raw list was probed; the registry is never touched
+    // before a verified CLI is available to derive against.
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([gitlabRaw]);
+  });
+
+  test('a bundle without a registry SHA-256 stops resolution instead of trusting it', async () => {
+    const fetchImpl = network({
+      [pkgs]: [200, [{ id: 75765241, name: 'morphe-patches', version: '1.54.0', package_type: 'generic', status: 'default', created_at: '2026-11-08T15:32:28.536Z' }]],
+      [pkgFiles]: [200, [{ id: 1, file_name: 'patches-1.54.0.mpp', created_at: '2026-11-08T15:32:28.578Z', file_sha256: null }]],
+    });
+    const resolve = createMetadataResolver({ fetchImpl, derive: async () => parseListPatches(real), retryDelay: 0, log: () => {} });
+    await expect(resolve({ repo, tag: 'v1.54.0', cli })).rejects.toThrow(/no SHA-256/);
+  });
+
+  test('an unsupported source is rejected before any request is made', async () => {
+    const fetchImpl = jest.fn();
+    const resolve = createMetadataResolver({ fetchImpl, retryDelay: 0, log: () => {} });
+    await expect(resolve({ repo: 'gitlab:group/sub/project', tag: 'v1', cli })).rejects.toThrow(/subgroup/i);
+    await expect(resolve({ repo: 'codeberg:owner/repo', tag: 'v1', cli })).rejects.toThrow(/Unsupported patch source host/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  test('GITLAB_TOKEN, when set, travels as PRIVATE-TOKEN and nowhere else', async () => {
+    const previous = process.env.GITLAB_TOKEN;
+    process.env.GITLAB_TOKEN = 'glpat-test';
+    try {
+      const fetchImpl = gitlabNetwork();
+      await createMetadataResolver({ fetchImpl, derive: async () => parseListPatches(real), retryDelay: 0, log: () => {} })({ repo, tag: 'v1.54.0', cli });
+      for (const [, init] of fetchImpl.mock.calls) {
+        expect(init.headers['PRIVATE-TOKEN']).toBe('glpat-test');
+        expect(init.headers.Authorization).toBeUndefined();
+      }
+    } finally {
+      if (previous === undefined) delete process.env.GITLAB_TOKEN;
+      else process.env.GITLAB_TOKEN = previous;
+    }
+  });
+});

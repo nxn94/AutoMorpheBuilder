@@ -154,6 +154,36 @@ fi
 while IFS='|' read -r repo tag slug; do
   mpp_dest="$TOOLS_DIR/${slug}.mpp"
   scratch="$(mktemp -d "${RUNNER_TEMP:-/tmp}/patches.XXXXXX")"
+  # Non-GitHub sources: patch-source-runtime.js resolves the bundle URL and the
+  # forge's own per-file SHA-256, which is verified here exactly as the GitHub
+  # release-API digest is. No digest means no build.
+  if [ "$(node "$(dirname "$0")/../patch-source-runtime.js" host "$repo")" != "github" ]; then
+    bundle="$(node "$(dirname "$0")/../patch-source-runtime.js" mpp "$repo" "$tag")" || {
+      log_error "Could not resolve a verifiable patches bundle for ${repo}@${tag}"
+      exit 1
+    }
+    asset_name="$(printf '%s' "$bundle" | cut -f1)"
+    asset_url="$(printf '%s' "$bundle" | cut -f2)"
+    expected_sha="$(printf '%s' "$bundle" | cut -f3)"
+    if [ -z "$asset_name" ] || [ -z "$asset_url" ] || [ -z "$expected_sha" ]; then
+      log_error "Incomplete patches bundle metadata for ${repo}@${tag}"
+      exit 1
+    fi
+    if ! with_retry 3 5 curl -fsSL --proto '=https' --tlsv1.2 \
+        -o "$scratch/$asset_name" -- "$asset_url"; then
+      log_error "Failed to download patches bundle for ${repo}@${tag}"
+      exit 1
+    fi
+    actual_sha="$(sha256sum "$scratch/$asset_name" | awk '{print $1}')"
+    if [ "$actual_sha" != "$expected_sha" ]; then
+      log_error "Patches SHA-256 verification failed for ${repo}@${tag}: expected ${expected_sha}, got ${actual_sha}"
+      exit 1
+    fi
+    log "${asset_name} SHA-256 verified against ${repo}'s package registry digest (${actual_sha})"
+    mv "$scratch/$asset_name" "$mpp_dest"
+    rm -rf "$scratch"
+    continue
+  fi
   gh_release_download "$repo" "$tag" 'patches-*.mpp' "$scratch" >/dev/null
   assets=("$scratch"/*.mpp)
   if [ "${#assets[@]}" -ne 1 ] || [ ! -f "${assets[0]}" ]; then

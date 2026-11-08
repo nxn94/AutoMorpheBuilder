@@ -67,8 +67,8 @@
         },
         "repo": {
           "type": "string",
-          "pattern": "^[^/\\s]+/[^/\\s]+$",
-          "description": "owner/repo slug for the patch repo on GitHub."
+          "pattern": "^(gitlab:)?[^/\\s:]+/[^/\\s]+$",
+          "description": "Patch source. A bare owner/repo slug is a GitHub repository (unchanged default); a gitlab:owner/project prefix selects a top-level gitlab.com project, whose patches-*.mpp is resolved and SHA-256-verified through the generic package registry. Subgroup paths and self-hosted GitLab instances are rejected."
         },
         "branch": {
           "type": "string",

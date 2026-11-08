@@ -362,3 +362,20 @@ describe('regex sanity (PIN_VERSION_RE / PIN_TAG_RE / etc.)', () => {
     expect(NAME_RE.test('-leading-hyphen')).toBe(false);
   });
 });
+describe('patch source hosts', () => {
+  test('a gitlab:owner/project source validates cleanly', () => {
+    const issues = validateConfig(validConfig({ repo: 'gitlab:johninnld/nl-morphe-patches' }));
+    expect(issues.filter((i) => i.level === 'error')).toEqual([]);
+  });
+  test('existing GitHub entries are unaffected', () => {
+    expect(validateConfig(validConfig()).filter((i) => i.level === 'error')).toEqual([]);
+  });
+  test.each([
+    ['codeberg:owner/repo', 'Unsupported patch source host "codeberg"'],
+    ['gitlab:group/sub/project', 'repo must be'],
+    ['gitlab:owner', 'repo must be'],
+    ['https://gitlab.com/owner/project', 'repo must be'],
+  ])('%s is an error, not a silent pass', (repo, substring) => {
+    expect(hasError(validateConfig(validConfig({ repo })), substring)).toBe(true);
+  });
+});
