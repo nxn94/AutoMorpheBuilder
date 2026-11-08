@@ -79,6 +79,8 @@ jobs:
         # matrix. The downstream `filter` step overrides both based on
         # whether every app's release already exists.
         id: check
+        env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
         run: bash .github/scripts/pipeline/check_versions.sh
 
       - name: Set up Java (for morphe-desktop)
@@ -105,6 +107,7 @@ jobs:
         # Morphe-supported version" error 30 minutes later.
         id: preflight
         env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           CONFIG_FILE: ${{ github.workspace }}/config.json
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
         run: node .github/scripts/preflight-apps.js
@@ -115,6 +118,7 @@ jobs:
         # filter step can run before the expensive setup.
         id: tools
         env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           CLI_REPO: ${{ steps.check.outputs.cli-repo }}
           CLI_TAG: ${{ steps.check.outputs.cli-version }}
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
@@ -122,6 +126,7 @@ jobs:
 
       - name: Validate deferred patch metadata
         env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           CONFIG_FILE: ${{ github.workspace }}/config.json
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           CLI_TAG: ${{ steps.check.outputs.cli-version }}
@@ -365,6 +370,7 @@ jobs:
       - name: Get latest Morphe patches + CLI + APKEditor
         id: morphe
         env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           PATCH_REPO: ${{ matrix.patchRepo }}
           PATCH_TAG: ${{ matrix.patchTag }}
           PATCH_SLUG: ${{ matrix.patchSlug }}

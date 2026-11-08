@@ -189,3 +189,24 @@ describe('patch-source-runtime CLI', () => {
     await expect(run(argv, { requestImpl: registry(), out: () => {} })).rejects.toThrow(pattern);
   });
 });
+
+describe('optional GITLAB_TOKEN wiring', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const yaml = require('js-yaml');
+  const workflow = (name) => yaml.load(fs.readFileSync(path.join(__dirname, '../../workflows', name), 'utf8'));
+  const stepsRunning = (job, script) => job.steps.filter((s) => (s.run || '').includes(script));
+  test.each([
+    ['morphe-build.yml', 'check-versions', 'check_versions.sh', 1],
+    ['morphe-build.yml', 'check-versions', 'preflight-apps.js', 2],
+    ['morphe-build.yml', 'check-versions', 'download_morphe_tools.sh', 1],
+    ['morphe-build.yml', 'build', 'fetch_morphe_tools.sh', 1],
+    ['update-patches.yml', 'update-patches', 'sync-patches.sh', 1],
+  ])('%s %s passes the secret to %s only at step level', (file, job, script, count) => {
+    const parsed = workflow(file).jobs[job];
+    const steps = stepsRunning(parsed, script);
+    expect(steps).toHaveLength(count);
+    for (const step of steps) expect(step.env.GITLAB_TOKEN).toBe('${{ secrets.GITLAB_TOKEN }}');
+    expect(parsed.env.GITLAB_TOKEN).toBeUndefined();
+  });
+});
