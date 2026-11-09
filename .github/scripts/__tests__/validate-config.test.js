@@ -351,7 +351,8 @@ describe('regex sanity (PIN_VERSION_RE / PIN_TAG_RE / etc.)', () => {
     expect(PACKAGE_ID_RE.test('com.google.android.youtube ')).toBe(false); // trailing whitespace
     expect(PACKAGE_ID_RE.test('com')).toBe(false); // single segment, no dots
     expect(PACKAGE_ID_RE.test('1com.example')).toBe(false); // leading digit
-    expect(PACKAGE_ID_RE.test('com.Example.foo')).toBe(false); // uppercase mid-id
+    expect(PACKAGE_ID_RE.test('com.amazon.mShop.android.shopping')).toBe(true); // Android allows capitals
+    expect(PACKAGE_ID_RE.test('com..foo')).toBe(false); // empty segment
   });
 
   test('NAME_RE accepts typical names, rejects capitals/underscores', () => {
