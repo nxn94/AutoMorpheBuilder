@@ -33,6 +33,10 @@ Selects the preferred native architecture when APKMirror / APKPure lists multipl
 
 Validation: `schemas/config.schema.json` enforces the four-value ABI enum. `universal` is a possible upstream variant, not an accepted `preferred_arch` value. Actual delivered libraries must still pass ABI validation.
 
+## `honor_patch_opt_ins`
+
+Optional Boolean, default `false`. Generated patch metadata always honours a patch set `true` in `patches.json`. Structured patch lists do not by default, because the old sync marked every new patch `true`, so such entries may not be real choices. Set this to `true` once your `patches.json` reflects what you want: a patch that is off by default is then enabled when you set it `true`. Review diagnostic patches first.
+
 ## `auto_update_urls`
 
 | | |
@@ -72,7 +76,8 @@ The dynamic build matrix. Each key is an Android package id (`applicationId`), e
   "apkmirror_path": "vendor/example",          // required, APKMirror URL slug
   "pin_version":    "1.2.3",                   // optional, lock to this APK version
   "pin_patch_tag":  "v1.0.0",                  // optional, lock the patches release tag
-  "display_name":   "Example"                  // optional, human-readable name for README/Obtainium
+  "display_name":   "Example",                 // optional, human-readable name for README/Obtainium
+  "extra_patches":  { "owner/other-patches": ["Patch name"] } // optional, named patches from other sources
 }
 ```
 
@@ -187,6 +192,22 @@ When set:
 | Example | `"v1.18.3"` |
 
 Lock the patches tag to this exact release instead of selecting the latest compatible upstream tag. Currently `nzb360` pins `rushiranpise/morphe-patches` to `v1.18.3`; see `config.json` for current pins.
+
+#### `extra_patches` (optional)
+
+| | |
+|---|---|
+| Type | `object` (`{ "owner/repo": ["Patch name", ...] }`) |
+| Required | no |
+| Example | `{ "MorpheApp/morphe-patches": ["Disable Play Store updates"] }` |
+
+Applies the named patches from other patch sources in addition to the app's own `repo`, for example a universal patch that the app's patch repo doesn't ship. Each source is a GitHub `owner/repo` slug (GitLab sources are rejected by validation). If a source is the app's own `repo`, the names are simply enabled in its bundle.
+
+- **Release:** the `check-versions` job resolves each extra source's latest release once, so every app in a run uses the same release. If that lookup fails, the build looks up the latest release itself.
+- **Integrity:** the bundle's SHA-256 must match the digest GitHub serves for the release asset, as for other `.mpp` files. A missing digest, a mismatch, or any failure to fetch a listed bundle fails that app's build.
+- **Rebuilds:** changing `extra_patches` rebuilds that app only. A new release of an extra source does not rebuild anything on its own; apps pick it up the next time they rebuild.
+- **Version resolution:** supported versions and the compatibility probe consider only the app's own bundle. Extra patches are not part of them, so use patches that are not tied to specific app versions.
+- Apps without the field behave exactly as before.
 
 #### `display_name` (optional)
 

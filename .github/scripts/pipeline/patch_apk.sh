@@ -111,11 +111,18 @@ while IFS= read -r patch_name; do
   PATCH_ARGS+=("-d" "$patch_name")
 done <<< "$DISABLED_PATCHES"
 
-# Generated metadata honors explicit opt-ins. Structured sources retain their
-# historical CLI-default behavior (legacy sync sets every new patch true).
+# Generated metadata honors explicit opt-ins. Structured sources do so only with
+# honor_patch_opt_ins (legacy sync sets every new patch true).
 ENABLE_ARGS_JSON="$(node "$(dirname "$0")/../patch-metadata-runtime.js" enables)"
 mapfile -d '' -t ENABLE_ARGS < <(jq -j '.[] + "\u0000"' <<< "$ENABLE_ARGS_JSON")
 PATCH_ARGS+=("${ENABLE_ARGS[@]}")
+
+# Extra patches from other sources (config.json extra_patches). Fails the build
+# if a listed bundle can't be fetched or verified.
+EXTRA_ARGS_FILE="$RUNNER_TEMP/morphe_${APP_NAME}_extra_args"
+bash "$(dirname "$0")/extra_patch_args.sh" > "$EXTRA_ARGS_FILE"
+mapfile -d '' -t EXTRA_ARGS < "$EXTRA_ARGS_FILE"
+PATCH_ARGS+=("${EXTRA_ARGS[@]}")
 
 # --- patch (unsigned) -----------------------------------------------------
 

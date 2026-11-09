@@ -152,6 +152,12 @@ describe('validateConfig — top-level shape', () => {
     ).toEqual([]);
   });
 
+  test('honor_patch_opt_ins must be a boolean', () => {
+    const errors = (value) => validateConfig({ ...validConfig(), honor_patch_opt_ins: value }).filter((i) => i.level === 'error').length;
+    expect(errors(true)).toBe(0);
+    expect(errors('yes')).toBeGreaterThan(0);
+  });
+
   test('auto_update_urls:42 is an error', () => {
     expect(
       validateConfig({ ...validConfig(), auto_update_urls: 42 })

@@ -490,6 +490,7 @@ jobs:
           RUNNER_TEMP: ${{ runner.temp }}
           ANDROID_HOME: /tmp/android-sdk
           ANDROID_BUILD_TOOLS_VERSION: ${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
+          EXTRA_PATCH_TAGS: ${{ toJSON(matrix.extraTags) }}
         run: bash .github/scripts/pipeline/patch_apk.sh
 
       - name: Upload patched ${{ matrix.name }}

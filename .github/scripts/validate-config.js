@@ -52,6 +52,7 @@ const KNOWN_ABIS = new Set([
 const KNOWN_TOP_LEVEL = new Set([
   'preferred_arch',
   'auto_update_urls',
+  'honor_patch_opt_ins',
   'patch_repos',
   'cli',
   'download_urls',
@@ -66,6 +67,7 @@ const KNOWN_APP_KEYS = new Set([
   'pin_version',
   'pin_patch_tag',
   'display_name',
+  'extra_patches',
 ]);
 
 const { parsePatchSource } = require('./patch-source');
@@ -138,6 +140,14 @@ function validateConfig(config) {
       level: 'error',
       appId: null,
       message: `auto_update_urls must be a boolean (got ${typeof config.auto_update_urls}).`,
+    });
+  }
+
+  if ('honor_patch_opt_ins' in config && typeof config.honor_patch_opt_ins !== 'boolean') {
+    issues.push({
+      level: 'error',
+      appId: null,
+      message: `honor_patch_opt_ins must be a boolean (got ${typeof config.honor_patch_opt_ins}).`,
     });
   }
 
@@ -341,6 +351,44 @@ function validateConfig(config) {
             `pin_patch_tag "${entry.pin_patch_tag}" must look like a ` +
             `release tag, e.g. "v1.18.3" or "v1.24.0-dev.8".`,
         });
+      }
+    }
+
+    // extra_patches (optional): { "owner/repo": ["Patch name", ...] }, GitHub only
+    if ('extra_patches' in entry) {
+      const extra = entry.extra_patches;
+      if (extra === null || typeof extra !== 'object' || Array.isArray(extra)) {
+        issues.push({
+          level: 'error',
+          appId,
+          message: 'extra_patches must be an object of {"owner/repo": ["Patch name", ...]}.',
+        });
+      } else {
+        for (const [source, names] of Object.entries(extra)) {
+          if (source.includes(':')) {
+            issues.push({
+              level: 'error',
+              appId,
+              message:
+                `extra_patches source "${source}" is not supported: extra patch ` +
+                `bundles must be GitHub "owner/repo" slugs (GitLab only works as the app's own repo).`,
+            });
+          } else if (!REPO_RE.test(source)) {
+            issues.push({
+              level: 'error',
+              appId,
+              message: `extra_patches source "${source}" must be an "owner/repo" slug (no extra slashes, no whitespace).`,
+            });
+          }
+          if (!Array.isArray(names) || names.length === 0 ||
+              names.some((name) => typeof name !== 'string' || name.length === 0)) {
+            issues.push({
+              level: 'error',
+              appId,
+              message: `extra_patches["${source}"] must be a non-empty array of patch names.`,
+            });
+          }
+        }
       }
     }
 

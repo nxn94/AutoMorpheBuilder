@@ -54,6 +54,7 @@ const { appFingerprint, pipelineDigest, releaseIsCurrent } = require('./build-fi
 const { generatedVersions } = require('./patch-metadata');
 const { readGenerated, readSelections } = require('./patch-metadata-runtime');
 const { buildMatrix, supportedVersions } = require('./build-plan');
+const { resolveExtraTags } = require('./extra-patches');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -170,8 +171,10 @@ function main() {
   const jarPath = path.join(TOOLS_DIR, 'morphe-desktop.jar');
   const resolvedVersions = fs.existsSync(path.join(TOOLS_DIR, 'supported-versions.json'))
     ? JSON.parse(fs.readFileSync(path.join(TOOLS_DIR, 'supported-versions.json'), 'utf8')) : {};
+  // Every app in this run uses the same release of each extra patch source.
+  const extraTags = resolveExtraTags(config);
   let matrix = buildMatrix(config, repoVersions).map((entry) => ({
-    ...entry, buildFingerprint: appFingerprint(config, patches, entry.appId, process.env.CLI_VERSION || '', pipeline), targetVersion: config.patch_repos[entry.appId].pin_version || resolvedVersions[entry.appId]?.[0] || '',
+    ...entry, extraTags: extraTags[entry.appId] || {}, buildFingerprint: appFingerprint(config, patches, entry.appId, process.env.CLI_VERSION || '', pipeline), targetVersion: config.patch_repos[entry.appId].pin_version || resolvedVersions[entry.appId]?.[0] || '',
   }));
 
   // Apps the compat probe dropped can't build on this CLI, forced or not.
