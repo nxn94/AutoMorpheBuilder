@@ -637,13 +637,14 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
       console.error(`[download-url] Retry attempt ${attempt}/${MAX_RETRIES}...`);
       await sleep((attempt - 1) * 2000);
     }
+    opts.signal?.throwIfAborted();
 
     // Restrict initial requests and redirects to HTTPS; terminate options
     // explicitly so no cached value can become a curl upload/config flag.
     try {
       const result = await new Promise((resolve, reject) => {
         const userAgentArgs = opts.userAgent ? ['-A', opts.userAgent] : [];
-        const curl = spawnImpl('curl', ['-sS', ...userAgentArgs, '-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl]);
+        const curl = spawnImpl('curl', ['-sS', ...userAgentArgs, '-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl], ...(opts.signal ? [{ signal: opts.signal }] : []));
 
         curl.on('error', reject);
         let stderr = '';
@@ -721,7 +722,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
         // Version mismatch won't fix itself — break early
         throw err;
       }
-      if (attempt === MAX_RETRIES) {
+      if (attempt === MAX_RETRIES || opts.signal?.aborted) {
         throw err;
       }
       console.error(`[download-url] Attempt ${attempt} failed: ${err.message}`);
@@ -1511,19 +1512,20 @@ async function download(packageId, version, outputDir, opts = {}) {
   try { exactArch = loadConfig().preferred_arch || exactArch; } catch { /* default */ }
   const exactCodes = apkpureExact.patchListCodes(packageId, version, exactArch);
   if (exactCodes.length) {
-console.error(`[apkpure-exact] Build numbers for ${packageId} v${version}: ${exactCodes.join(', ')}`);
-let lastError = null;
-for (const url of apkpureExact.exactBuildUrls(packageId, exactCodes)) {
-  try {
-    const result = await downloadWithUrl(url, outputDir, packageId, version, { ...opts, userAgent: apkpureExact.USER_AGENT });
-    remember(url, 'apkpure-exact');
-    return { ...result, source: 'apkpure-exact' };
-  } catch (e) {
-    lastError = e;
-    console.error(`[apkpure-exact] ${url}: ${e.message}`);
-  }
-}
-console.error(`[apkpure-exact] Failed: ${lastError.message}`);
+    const exact = await apkpureExact.downloadExactBuild({
+      appId: packageId,
+      version,
+      codes: exactCodes,
+      partialPath: path.join(outputDir, `${packageId}_${version}.apk`),
+      budgetMs: opts.apkpureExactBudgetMs,
+      execFileSyncImpl: opts.execFileSyncImpl,
+      isBundle: (file) => detectApkShape(file) === 'bundle',
+      download: (url, extra) => downloadWithUrl(url, outputDir, packageId, version, { ...opts, ...extra }),
+    });
+    if (exact) {
+      remember(exact.url, 'apkpure-exact');
+      return { ...exact.result, source: 'apkpure-exact' };
+    }
   }
 
   // Step 1: Check URL cache
