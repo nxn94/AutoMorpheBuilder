@@ -7,6 +7,7 @@ AutoMorpheBuilder is a **GitHub Actions pipeline** that produces signed, patched
 1. **`check-versions`** resolves per-app patch tags and the CLI tag, then skips only complete releases with matching build-input provenance. Manual runs force rebuilding.
 2. **`build`** (matrix per app, no signing secrets) downloads the APK, runs `morphe-desktop patch --unsigned`, and uploads an unsigned APK artifact.
 3. **`create-release`** (gated by the `signing` GitHub environment) downloads the unsigned APKs, signs and verifies them with `apksigner`, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
+4. **`report-compat-failures`** runs only when the compat probe dropped an app. It fails the run and names the dropped apps, while the remaining apps still build.
 
 `build` patches with `morphe-desktop patch --unsigned` and holds no signing secrets. `create-release`, which runs no patch code, decodes the keystore and signs with `apksigner` (`sign_apks.sh`), then verifies each APK. Separate jobs matter: a later step in the same job could be reached by a process a malicious patch left running.
 

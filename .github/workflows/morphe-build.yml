@@ -33,6 +33,7 @@ jobs:
       # from the `check` step (resolved tags) and are passed through.
       should-build: ${{ steps.filter.outputs.should-build }}
       matrix-include: ${{ steps.filter.outputs.matrix-include }}
+      compat-failed: ${{ steps.filter.outputs.compat-failed }}
       repo-versions: ${{ steps.check.outputs.repo-versions }}
       cli-version: ${{ steps.check.outputs.cli-version }}
       cli-branch: ${{ steps.check.outputs.cli-branch }}
@@ -91,7 +92,7 @@ jobs:
         # Java 21 separately. Runs unconditionally so the filter step
         # can compare against existing releases before any of the
         # expensive Playwright / apkeep / APK pre-download steps fire.
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78  # v6.2.0
         with:
           distribution: temurin
           java-version: "21"
@@ -243,6 +244,22 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  report-compat-failures:
+    # The other apps carry on, but an app the compat probe dropped must still
+    # turn the run red rather than vanish from it.
+    needs: check-versions
+    if: needs.check-versions.outputs.compat-failed != '' && needs.check-versions.outputs.compat-failed != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Fail the run for dropped apps
+        env:
+          DROPPED: ${{ needs.check-versions.outputs.compat-failed }}
+        run: |
+          echo "::error::Dropped by the compat probe, not built: ${DROPPED}. See the probe's step summary."
+          exit 1
+
   build:
     needs: check-versions
     if: needs.check-versions.outputs.should-build == 'true'
@@ -278,7 +295,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java (for morphe-desktop)
-        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad  # v6
+        uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78  # v6.2.0
         with:
           distribution: temurin
           java-version: "21"

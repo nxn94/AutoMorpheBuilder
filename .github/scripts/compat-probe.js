@@ -205,6 +205,18 @@ async function probe({ config, repoVersions, toolsDir = './tools', execImpl = ex
 }
 
 /**
+ * Decide what a probe result means for the run. Pure. A failing app is dropped
+ * so the others still build; the run stops only when the problem isn't
+ * confined to some apps: a config-level error, or no app passing at all.
+ */
+function probeOutcome(rows) {
+  const appRows = rows.filter((r) => r.appId !== null);
+  const ok = appRows.filter((r) => r.status === 'OK');
+  const failed = appRows.filter((r) => r.status !== 'OK').map((r) => r.appId);
+  return { ok, failed, proceed: appRows.length === rows.length && (failed.length === 0 || ok.length > 0) };
+}
+
+/**
  * Render rows as a markdown table for $GITHUB_STEP_SUMMARY. Pure.
  */
 function renderTable(rows) {
@@ -271,6 +283,7 @@ if (require.main === module) {
       }
     }
 
+    const outcome = probeOutcome(rows);
     if (errors > 0) {
       const apiMismatch = rows.filter((r) => r.status === 'API_MISMATCH');
       if (apiMismatch.length > 0) {
@@ -288,9 +301,11 @@ if (require.main === module) {
           `(e.g. pin_patch_tag: "<older tag>").`,
         );
       }
-      process.exit(1);
+      if (!outcome.proceed) process.exit(1);
+      console.error(`::error::Dropping ${outcome.failed.join(', ')} from this run; the other apps will still build and the run will end as failed.`);
     }
-    atomicWrite(path.join(toolsDir, 'supported-versions.json'), JSON.stringify(Object.fromEntries(rows.map((r) => [r.appId, r.versions || []]))));
+    atomicWrite(path.join(toolsDir, 'supported-versions.json'), JSON.stringify(Object.fromEntries(outcome.ok.map((r) => [r.appId, r.versions || []]))));
+    atomicWrite(path.join(toolsDir, 'compat-failed.json'), JSON.stringify(outcome.failed));
     process.exit(0);
   }).catch((e) => {
     console.error(`::error::probe threw: ${e.stack || e.message}`);
@@ -300,6 +315,7 @@ if (require.main === module) {
 
 module.exports = {
   probe,
+  probeOutcome,
   classifyStderr,
   renderTable,
   API_MISSING_PATTERNS,

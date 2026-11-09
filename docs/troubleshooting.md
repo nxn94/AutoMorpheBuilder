@@ -126,7 +126,7 @@ For generated metadata, `No compatible version for enabled patches` means the en
 The repo defends against this in three layers:
 
 1. **No jar caching.** `download_morphe_tools.sh` and `fetch_morphe_tools.sh` both `rm -f` and re-download `morphe-desktop.jar` on every run, because `actions/cache@v5` only saves on a miss — a restore would otherwise silently put a stale jar back into `tools/`.
-2. **Compat probe.** Runs `list-versions` per app right after the jar download and classifies stderr for these specific error classes. Emits an actionable `::error::` ("bump cli or pin each affected app to an older patch tag") instead of waiting 30 minutes for the matrix to surface the same crash.
+2. **Compat probe.** Runs `list-versions` per app right after the jar download and classifies stderr for these specific error classes. Emits an actionable `::error::` ("bump cli or pin each affected app to an older patch tag") instead of waiting 30 minutes for the matrix to surface the same crash. A failing app is dropped so the others still build, and `report-compat-failures` turns the run red naming it. The step itself fails only on a config-level error or when no app passes.
 3. **Implementation-Version check.** Both download scripts verify the jar's `Implementation-Version` from `META-INF/MANIFEST.MF` matches `CLI_VERSION` after download, so a partial download or wrong tag is caught at the source.
 
 **Fix:**
@@ -168,6 +168,14 @@ The repo defends against this in three layers:
 3. The preflight step (`preflight-apps.js`) catches this earlier in `check-versions` and is the source of truth — the pre-download error is a fallback.
 
 ---
+
+## `update-patches` fails with "Could not rebase" or "Could not push"
+
+**Symptom:** the `Commit if changed` step of `update-patches.yml` ends with one of those errors.
+
+**Cause:** other commits reached the branch while the sync ran. Rejected pushes are rebased and retried up to five times, but a conflict in the generated files, or five rejections, stops the job without changing the branch.
+
+**Fix:** re-run `update-patches.yml` with `workflow_dispatch`; it starts again from the latest commit.
 
 ## `update-patches` says "No new patch repos; skipping sync" after moving an app's `repo` in `config.json`
 

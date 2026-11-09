@@ -94,6 +94,11 @@ function decide(matrix, apkVersions, releaseExists) {
   return { matrix: filtered, skipList, shouldBuild: filtered.length > 0 };
 }
 
+/** Pure: the matrix without the apps the compat probe dropped. */
+function withoutCompatFailures(matrix, failed) {
+  return matrix.filter((entry) => !failed.includes(entry.appId));
+}
+
 function setOutput(key, value) {
   const v = value === undefined || value === null ? '' : value;
   const line = `${key}=${v}`;
@@ -165,9 +170,16 @@ function main() {
   const jarPath = path.join(TOOLS_DIR, 'morphe-desktop.jar');
   const resolvedVersions = fs.existsSync(path.join(TOOLS_DIR, 'supported-versions.json'))
     ? JSON.parse(fs.readFileSync(path.join(TOOLS_DIR, 'supported-versions.json'), 'utf8')) : {};
-  const matrix = buildMatrix(config, repoVersions).map((entry) => ({
+  let matrix = buildMatrix(config, repoVersions).map((entry) => ({
     ...entry, buildFingerprint: appFingerprint(config, patches, entry.appId, process.env.CLI_VERSION || '', pipeline), targetVersion: config.patch_repos[entry.appId].pin_version || resolvedVersions[entry.appId]?.[0] || '',
   }));
+
+  // Apps the compat probe dropped can't build on this CLI, forced or not.
+  // The file is written only after the probe has passed the run as a whole.
+  const compatFailedPath = path.join(TOOLS_DIR, 'compat-failed.json');
+  const compatFailed = fs.existsSync(compatFailedPath) ? JSON.parse(fs.readFileSync(compatFailedPath, 'utf8')) : [];
+  matrix = withoutCompatFailures(matrix, compatFailed);
+  setOutput('compat-failed', JSON.stringify(compatFailed));
 
   // Manual trigger (workflow_dispatch): the workflow sets FORCE_BUILD so
   // a manual run always patches + releases, regardless of whether the
@@ -238,5 +250,5 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { decide, buildMatrix, resolveApkVersion, main, isTruthyEnv };
+module.exports = { decide, withoutCompatFailures, buildMatrix, resolveApkVersion, main, isTruthyEnv };
 

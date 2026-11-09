@@ -3,6 +3,7 @@
 
 const {
   probe,
+  probeOutcome,
   classifyStderr,
   renderTable,
   API_MISSING_PATTERNS,
@@ -25,6 +26,27 @@ const mimoConfig = () => ({
 });
 
 // --- classifyStderr -------------------------------------------------------
+
+describe('probeOutcome', () => {
+  const ok = (appId) => ({ appId, status: 'OK' });
+  const bad = (appId) => ({ appId, status: 'API_MISMATCH' });
+
+  test('drops only the failing app', () => {
+    const r = probeOutcome([ok('a'), bad('b')]);
+    expect(r.proceed).toBe(true);
+    expect(r.failed).toEqual(['b']);
+    expect(r.ok.map((x) => x.appId)).toEqual(['a']);
+  });
+  test('stops when no app passes', () => {
+    expect(probeOutcome([bad('a'), bad('b')]).proceed).toBe(false);
+  });
+  test('stops on a config-level error even if apps passed', () => {
+    expect(probeOutcome([ok('a'), { appId: null, error: 'x' }]).proceed).toBe(false);
+  });
+  test('proceeds when everything passes', () => {
+    expect(probeOutcome([ok('a')])).toMatchObject({ proceed: true, failed: [] });
+  });
+});
 
 describe('classifyStderr', () => {
   test('NoSuchMethodError with method name captures the method', () => {
