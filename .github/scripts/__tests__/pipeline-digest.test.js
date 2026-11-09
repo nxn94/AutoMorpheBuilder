@@ -15,15 +15,29 @@ const write = (file, text) => {
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'digest-'));
   write('checksums/tools.sha256', jar('a'));
-  write('.github/workflows/build.yml', 'a');
+  write('.github/workflows/morphe-build.yml', 'a');
   write('package-lock.json', '{}');
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-test('builder code and unrelated pins do not change the digest', () => {
+test.each([
+  'src/patch.js', '.github/scripts/pipeline/patch_apk.sh',
+  '.github/workflows/morphe-build.yml', 'scripts/download-tool.sh',
+  'package-lock.json', '.github/scripts/apk-signers.json',
+])('output or validation input %s changes the digest', (file) => {
+  write(file, 'before');
   const before = pipelineDigest(root);
-  write('.github/workflows/build.yml', 'b');
-  write('package-lock.json', '{"x":1}');
+  write(file, 'after');
+  expect(pipelineDigest(root)).not.toBe(before);
+});
+
+test('CI-only files and unrelated pins do not change the digest', () => {
+  const before = pipelineDigest(root);
+  write('.github/workflows/ci.yml', 'new CI');
+  write('.github/workflows/codeql.yml', 'new analysis');
+  write('docs/release-process.md', 'new docs');
+  write('src/__tests__/patch.test.js', 'new test');
+  write('scripts/check-agents-doc.js', 'new doc check');
   write('checksums/tools.sha256', `# note\n${jar('a')}${'c'.repeat(64)}  chrome-linux64.zip\n`);
   expect(pipelineDigest(root)).toBe(before);
 });

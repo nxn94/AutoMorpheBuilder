@@ -45,7 +45,11 @@ resolve_release_tag() {
   if [ "$branch" = "main" ]; then
     selected_tag="$stable_tag"
   else
-    selected_tag="$(
+    # An API error must not look like "no releases": that would quietly build
+    # the wrong patches. Retry, then stop.
+    local attempt listed=false
+    for attempt in 1 2 3; do
+      if selected_tag="$(
       gh api "repos/${repo}/releases?per_page=100" --jq '
         [ .[]
           | select(
@@ -57,8 +61,18 @@ resolve_release_tag() {
               )
             )
         ][0].tag_name // empty
-      ' || true
-    )"
+      '
+      )"; then
+        listed=true
+        break
+      fi
+      log_warn "Listing releases for ${repo} failed (attempt ${attempt}/3)."
+      sleep 3
+    done
+    if [ "$listed" != "true" ]; then
+      log_error "Could not list releases for ${repo}; not falling back to another tag."
+      exit 1
+    fi
     if [ -z "$selected_tag" ]; then
       log_warn "No dev-style release found for ${repo}; falling back to latest."
       selected_tag="$stable_tag"

@@ -1,14 +1,14 @@
 'use strict';
 
 const cheerio = require('cheerio');
-const { buildVariantPriorities, selectVariant } = require('../variant');
+const { buildVariantPriorities, selectVariant, minAndroid } = require('../variant');
 
 function makeRowHtml(row) {
   return `
     <div class="table-row">
       <div class="table-cell"><a class="accent_color" href="${row.href}">${row.name || ''}</a></div>
       <div class="table-cell">${row.arch}</div>
-      <div class="table-cell">minver</div>
+      <div class="table-cell">${row.minver || 'minver'}</div>
       <div class="table-cell">${row.dpi}</div>
     </div>`;
 }
@@ -116,6 +116,33 @@ describe('download/variant', () => {
       const $ = cheerio.load(html);
       // After falling through the APK slots, the BUNDLE slot picks it up.
       expect(selectVariant($, buildVariantPriorities('arm64-v8a'))).toBe('/apk/arm64-bundle/');
+    });
+  });
+
+  describe('minimum Android version', () => {
+    test('minAndroid reads APKMirror cells', () => {
+      expect(minAndroid('Android 9.0+')).toBe(9);
+      expect(minAndroid('Android 11+')).toBe(11);
+      expect(minAndroid('Android 12L+')).toBeGreaterThan(12);
+      expect(minAndroid('Android 12L+')).toBeLessThan(13);
+      expect(minAndroid('minver')).toBe(0);
+    });
+
+    test('the highest minimum wins among rows of the same priority', () => {
+      const html = makePageHtml([
+        { arch: 'arm64-v8a', dpi: 'nodpi', minver: 'Android 9.0+', href: '/apk/old/' },
+        { arch: 'arm64-v8a', dpi: 'nodpi', minver: 'Android 11+', href: '/apk/new/' },
+        { arch: 'arm64-v8a', dpi: 'nodpi', minver: 'Android 10+', href: '/apk/mid/' },
+      ]);
+      expect(selectVariant(cheerio.load(html), buildVariantPriorities('arm64-v8a'))).toBe('/apk/new/');
+    });
+
+    test('priority order still beats minimum Android', () => {
+      const html = makePageHtml([
+        { arch: 'universal', dpi: 'nodpi', minver: 'Android 14+', href: '/apk/universal/' },
+        { arch: 'arm64-v8a', dpi: 'nodpi', minver: 'Android 9.0+', href: '/apk/arm64/' },
+      ]);
+      expect(selectVariant(cheerio.load(html), buildVariantPriorities('arm64-v8a'))).toBe('/apk/arm64/');
     });
   });
 });

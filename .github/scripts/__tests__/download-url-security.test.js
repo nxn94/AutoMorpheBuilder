@@ -8,6 +8,7 @@ test('passes a canonical HTTPS URL after curl options and restricts redirects', 
   })).rejects.toThrow('transfer fixture stopped');
   const [command, args] = spawnImpl.mock.calls[0];
   expect(command).toBe('curl');
+  expect(args).toContain('-sS');
   expect(args.slice(-2)).toEqual(['--', 'https://example.test/app.apk']);
   expect(args.slice(args.indexOf('--proto'), args.indexOf('--proto') + 2)).toEqual(['--proto', '=https']);
   expect(args.slice(args.indexOf('--proto-redir'), args.indexOf('--proto-redir') + 2)).toEqual(['--proto-redir', '=https']);

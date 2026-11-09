@@ -77,12 +77,17 @@ If a release is marked as a prerelease, enable "Include prereleases" in Obtainiu
 Scheduled builds skip an app only when the expected tag contains its APK,
 `SHA256SUMS`, and `build-inputs.json`, and the release notes contain a matching
 build-input fingerprint. The fingerprint includes the app configuration, patch
-Boolean selections, preferred architecture, CLI configuration/version, the `morphe-desktop` and APKEditor pins, and
-`REBUILD_EPOCH` in `build-fingerprint.js`. Changing these inputs rebuilds an
-existing tag. Changes to the builder's own code do not; raise the epoch when one should.
+Boolean selections, preferred architecture, CLI configuration/version, dependency lockfile,
+output and validation source (including runtime JSON policies), the build workflow,
+the `morphe-desktop` and APKEditor pins, and `REBUILD_EPOCH` in
+`build-fingerprint.js`. Changing these inputs rebuilds an existing tag.
+CI/security-only workflows, tests, documentation helpers, and unrelated tool pins
+are excluded. The epoch remains a manual escape hatch for inputs not covered here.
 Older releases without provenance are rebuilt once.
 
-`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison.
+`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison unless its `force` box is unticked. Its `apps` box limits the run to the named apps, which build even if current.
+
+After a successful publish, `create-release` deletes the run's artifacts; the APKs live on the releases. After a failed publish they stay for **Re-run failed jobs**.
 Publication replaces the APK, checksum manifest, and provenance with `--clobber`.
 It removes the completion marker before replacement and restores it only after
 all uploads succeed. A partial publication is retried by the next scheduled run.
@@ -110,7 +115,7 @@ The next workflow run will rebuild and republish it (or skip it, if you have not
 
 ## Manual workflow run
 
-`Actions → Build Morphe-patched apps → Run workflow` starts a full pipeline run. There are no inputs — the run uses `config.json` and `patches.json` from the selected ref (normally `main`).
+`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to enabled. Untick it to skip current releases when `apps` is empty; explicitly selected apps build even if current.
 
 To trigger only the patch-toggles refresh (no APK build), use `Actions → Update patches.json from upstream repos → Run workflow`.
 
