@@ -117,6 +117,13 @@ ENABLE_ARGS_JSON="$(node "$(dirname "$0")/../patch-metadata-runtime.js" enables)
 mapfile -d '' -t ENABLE_ARGS < <(jq -j '.[] + "\u0000"' <<< "$ENABLE_ARGS_JSON")
 PATCH_ARGS+=("${ENABLE_ARGS[@]}")
 
+# Extra patches from other sources (config.json extra_patches). Fails the build
+# if a listed bundle can't be fetched or verified.
+EXTRA_ARGS_FILE="$RUNNER_TEMP/morphe_${APP_NAME}_extra_args"
+bash "$(dirname "$0")/extra_patch_args.sh" > "$EXTRA_ARGS_FILE"
+mapfile -d '' -t EXTRA_ARGS < "$EXTRA_ARGS_FILE"
+PATCH_ARGS+=("${EXTRA_ARGS[@]}")
+
 # --- patch (unsigned) -----------------------------------------------------
 
 MARKER="$RUNNER_TEMP/morphe_${APP_NAME}_start.marker"

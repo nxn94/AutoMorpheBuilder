@@ -94,6 +94,16 @@
           "pattern": "^v?\\d+(\\.\\d+)+([-.+][\\w.-]+)?$",
           "description": "Optional. Patch-tag pin (e.g. 'v1.18.3' or 'v1.24.0-dev.8')."
         },
+        "extra_patches": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[^/\\s:]+/[^/\\s]+$" },
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "description": "Optional. Named patches from other GitHub patch sources, applied in addition to the app's own: { \"owner/repo\": [\"Patch name\", ...] }. Each source's latest release is used (one release per run, shared by all apps) and SHA-256-verified like other patches bundles. Changing this rebuilds only this app; a new release of an extra source alone does not. GitLab sources are not supported here."
+        },
         "display_name": {
           "type": "string",
           "minLength": 1,
