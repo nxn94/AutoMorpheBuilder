@@ -64,13 +64,21 @@ function ensureDir(d) {
  * its JSON output can be parsed without an in-process import (avoids
  * polluting the test environment).
  */
+let lastDownloaderStderr = '';
 function runUnifiedDownloader(appId, version, apksDir) {
   const script = path.join(__dirname, 'unified-downloader.js');
-  const r = spawnSync(process.execPath, [script, appId, version, apksDir], {
+  // stderr still streams live to the log; tee keeps a copy for the failure reason.
+  const errFile = path.join(fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'dl-')), 'stderr.log');
+  const r = spawnSync('bash', ['-c',
+    '{ timeout 600 "$NODE" "$0" "$@" 2>&1 1>&3 3>&- | tee "$ERR_FILE" >&2; } 3>&1',
+    script, appId, version, apksDir], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'inherit'],
-    timeout: 600000,
+    timeout: 620000,
+    env: { ...process.env, NODE: process.execPath, ERR_FILE: errFile },
   });
+  try { lastDownloaderStderr = fs.readFileSync(errFile, 'utf8'); } catch { lastDownloaderStderr = ''; }
+  fs.rmSync(path.dirname(errFile), { recursive: true, force: true });
   if (r.error) return { ok: false, error: r.error.message };
   const stdout = (r.stdout || '').trim();
   if (!stdout) return { ok: false, error: 'unified-downloader produced no output' };
@@ -370,7 +378,9 @@ if (!downloadSuccess) {
 }
 
 if (!downloadSuccess) {
-  console.error(`::error::Could not download requested version ${TARGET_VERSION} for ${APP_ID}`);
+  const reasons = require('./failure-reasons').downloadReasons(lastDownloaderStderr);
+  console.error(`::error::Could not download requested version ${TARGET_VERSION} for ${APP_ID}`
+    + (reasons.length ? `. ${reasons.join('; ')}.` : ''));
   process.exit(1);
 }
 const effectiveTargetVersion = TARGET_VERSION;
