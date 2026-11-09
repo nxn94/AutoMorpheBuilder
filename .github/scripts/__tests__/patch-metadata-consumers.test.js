@@ -58,6 +58,14 @@ describe('honor_patch_opt_ins on structured lists', () => {
   test("an app's own default-on patch is not enabled through a same-named universal one", () => {
     expect(enableArgs(structured, app, { Shared: true }, honor)).toEqual([]);
   });
+  test('an explicit default beats use', () => {
+    const both = (flags) => ({ patches: [{ name: 'P', ...flags, compatiblePackages: [{ packageName: app }] }] });
+    expect(enableArgs(both({ default: false, use: true }), app, { P: true }, honor)).toEqual(['-e', 'P']);
+    expect(enableArgs(both({ default: true, use: false }), app, { P: true }, honor)).toEqual([]);
+  });
+  test('a top-level array list works like a wrapped one', () => {
+    expect(enableArgs(structured.patches, app, { 'Opt-in': true }, honor)).toEqual(['-e', 'Opt-in']);
+  });
   test('a patch set false is never enabled', () => {
     expect(enableArgs(structured, app, { 'Opt-in': false }, honor)).toEqual([]);
   });

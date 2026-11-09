@@ -338,11 +338,12 @@ function structuredPackages(patch) {
 // patch that should stay off.
 function structuredEnableArgs(list, appId, choices) {
   const applies = (p) => (structuredPackages(p) ?? []).some((name) => matchesPackage(name, appId));
+  const patches = Array.isArray(list) ? list : (list.patches || []);
   const offByDefault = (name) => {
-    const named = (list.patches || []).filter((p) => p.name === name);
+    const named = patches.filter((p) => p.name === name);
     const own = named.filter(applies);
     const used = own.length ? own : named.filter((p) => structuredPackages(p) === null);
-    return used.some((p) => (p.use ?? p.default) === false);
+    return used.some((p) => (p.default ?? p.use) === false);
   };
   return Object.keys(choices).filter((name) => choices[name] === true && offByDefault(name)).flatMap((name) => ['-e', name]);
 }

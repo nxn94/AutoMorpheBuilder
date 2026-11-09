@@ -34,7 +34,8 @@ function pipelineDigest(root = path.resolve(__dirname, '../..')) {
 function appFingerprint(config, patches, appId, cliVersion, pipeline) {
   const entry = config.patch_repos[appId];
   return fingerprint({ appId, app: entry, patches: patches[entry.repo]?.[appId] || {},
-    architecture: config.preferred_arch || '', cli: config.cli, cliVersion, pipeline });
+    architecture: config.preferred_arch || '', cli: config.cli, cliVersion, pipeline,
+    ...(config.honor_patch_opt_ins === true ? { honorPatchOptIns: true } : {}) });
 }
 
 function releaseIsCurrent(release, name, digest) {
