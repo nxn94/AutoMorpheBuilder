@@ -523,6 +523,7 @@ jobs:
     environment: signing
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -566,6 +567,7 @@ jobs:
         run: bash .github/scripts/pipeline/sign_apks.sh
 
       - name: Publish per-app releases
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           APKS_DIR: apks
@@ -584,3 +586,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/pipeline/prune_old_releases.sh
+
+      - name: Delete this run's temporary artifacts
+        # Published APKs live on the releases. Private repos on GitHub Free get
+        # 500 MB of artifact storage, so drop the copies once publishing worked.
+        # After a failed publish they stay, for Re-run failed jobs.
+        if: always() && steps.publish.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pipeline/delete_run_artifacts.sh
