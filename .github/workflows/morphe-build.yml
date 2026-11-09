@@ -33,6 +33,7 @@ jobs:
       # from the `check` step (resolved tags) and are passed through.
       should-build: ${{ steps.filter.outputs.should-build }}
       matrix-include: ${{ steps.filter.outputs.matrix-include }}
+      compat-failed: ${{ steps.filter.outputs.compat-failed }}
       repo-versions: ${{ steps.check.outputs.repo-versions }}
       cli-version: ${{ steps.check.outputs.cli-version }}
       cli-branch: ${{ steps.check.outputs.cli-branch }}
@@ -242,6 +243,22 @@ jobs:
             tools/apks/**/*.apks
           retention-days: 1
           if-no-files-found: ignore
+
+  report-compat-failures:
+    # The other apps carry on, but an app the compat probe dropped must still
+    # turn the run red rather than vanish from it.
+    needs: check-versions
+    if: needs.check-versions.outputs.compat-failed != '' && needs.check-versions.outputs.compat-failed != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Fail the run for dropped apps
+        env:
+          DROPPED: ${{ needs.check-versions.outputs.compat-failed }}
+        run: |
+          echo "::error::Dropped by the compat probe, not built: ${DROPPED}. See the probe's step summary."
+          exit 1
 
   build:
     needs: check-versions

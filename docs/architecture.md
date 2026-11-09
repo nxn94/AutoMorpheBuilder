@@ -8,6 +8,7 @@ AutoMorpheBuilder is a **GitHub Actions pipeline** that produces signed, patched
 2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK and runs `morphe-desktop patch --keystore`, which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents (not extension) and converts internally — no manual type detection, no BouncyCastle conversion step.
 3. (Removed — see "Signing model" below for the dissolved trust boundary.)
 4. **`create-release`** downloads the signed APKs, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
+5. **`report-compat-failures`** runs only when the compat probe dropped an app. It fails the run and names the dropped apps, while the remaining apps still build.
 
 The split between `build` and `sign` has been dissolved in favour of morphe-desktop's native `patch --keystore` (which requires the keystore at patch time). The build matrix and create-release are both gated by the `signing` GitHub environment so the keystore is only visible to those jobs. The keystore still lives in only one place on disk (`tools/source.keystore`) and never leaves the runner, but a code-execution bug during APK download / patch execution can now reach the keystore. The available mitigation is to pin the patch repo (`pin_patch_tag`) and the APK version (`pin_version`) to known-good values, restricting what the build job ever invokes against an untrusted APK.
 
