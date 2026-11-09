@@ -19,7 +19,7 @@ describe('extraPatchArgs', () => {
     expect(extraPatchArgs(entry({ [MORPHE]: ['One', 'Two'] }), 'own/a', '/t')).toEqual([
       `--patches=${extraBundlePath('/t', MORPHE)}`, '-e', 'One', '-e', 'Two',
     ]);
-    expect(extraBundlePath('/t', MORPHE)).toBe('/t/extra-MorpheApp-morphe-patches.mpp');
+    expect(extraBundlePath('/t', MORPHE)).toMatch(/^\/t\/extra-[0-9a-f]{64}\.mpp$/);
   });
 
   test("the app's own repo comes first and joins the main bundle", () => {

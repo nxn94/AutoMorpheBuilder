@@ -85,8 +85,8 @@ const APK_PATH_RE = /^[^/\s]+\/[^/\s]+$/;
 const NAME_RE = /^[a-z0-9][a-z0-9-]*$/;
 
 /** Android package id — `com.example.foo`. At least one dot, each
- * segment starts with a letter, contains `[a-z0-9_]`. */
-const PACKAGE_ID_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+ * segment starts with a letter, contains `[A-Za-z0-9_]`. */
+const PACKAGE_ID_RE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
 /** Numeric `X[.Y[.Z...]]` — what `pin_version` should look like. */
 const PIN_VERSION_RE = /^\d+(\.\d+)+$/;

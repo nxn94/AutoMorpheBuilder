@@ -79,6 +79,8 @@ Runs first. Failures here short-circuit the rest of the workflow.
 | Install optional goopdl | `pipeline/install_goopdl.sh` | Commit-pinned Python virtualenv; installation failure warns without disabling existing sources. Also installed in each build job. Skipped on GitHub-hosted runners unless repository variable `GOOPDL_ON_GITHUB_RUNNERS` is `on`. |
 | Pre-download APKs in parallel | `pipeline/pre_download_apks.sh` | Per-app `&` + `wait`. Honours `SKIP_LIST` from the filter step. Calls `update-download-urls.js` per app (writes back only when `auto_update_urls=true` and no `pin_version` is set). |
 
+Repository variable `PRE_DOWNLOAD=off` skips the pre-download and its artifact. Each `build` job then downloads its own APK, which saves `check-versions` time and artifact storage for forks that build few apps. The default is unchanged.
+
 **Notes:**
 
 - The CLI jar is **never** cached. `download_morphe_tools.sh` always `rm -f` and re-downloads it, because `actions/cache@v5` only saves on a cache miss — a restore would silently put a stale jar back into `tools/`. Both download scripts verify the jar's `Implementation-Version` from `META-INF/MANIFEST.MF` matches `CLI_VERSION` after download.
