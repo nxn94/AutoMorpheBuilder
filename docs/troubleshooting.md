@@ -171,6 +171,14 @@ The repo defends against this in three layers:
 
 ---
 
+## `update-patches` fails with "Could not rebase" or "Could not push"
+
+**Symptom:** the `Commit if changed` step of `update-patches.yml` ends with one of those errors.
+
+**Cause:** other commits reached the branch while the sync ran. Rejected pushes are rebased and retried up to five times, but a conflict in the generated files, or five rejections, stops the job without changing the branch.
+
+**Fix:** re-run `update-patches.yml` with `workflow_dispatch`; it starts again from the latest commit.
+
 ## `update-patches` says "No new patch repos; skipping sync" after moving an app's `repo` in `config.json`
 
 **Symptom:** you changed one app's `patch_repos[*].repo` to a different `owner/repo` and pushed to `main`, but `update-patches.yml` logs "No new patch repos in config.json; skipping sync" and `patches.json` is unchanged. If the destination repo is brand-new, no commit at all is produced; if the destination already exists in `patches.json` (because another app lives under it), the "skipping" notice fires and you lose your existing per-patch toggles for the moved app on the next sync.

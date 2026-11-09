@@ -108,5 +108,5 @@ jobs:
           # in git config or any persisted credential store.
           BRANCH_NAME="${GITHUB_REF_NAME:-main}"
           PUSH_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git push "${PUSH_URL}" "HEAD:${BRANCH_NAME}"
+          bash .github/scripts/pipeline/push_with_rebase.sh "${PUSH_URL}" "${BRANCH_NAME}"
           echo "::notice::Committed and pushed: $(git diff --cached --name-only | tr '\n' ' ')"
