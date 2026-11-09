@@ -37,6 +37,31 @@ test('only generated metadata enables explicit opt-ins; unrelated or default-fal
   expect(enableArgs(list, 'com.example.app', { 'Opt-in': true, Other: true, Default: false })).toEqual(['-e', 'Opt-in']);
   expect(enableArgs({ patches: list.patches }, 'com.example.app', { 'Opt-in': true })).toEqual([]);
 });
+describe('honor_patch_opt_ins on structured lists', () => {
+  const app = 'com.example.app';
+  const structured = { patches: [
+    { name: 'Opt-in', use: false, compatiblePackages: [{ packageName: app }] },
+    { name: 'On', use: true, compatiblePackages: [{ packageName: app }] },
+    { name: 'Universal off', default: false, compatiblePackages: null },
+    { name: 'Other app', use: false, compatiblePackages: [{ packageName: 'com.other' }] },
+    { name: 'Shared', use: true, compatiblePackages: [{ packageName: app }] },
+    { name: 'Shared', use: false, compatiblePackages: null },
+  ] };
+  const honor = { honorOptIns: true };
+  test('off unless the setting is on', () => {
+    expect(enableArgs(structured, app, { 'Opt-in': true })).toEqual([]);
+  });
+  test('enables only chosen patches that are off by default', () => {
+    expect(enableArgs(structured, app, { 'Opt-in': true, On: true, 'Universal off': true, 'Other app': true }, honor))
+      .toEqual(['-e', 'Opt-in', '-e', 'Universal off']);
+  });
+  test("an app's own default-on patch is not enabled through a same-named universal one", () => {
+    expect(enableArgs(structured, app, { Shared: true }, honor)).toEqual([]);
+  });
+  test('a patch set false is never enabled', () => {
+    expect(enableArgs(structured, app, { 'Opt-in': false }, honor)).toEqual([]);
+  });
+});
 test('shared version token extractor keeps complete suffixes', () => {
   expect(supportedVersions('INFO: Most common compatible versions:\n12.40.1-prod.01 (3 patches)\n12.39.0-prod.01 (2 patches)')).toEqual(['12.40.1-prod.01', '12.39.0-prod.01']);
 });
