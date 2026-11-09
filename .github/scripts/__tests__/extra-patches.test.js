@@ -87,3 +87,29 @@ describe('validateConfig extra_patches', () => {
     expect(run(extra).length).toBeGreaterThan(0);
   });
 });
+
+test('repos whose names would collide keep separate bundles through download and arguments', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'extra-')).split(path.sep).join('/'); // sha256sum escapes backslashes
+  const repos = ['owner/repo-one', 'owner-repo/one'];
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ patch_repos: { 'com.app': { extra_patches: { [repos[0]]: ['A'], [repos[1]]: ['B'] } } } }));
+  fs.writeFileSync(path.join(dir, 'gh'), `#!/usr/bin/env bash
+while [ $# -gt 0 ]; do case "$1" in --repo) repo=$2; shift;; --output) out=$2; shift;; --json) json=$2; shift;; esac; shift; done
+if [ -n "\${out:-}" ]; then printf '%s' "$repo" > "$out"
+elif [ "\${json:-}" = tagName ]; then echo v1
+else printf 'patches-1.mpp\\tsha256:%s\\n' "$(printf '%s' "$repo" | sha256sum | cut -d' ' -f1)"; fi
+`, { mode: 0o755 });
+  const run = spawnSync('bash', [path.resolve(__dirname, '../pipeline/extra_patch_args.sh')], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}`, APP_ID: 'com.app', PATCH_REPO: 'main/repo', TOOLS_DIR: dir, CONFIG_FILE: path.join(dir, 'config.json') },
+  });
+  expect(run.status).toBe(0);
+  const args = run.stdout.split('\0').filter(Boolean).filter((a) => a.startsWith('--patches='));
+  expect(args).toEqual(repos.map((repo) => `--patches=${extraBundlePath(dir, repo)}`));
+  expect(new Set(args).size).toBe(2);
+  repos.forEach((repo) => expect(fs.readFileSync(extraBundlePath(dir, repo), 'utf8')).toBe(repo));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
