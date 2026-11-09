@@ -219,7 +219,7 @@ jobs:
 
       - name: Pre-download APKs (parallel)
         id: download-apks
-        if: steps.filter.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true' && vars.PRE_DOWNLOAD != 'off'
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
@@ -230,7 +230,7 @@ jobs:
         run: bash .github/scripts/pipeline/pre_download_apks.sh
 
       - name: Upload pre-downloaded APKs
-        if: steps.filter.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true' && vars.PRE_DOWNLOAD != 'off'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: pre-downloaded-apks
@@ -319,6 +319,7 @@ jobs:
         continue-on-error: true
 
       - name: Restore pre-downloaded APKs from check-versions
+        if: vars.PRE_DOWNLOAD != 'off'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           name: pre-downloaded-apks
