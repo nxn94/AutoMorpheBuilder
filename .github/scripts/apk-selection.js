@@ -44,9 +44,10 @@ const { createCandidate } = require('../../src/apk/candidate');
  * even though the bundle's inner base.apk / split_config.*.apk files
  * DO contain the right ABIs and would merge into a universal APK.
  */
-function detectApkShape(filePath) {
+function detectApkShape(filePath, { timeoutMs } = {}) {
   try {
     const out = execFileSync('unzip', ['-Z1', filePath], {
+      timeout: timeoutMs?.(),
       encoding: 'utf8',
       maxBuffer: LIST_BUFFER,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -274,11 +275,11 @@ function apkHasDex(apk) {
  * If `arch` is empty/falsy the function returns true (no ABI filter).
  * The arch string is regex-escaped so values like "arm64-v8a" are safe.
  */
-function apkHasNativeLibsForArch(apk, arch) {
+function apkHasNativeLibsForArch(apk, arch, { timeoutMs } = {}) {
   if (!arch) return true;
   const safe = String(arch).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {
-    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync('unzip', ['-Z1', apk], { timeout: timeoutMs?.(), encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
     return new RegExp(`^lib/${safe}/[^/]+\\.so$`, 'm').test(out);
   } catch {
     return false;
@@ -338,9 +339,9 @@ function findBundleInDir(dir) {
  * @returns {string[]} Sorted ABI directory names (e.g. ['arm64-v8a',
  *                    'armeabi-v7a', 'x86_64']). May be empty.
  */
-function listApkAbis(apk) {
+function listApkAbis(apk, { timeoutMs } = {}) {
   try {
-    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync('unzip', ['-Z1', apk], { timeout: timeoutMs?.(), encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
     const abis = new Set();
     for (const line of out.split('\n')) {
       const m = line.match(/^lib\/([^/]+)\//);

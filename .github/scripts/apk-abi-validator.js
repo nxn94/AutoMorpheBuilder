@@ -45,9 +45,11 @@ const { apkHasNativeLibsForArch, detectApkShape, listApkAbis } = require('./apk-
  *
  * @param {string} filePath Path to the downloaded APK / XAPK / APKM / APKS.
  * @param {string|undefined} preferredArch e.g. "arm64-v8a"; empty/undefined means no filter.
+ * @param {{timeoutMs?: () => number, expired?: () => boolean}} [limits] Time left for each subprocess; a
+ *   caller passing this must reject the file once expired, since checks that can't run count as passes.
  * @throws {Error} If the file is genuinely missing the preferred arch's .so.
  */
-function validateDownloadedApkAbi(filePath, preferredArch) {
+function validateDownloadedApkAbi(filePath, preferredArch, limits = {}) {
 if (!preferredArch) return;
 
   // Zip-magic-byte check (PK\x03\x04) so non-zip placeholders don't
@@ -66,10 +68,10 @@ if (!preferredArch) return;
     fs.closeSync(fd);
   }
 
-  const shape = detectApkShape(filePath);
+  const shape = detectApkShape(filePath, limits);
   if (shape === 'unknown') return; // Trust upstream; download-supported-apk.js's post-merge guardrail is the safety net.
   if (shape === 'apk') {
-    if (listApkAbis(filePath).length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch)) {
+    if (listApkAbis(filePath, limits).length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch, limits)) {
       throw new Error(
         `Downloaded APK ${path.basename(filePath)} is missing ` +
         `lib/${preferredArch}/*.so (upstream mislabelled it as universal/` +
@@ -86,11 +88,11 @@ if (!preferredArch) return;
   // arch only inside base.apk, and (c) filename conventions drift.
   // Extraction + the same zip-listing helper used for plain APKs is
   // the most reliable.
-  require('../../src/apk/validate-boundary').validateArchiveSafe(filePath);
+  require('../../src/apk/validate-boundary').validateArchiveSafe(filePath, limits);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'abi_check_'));
   try {
     try {
-      execFileSync('unzip', ['-q', '-o', filePath, '-d', tmpDir], { stdio: 'ignore' });
+      execFileSync('unzip', ['-q', '-o', filePath, '-d', tmpDir], { stdio: 'ignore', timeout: limits.timeoutMs?.() });
     } catch {
       // Extraction failed (corrupt bundle, unsupported format, etc.).
       // Trust the upstream — download-supported-apk.js's post-merge
@@ -98,9 +100,10 @@ if (!preferredArch) return;
       return;
     }
     const inner = fs.readdirSync(tmpDir).filter((f) => f.toLowerCase().endsWith('.apk'));
-    if (inner.length > 0 && inner.every((apk) => listApkAbis(path.join(tmpDir, apk)).length === 0)) return;
+    if (inner.length > 0 && inner.every((apk) => listApkAbis(path.join(tmpDir, apk), limits).length === 0)) return;
     for (const apk of inner) {
-      if (apkHasNativeLibsForArch(path.join(tmpDir, apk), preferredArch)) return;
+      if (limits.expired?.()) return; // the caller rejects anything past its end time
+      if (apkHasNativeLibsForArch(path.join(tmpDir, apk), preferredArch, limits)) return;
     }
     throw new Error(
       `Downloaded bundle ${path.basename(filePath)} has no split containing ` +

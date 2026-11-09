@@ -61,6 +61,7 @@ function parseVersionFromBadging(badgingStdout) {
  *   targeted — typically the packageId's version pulled from
  *   config.json / patches-list.json.
  * @param {object} [opts]
+ * @param {() => number} [opts.timeoutMs] Time left for each aapt call.
  * @param {(cmd: string, args: string[], options?: object) => string|Buffer} [opts.execFileSyncImpl]
  *   Override for the aapt subprocess. Tests pass a stub that
  *   returns canned badging output. Production callers omit it.
@@ -78,10 +79,10 @@ function validateApkVersion(apkPath, expectedVersion, opts = {}) {
 
   let output;
   try {
-    output = execFileSyncImpl('aapt', ['dump', 'badging', apkPath], { encoding: 'utf8' });
+    output = execFileSyncImpl('aapt', ['dump', 'badging', apkPath], { encoding: 'utf8', timeout: opts.timeoutMs?.() });
   } catch (_e) {
     try {
-      output = execFileSyncImpl('aapt2', ['dump', 'badging', apkPath], { encoding: 'utf8' });
+      output = execFileSyncImpl('aapt2', ['dump', 'badging', apkPath], { encoding: 'utf8', timeout: opts.timeoutMs?.() });
     } catch (_e2) {
       return {
         valid: false,

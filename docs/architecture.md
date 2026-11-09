@@ -86,6 +86,10 @@ Repository variable `PRE_DOWNLOAD=off` skips the pre-download and its artifact. 
 - The CLI jar is **never** cached. `download_morphe_tools.sh` always `rm -f` and re-downloads it, because `actions/cache@v5` only saves on a cache miss — a restore would silently put a stale jar back into `tools/`. Both download scripts verify the jar's `Implementation-Version` from `META-INF/MANIFEST.MF` matches `CLI_VERSION` after download.
 - The compat probe classifies stderr for `NoSuchMethodError`, `NoClassDefFoundError`, `IncompatibleClassChangeError`, `VerifyError`, `LinkageError` and emits an actionable `::error::` ("bump cli or pin each affected app to an older patch tag") instead of waiting 30 minutes for the matrix to surface the same crash.
 
+### APKPure by exact build number
+
+When the patch list publishes `versionCodes` for the version, `src/download/apkpure-exact.js` tries APKPure's address for each build number after Google Play and before the URL cache. Each file must also carry that exact package and build number, read from the APK or a bundle's base APK. Transfers and every check in this step share one 150-second end time, and a file is not accepted past it, so a stalled endpoint or slow bundle still leaves time for the other sources; any failure continues through the existing chain.
+
 ### Google Play first
 
 `unified-downloader.js` tries `goopdl-downloader.js` before the existing URL cache and providers. The optional installer pins upstream goopdl 1.2.2 to commit `30c43eb0f4e06d5ab0a45e39c559a2869a2c7d68` in a Python virtualenv under `tools/goopdl/`. No personal Google account is required.

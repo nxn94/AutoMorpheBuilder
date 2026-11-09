@@ -392,6 +392,42 @@ describe('download() fallback chain', () => {
     // resolve's apkmirror-api fetch must NOT have been triggered.
     expect(global.fetch.mock.calls.length).toBe(1);
   });
+
+  test('a stalled APKPure exact build still reaches the next source', async () => {
+    const { EventEmitter } = require('node:events');
+    const toolsDir = tmpDir();
+    process.env.TOOLS_DIR = toolsDir;
+    fs.writeFileSync(path.join(toolsDir, 'patches-list.json'), JSON.stringify({ patches: [{ compatiblePackages: [{ packageName: PKG, targets: [{ version: VER, versionCodes: { ARM64_V8A: 7 } }] }] }] }));
+    const cacheDir = path.join(process.env.URL_CACHE_DIR, PKG);
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, `${VER}.json`), JSON.stringify({ url: fixtureUrl('placeholder.apk'), source: 'cached-source', downloads: 0, lastWorkingAt: '2025-01-01T00:00:00Z' }));
+    global.fetch = jest.fn(() => Promise.resolve({ ok: true, status: 200 }));
+    const target = path.join(apksDir, `${PKG}_${VER}.apk`);
+    const spawnImpl = jest.fn((_cmd, args, options) => {
+      const child = new EventEmitter();
+      child.stderr = new EventEmitter();
+      if (args.at(-1).includes('apkpure')) {
+        options.signal.addEventListener('abort', () => child.emit('error', options.signal.reason));
+      } else {
+        setImmediate(() => {
+          fs.copyFileSync(path.join(fixtureRoot, 'apk-metadata', 'placeholder.apk'), target);
+          child.emit('close', 0);
+        });
+      }
+      return child;
+    });
+    try {
+      const result = await download(PKG, VER, apksDir, { spawnImpl, execFileSyncImpl: execFileSync, apkpureExactBudgetMs: 20 });
+      expect(result.success).toBe(true);
+      expect(spawnImpl.mock.calls.map(([, args]) => args.at(-1))).toEqual([
+        `https://d.apkpure.com/b/XAPK/${PKG}?versionCode=7`,
+        fixtureUrl('placeholder.apk'),
+      ]);
+    } finally {
+      delete process.env.TOOLS_DIR;
+      fs.rmSync(toolsDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('resolveApkeepVariant (arm64-v8a pick)', () => {
