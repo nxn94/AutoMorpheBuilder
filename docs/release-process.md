@@ -7,7 +7,7 @@ This document describes how AutoMorpheBuilder produces, tags, publishes, and pru
 The `morphe-build.yml` workflow runs on a daily cron (`15 5 * * *` UTC) and on `workflow_dispatch`. The full pipeline is:
 
 1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding.
-2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK, decodes `KEYSTORE_BASE64` straight to `tools/source.keystore`, then runs `morphe-desktop patch --keystore` which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents.
+2. **`build`** (matrix per app, no signing secrets) downloads the APK and runs `morphe-desktop patch --unsigned`. `create-release` then signs each APK with `apksigner` before publishing.
 3. **`create-release`** (also gated by the `signing` environment) downloads every signed APK artifact via `pattern: '*-v*'` + `merge-multiple: true`, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
 
 There is no separate `sign` job anymore — morphe-desktop's `patch --keystore` makes it redundant. The previous `build` ↔ `sign` trust boundary has been dissolved; the build matrix entry that processes untrusted APK + patch input now holds the keystore. Mitigate by pinning `pin_patch_tag` and `pin_version` to known-good values.

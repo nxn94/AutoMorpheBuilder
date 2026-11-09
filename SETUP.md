@@ -50,7 +50,7 @@ Repo → Settings → Secrets and variables → Actions.
 | `KEYSTORE_PASSWORD` | yes | Keystore password (also used as the key entry password when `KEY_PASSWORD` is unset) |
 | `KEY_ALIAS` | no | Defaults to the first alias in the keystore, detected via `keytool -list`. Set this explicitly if your keystore has multiple aliases. |
 | `KEY_PASSWORD` | no | Only if the key entry password differs from `KEYSTORE_PASSWORD`. Set for keystores where the store and key passwords were generated separately. |
-| `APKMIRROR_API_USER` | no | Enables the optional APKMirror-API provider; browser fallback remains available |
+| `APKMIRROR_API_USER` | no | Enables the optional APKMirror-API provider; browser fallback remains available. Set as a repository secret: the `build` job does not use the `signing` environment |
 | `APKMIRROR_API_PASS` | no | APKMirror-API password |
 
 ---

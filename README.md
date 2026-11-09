@@ -116,10 +116,9 @@ Split packages (XAPK/APKM/APKS) are detected by **content**, even when saved as 
 
 ## Signing
 
-1. Decode `KEYSTORE_BASE64` → `tools/source.keystore` (no type detection or conversion step)
-2. Pass the keystore straight to `morphe-desktop patch --keystore` along with `--keystore-password`, `--keystore-entry-password` (defaults to `--keystore-password` if `KEY_PASSWORD` is unset), and `--keystore-entry-alias` (auto-detected via `keytool -list` if `KEY_ALIAS` is unset). morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents and converts to BKS internally
-3. morphe-desktop signs the patched APK in place
-4. Fail immediately on any signing error (no `--unsigned` fallback)
+1. The `build` job patches with `morphe-desktop patch --unsigned` and holds no signing secrets
+2. `create-release`, which runs no patch code, signs each APK with `apksigner` and verifies it
+3. Any signing error fails the job before anything is published
 
 ---
 
