@@ -49,7 +49,7 @@ Some entries may be TODO (`# TODO(pin-aapt2)` etc.) when the value couldn't be c
 
 ## Certificate fingerprint (not used)
 
-`patch_apk.sh` runs `apksigner verify --verbose` on the signed output before upload. This verifies the APK signature, not a configured certificate identity. The old `EXPECTED_CERT_SHA256` certificate-fingerprint comparison in the removed `sign_apk.sh` has not been re-implemented. Do not confuse signature validity or release SHA-256 checks with independently pinning the signing certificate.
+`sign_apks.sh` runs `apksigner verify` on each signed APK before publishing. This verifies the APK signature, not a configured certificate identity. The old `EXPECTED_CERT_SHA256` certificate-fingerprint comparison in the removed `sign_apk.sh` has not been re-implemented. Do not confuse signature validity or release SHA-256 checks with independently pinning the signing certificate.
 
 To extract the fingerprint of an existing keystore (still useful for documentation / rotation audits):
 

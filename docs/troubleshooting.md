@@ -61,7 +61,7 @@ or `META-INF not found in the input APK` from `iiec`'s `BypassSignatureCheckPatc
 
 **Cause:** the APKEditor merge used to pass `-clean-meta`, which deletes the bundle's whole `META-INF` directory. Patches that read the original APK's metadata then find nothing. Only bundle-sourced apps were affected — a monolithic APK skips the merge entirely.
 
-**Fix:** none needed on current `main`; the merge keeps `META-INF` (see `apkeditorMergeArgs` in `src/download/merge-args.js`). If you see this on an older checkout, update, or drop `-clean-meta` from the merge argv. Keeping the directory does not ship a stale signature: `morphe-desktop` signs the patched APK and its signer replaces the v1 signature files, so the released APK carries only its own `META-INF/<alias>.{SF,RSA}`.
+**Fix:** none needed on current `main`; the merge keeps `META-INF` (see `apkeditorMergeArgs` in `src/download/merge-args.js`). If you see this on an older checkout, update, or drop `-clean-meta` from the merge argv. Keeping the directory makes the original metadata available to patches; `create-release` later signs the patched APK with `apksigner`, replacing old signature entries, and verifies the result before publication.
 
 A patch can still fail for its own reasons after this. If the error names a resource or method rather than `META-INF`, it is a patch-side problem — reproduce against the unmerged `base.apk` from the bundle to tell the two apart, and report it to the patch repository.
 
@@ -69,18 +69,16 @@ A patch can still fail for its own reasons after this. If the error names a reso
 
 ## `Wrong version of key store` / `keystore password was incorrect`
 
-**Symptom:** the `Patch and sign ${{ matrix.name }} with morphe-desktop` step fails with `Couldn't decrypt keystore — wrong password or alias` from morphe-desktop, with the underlying Java stack trace typically `java.io.IOException: keystore password was incorrect` at `sun.security.pkcs12.PKCS12KeyStore.engineLoad` (PKCS12) or `BadPaddingException` deep down.
+**Symptom:** the `Sign APKs` step of `create-release` fails with `No KEY_ALIAS set and no alias could be read`, or `apksigner` reports `keystore password was incorrect` or a `BadPaddingException`.
 
-**Cause:** wrong keystore password, **or** the key password differs from the keystore password and only the keystore password is set as a secret, **or** the keystore is in a format morphe-desktop does not accept.
-
-`patch_apk.sh` always passes `--keystore-password` (store password), `--keystore-entry-password` (entry password — defaults to the store password when `KEY_PASSWORD` is unset), and `--keystore-entry-alias` (defaults to the keystore's first alias detected via `keytool -list` when `KEY_ALIAS` is unset). The previous version omitted those flags and trusted morphe-desktop's defaults; those defaults are hardcoded to `"Morphe"` in v1.14.0 (`PatchCommand.kt:215`/`221`), so any third-party keystore hit a hardcoded legacy alias/password that does not match. The flags are now passed unconditionally for that reason.
+**Cause:** wrong keystore password, **or** the key password differs and only the keystore password is set, **or** the keystore format is not one `apksigner` reads.
 
 **Fix:**
 
 - Confirm `KEYSTORE_PASSWORD` matches the password used when the keystore was generated.
-- If the key password differs, set `KEY_PASSWORD` to the key-specific password (and leave `KEYSTORE_PASSWORD` for the keystore). `patch_apk.sh` falls back to `KEYSTORE_PASSWORD` for the entry when `KEY_PASSWORD` is unset — matches the old `keytool -srckeypass`-defaults-to-`-srcstorepass` behavior.
-- If your keystore has multiple aliases and you want a non-first one, set `KEY_ALIAS` explicitly. `patch_apk.sh` detects the first alias via `keytool -list -keystore <file> -storepass:env KEYSTORE_PASSWORD` when `KEY_ALIAS` is unset.
-- morphe-desktop's `patch --keystore` accepts PKCS12 / JKS / BKS and auto-detects the format from file contents (not extension). If your keystore is in another format, convert it locally before base64-encoding:
+- If the key password differs, set `KEY_PASSWORD` to the key-specific password. `sign_apks.sh` falls back to `KEYSTORE_PASSWORD` when it is unset.
+- If your keystore has multiple aliases and you want a non-first one, set `KEY_ALIAS`. `sign_apks.sh` otherwise uses the first alias from `keytool -list`.
+- `apksigner` reads PKCS12 and JKS keystores. If yours is in another format, convert it locally before base64-encoding:
 
   ```bash
   base64 -d keystore.b64 > /tmp/test.keystore
@@ -327,10 +325,11 @@ check the upstream source before retrying. Two-part versions such as `24.3` are
 supported. Bundles containing inner APKs are merged even when saved as `.apk` or
 when their outer archive contains `AndroidManifest.xml`.
 
-The patch command must create its declared output. Directory scans cannot replace
-missing output with another APK. Android build-tools `apksigner verify` checks the
-result before it is uploaded. Signing secrets are supplied only to keystore decode
-and patch/sign steps; downloader processes do not receive them.
+The patch command must create its declared unsigned output. Directory scans cannot
+replace missing output with another APK. The separate `create-release` job signs
+it and runs Android build-tools `apksigner verify` before publication. Signing
+secrets are supplied only to that job's signing step; download and patch jobs do
+not receive them.
 
 ## `Signature check failed`
 

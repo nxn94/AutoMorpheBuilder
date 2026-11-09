@@ -1,27 +1,16 @@
 #!/usr/bin/env bash
 #
-# scripts/patch_apk.sh — invoke morphe-desktop `patch` with keystore signing.
+# scripts/patch_apk.sh — invoke morphe-desktop `patch --unsigned`.
 #
 # Replaces the inline `run:` block in the workflow's "Patch and sign
-# ${matrix.name} with morphe-desktop" step. Produces a signed patched APK
-# in $OUT_DIR.
-#
-# morphe-desktop's `patch --keystore` accepts PKCS12 / JKS / BKS and
-# auto-detects the format from file contents (not extension), converting
-# to BKS internally without touching the original file. The decoded
-# keystore from the workflow's prior step is passed straight in — no
-# manual type detection, no BouncyCastle conversion, no separate
-# sign-and-rewrite step.
+# ${matrix.name} with morphe-desktop" step. Produces an unsigned patched APK
+# in $OUT_DIR. Patch bundles are third-party code, so this script never sees
+# the keystore; create-release signs the APK (sign_apks.sh).
 #
 # Behaviour:
 #   1. Resolve the morphe-desktop jar + .mpp file.
 #   2. Compute enabled/disabled patch counts from patches.json.
-#   3. Run `java -jar morphe-desktop.jar patch --keystore ...` with the
-#      keystore + password + alias + entry-password flags. morphe-desktop
-#      emits a signed APK in place. There is no `--unsigned` fallback:
-#      if the keystore is invalid or the password is wrong,
-#      morphe-desktop exits non-zero and this script fails the
-#      workflow loudly.
+#   3. Run `java -jar morphe-desktop.jar patch --unsigned ...`.
 #   4. Find the patched APK at the deterministic temp path. Fall back to
 #      scanning APKS_DIR / cwd for any newer APK that isn't the input.
 #   5. Rename the patched APK to <app>-v<base-version>-<patches>.apk in
@@ -40,14 +29,6 @@
 #   OUT_DIR           optional  default ./out
 #   APKS_DIR          optional  default ./apps
 #   RUNNER_TEMP       optional  default /tmp
-#   KEYSTORE_FILE     required  path to the decoded source keystore (PKCS12/JKS/BKS)
-#   KEYSTORE_PASSWORD required  keystore password (used as the entry password
-#                                when KEY_PASSWORD is unset)
-#   KEY_ALIAS         optional  alias override; when unset, the first alias
-#                                detected via `keytool -list` is passed
-#   KEY_PASSWORD      optional  key entry password; when unset, defaults to
-#                                KEYSTORE_PASSWORD (mirrors prepare_keystore.sh's
-#                                `-srckeypass` defaulting to `-srcstorepass`)
 
 set -Eeuo pipefail
 
@@ -67,22 +48,13 @@ TOOLS_DIR="${TOOLS_DIR:-./tools}"
 OUT_DIR="${OUT_DIR:-./out}"
 APKS_DIR="${APKS_DIR:-./apps}"
 RUNNER_TEMP="${RUNNER_TEMP:-/tmp}"
-KEYSTORE_FILE="${KEYSTORE_FILE:-}"
-KEYSTORE_PASSWORD="${KEYSTORE_PASSWORD:-}"
-KEY_ALIAS="${KEY_ALIAS:-}"
-KEY_PASSWORD="${KEY_PASSWORD:-}"
 
-for var in APP_ID APP_NAME APK APK_VERSION PATCH_TAG PATCH_REPO KEYSTORE_FILE KEYSTORE_PASSWORD; do
+for var in APP_ID APP_NAME APK APK_VERSION PATCH_TAG PATCH_REPO; do
   if [ -z "${!var}" ]; then
     log_error "Required env var $var is empty."
     exit 1
   fi
 done
-
-if [ ! -f "$KEYSTORE_FILE" ]; then
-  log_error "Keystore file not found: $KEYSTORE_FILE"
-  exit 1
-fi
 
 mkdir -p "$OUT_DIR" "$APKS_DIR"
 
@@ -145,7 +117,7 @@ ENABLE_ARGS_JSON="$(node "$(dirname "$0")/../patch-metadata-runtime.js" enables)
 mapfile -d '' -t ENABLE_ARGS < <(jq -j '.[] + "\u0000"' <<< "$ENABLE_ARGS_JSON")
 PATCH_ARGS+=("${ENABLE_ARGS[@]}")
 
-# --- patch (signed) -------------------------------------------------------
+# --- patch (unsigned) -----------------------------------------------------
 
 MARKER="$RUNNER_TEMP/morphe_${APP_NAME}_start.marker"
 : > "$MARKER"
@@ -167,33 +139,7 @@ run_patch() {
 }
 
 build_patch_cmd() {
-  # morphe-desktop's `--keystore` accepts PKCS12 / JKS / BKS and
-  # auto-detects the format from file contents (not extension). The
-  # `--keystore-password` is the store password.
-  #
-  # morphe-desktop v1.14.0 HARDCODES the defaults for
-  # `--keystore-entry-password` and `--keystore-entry-alias` to "Morphe"
-  # (a legacy bundled-keystore alias — PatchCommand.kt line 215/221 +
-  # PatchEngine.kt line 64/65). These defaults do NOT inherit from
-  # `--keystore-password` and do NOT auto-pick the keystore's first
-  # alias. Omitting either flag therefore breaks on any third-party
-  # keystore. We always pass both explicitly:
-  #
-  #   * entry-alias: KEY_ALIAS if set, else first alias detected via
-  #     `keytool -list` on the decoded PKCS12/JKS (uses -storepass so
-  #     the password never appears on the cmdline — same hygiene as
-  #     the old prepare_keystore.sh).
-  #   * entry-password: KEY_PASSWORD if set, else KEYSTORE_PASSWORD.
-  #     The user's previous keytool-based flow used `-srcstorepass:env
-  #     KEYSTORE_PASSWORD` for the conversion, with `-srckeypass`
-  #     defaulting to the store password when keys matched. Replicating
-  #     that: pass the store password as the entry password when
-  #     KEY_PASSWORD is unset.
-  local -a cmd=(java -jar "$JAR" patch --patches="$MPP")
-  cmd+=(--keystore "$KEYSTORE_FILE")
-  cmd+=(--keystore-password "$KEYSTORE_PASSWORD")
-  cmd+=(--keystore-entry-alias "$KEY_ALIAS_RESOLVED")
-  cmd+=(--keystore-entry-password "$KEY_ENTRY_PASSWORD")
+  local -a cmd=(java -jar "$JAR" patch --patches="$MPP" --unsigned)
   cmd+=(--temporary-files-path="$PATCH_TMP_DIR")
   cmd+=(--out="$PATCHED_APK")
   cmd+=("${PATCH_ARGS[@]}")
@@ -201,34 +147,8 @@ build_patch_cmd() {
   printf '%s\0' "${cmd[@]}"
 }
 
-# Detect first alias if KEY_ALIAS is unset, and default entry password to
-# the store password. morphe-desktop v1.14.0's --keystore-entry-{alias,
-# password} defaults are HARDCODED to "Morphe" / "Morphe" (see
-# PatchCommand.kt line 215/221), not "first alias" / "store password".
-# Pre-resolving here mirrors prepare_keystore.sh's behavior so the
-# refactor doesn't silently fall back to the wrong alias/password.
-KEY_ALIAS_RESOLVED="$KEY_ALIAS"
-if [ -z "$KEY_ALIAS_RESOLVED" ]; then
-  KEY_ALIAS_RESOLVED="$(
-    KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" \
-    keytool -list -keystore "$KEYSTORE_FILE" \
-      -storepass:env KEYSTORE_PASSWORD \
-      2>/dev/null \
-    | awk -F, '/,/{print $1}' | sed '/^$/d' | head -n1
-  )" || true
-  if [ -z "$KEY_ALIAS_RESOLVED" ]; then
-    log_error "No KEY_ALIAS provided and no aliases could be read from $KEYSTORE_FILE."
-    log_error "Either set the KEY_ALIAS secret on the 'signing' environment, or"
-    log_error "verify KEYSTORE_PASSWORD can read the keystore."
-    exit 1
-  fi
-  log "No KEY_ALIAS provided; using first keystore alias '$KEY_ALIAS_RESOLVED'."
-fi
-
-KEY_ENTRY_PASSWORD="${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
-
 mapfile -d '' -t PATCH_CMD < <(build_patch_cmd)
-if ! run_patch signed "${PATCH_CMD[@]}"; then
+if ! run_patch unsigned "${PATCH_CMD[@]}"; then
   exit 1
 fi
 
@@ -239,11 +159,8 @@ if [ ! -s "$OUT_APK" ]; then
   log_error "morphe-desktop did not produce the declared output: $PATCHED_APK"
   exit 1
 fi
-APKSIGNER="${ANDROID_HOME:-/tmp/android-sdk}/build-tools/${ANDROID_BUILD_TOOLS_VERSION:-35.0.0}/apksigner"
-require_file "$APKSIGNER" >/dev/null
-"$APKSIGNER" verify --verbose "$OUT_APK"
 
 OUTPUT_NAME="${APP_NAME}-v${APK_VERSION}-${PATCH_TAG}.apk"
 mv "$OUT_APK" "$OUT_DIR/$OUTPUT_NAME"
 json_set_output output "$OUTPUT_NAME"
-log "Patched (signed) APK ready: $OUT_DIR/$OUTPUT_NAME"
+log "Patched (unsigned) APK ready: $OUT_DIR/$OUTPUT_NAME"

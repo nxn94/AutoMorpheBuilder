@@ -129,7 +129,7 @@ A "fully green" PR shows no skipped tests, no lint warnings, no `actionlint` fin
 
 ## Repo rules
 
-- **No unsigned APKs.** The build hard-fails on signing errors — do not add an `--unsigned` flag or env-gated skip path.
+- **No unsigned releases.** The build matrix deliberately patches with `--unsigned` so third-party patch code has no signing secrets. `create-release` must sign and verify every APK before publication; do not add an env-gated signing bypass.
 - **No force-pushes to `dev` or `main`.** Squash or rebase locally before pushing.
 - **No secrets in the tree.** The `.gitignore` blocks `*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.pem`, `*.b64`, `morphe.jks*`. Do not weaken it.
 - **No workflow `uses:` downgrades.** Action references are pinned to full commit SHAs with version comments. Preserve those pins; Dependabot updates them via `.github/dependabot.yml`.

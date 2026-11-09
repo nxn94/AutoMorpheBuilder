@@ -7,10 +7,10 @@ This document describes how AutoMorpheBuilder produces, tags, publishes, and pru
 The `morphe-build.yml` workflow runs on a daily cron (`15 5 * * *` UTC) and on `workflow_dispatch`. The full pipeline is:
 
 1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding.
-2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK, decodes `KEYSTORE_BASE64` straight to `tools/source.keystore`, then runs `morphe-desktop patch --keystore` which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents.
-3. **`create-release`** (also gated by the `signing` environment) downloads every signed APK artifact via `pattern: '*-v*'` + `merge-multiple: true`, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
+2. **`build`** (matrix per app, no signing secrets) downloads the APK and runs `morphe-desktop patch --unsigned`. `create-release` then signs each APK with `apksigner` before publishing.
+3. **`create-release`** (the only job gated by the `signing` environment) downloads unsigned APK artifacts via `pattern: '*-v*'` + `merge-multiple: true`, aligns when needed, signs and verifies every APK, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
 
-There is no separate `sign` job anymore — morphe-desktop's `patch --keystore` makes it redundant. The previous `build` ↔ `sign` trust boundary has been dissolved; the build matrix entry that processes untrusted APK + patch input now holds the keystore. Mitigate by pinning `pin_patch_tag` and `pin_version` to known-good values.
+Signing runs in `create-release`, not in the build matrix: third-party patch code never runs in the job that holds the keystore. Any signing failure stops the job before publication. Use PKCS12 or JKS; convert an existing BKS keystore locally while preserving its private key and certificate rather than generating a new signing identity.
 
 See `docs/architecture.md` for the job graph and the signing model.
 
@@ -109,10 +109,10 @@ The next workflow run will rebuild and republish it (or skip it, if you have not
 
 ## Manual workflow run
 
-`Actions → Build Morphe-patched apps → Run workflow` starts a full pipeline run. There are no inputs — the run uses the current `config.json` and `patches.json` on `dev`.
+`Actions → Build Morphe-patched apps → Run workflow` starts a full pipeline run. There are no inputs — the run uses `config.json` and `patches.json` from the selected ref (normally `main`).
 
 To trigger only the patch-toggles refresh (no APK build), use `Actions → Update patches.json from upstream repos → Run workflow`.
 
 ## Artifact retention
 
-Patched-APK build artifacts (`${{ matrix.name }}-v${{ version }}-${{ patches-tag }}`) use GitHub Actions' default 90-day retention. Releases themselves are persisted indefinitely until pruned by `prune_old_releases.sh`.
+Unsigned patched-APK build artifacts (`${{ matrix.name }}-v${{ version }}-${{ patches-tag }}`) have explicit three-day retention. Releases contain signed APKs and persist until pruned by `prune_old_releases.sh`.
