@@ -48,6 +48,7 @@ const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
 const { pickSmallestMatchingVariant, versionCodeOf } = require('../../src/download/apkeep-variant');
 const { inferReleaseUrl } = require('../../src/download/release-slug');
+const apkpureExact = require('../../src/download/apkpure-exact');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -641,7 +642,8 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
     // explicitly so no cached value can become a curl upload/config flag.
     try {
       const result = await new Promise((resolve, reject) => {
-        const curl = spawnImpl('curl', ['-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl]);
+        const userAgentArgs = opts.userAgent ? ['-A', opts.userAgent] : [];
+        const curl = spawnImpl('curl', [...userAgentArgs, '-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl]);
 
         curl.on('error', reject);
         let stderr = '';
@@ -1502,6 +1504,26 @@ async function download(packageId, version, outputDir, opts = {}) {
     return await downloadWithGoopdl(packageId, version, outputDir, { resolveVersionCode: resolveGooglePlayVersionCode, ...opts });
   } catch (error) {
     console.error(`[goopdl] ${error.message}; trying existing sources`);
+  }
+
+  // The exact build the patch list names, before any cached or listed URL.
+  let exactArch = 'arm64-v8a';
+  try { exactArch = loadConfig().preferred_arch || exactArch; } catch { /* default */ }
+  const exactCodes = apkpureExact.patchListCodes(packageId, version, exactArch);
+  if (exactCodes.length) {
+    console.error(`[apkpure-exact] Build numbers for ${packageId} v${version}: ${exactCodes.join(', ')}`);
+    let lastError = null;
+    for (const url of apkpureExact.exactBuildUrls(packageId, exactCodes)) {
+      try {
+        const result = await downloadWithUrl(url, outputDir, packageId, version, { ...opts, userAgent: apkpureExact.USER_AGENT });
+        remember(url, 'apkpure-exact');
+        return { ...result, source: 'apkpure-exact' };
+      } catch (e) {
+        lastError = e;
+        console.error(`[apkpure-exact] ${url}: ${e.message}`);
+      }
+    }
+    console.error(`[apkpure-exact] Failed: ${lastError.message}`);
   }
 
   // Step 1: Check URL cache
