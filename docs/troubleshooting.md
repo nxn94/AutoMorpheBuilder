@@ -301,6 +301,10 @@ The HEAD probe will not run on any non-https URL — even a tampered cache file 
 
 ---
 
+## `Not published: <apps>` from `create-release`
+
+One app's upload failed; the others were published. Use **Re-run failed jobs**: uploads overwrite, so apps already published are unaffected.
+
 ## Reporting a new failure
 
 If you hit a failure not listed here:
