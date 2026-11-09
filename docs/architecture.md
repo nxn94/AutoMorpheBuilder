@@ -81,6 +81,8 @@ Runs first. Failures here short-circuit the rest of the workflow.
 
 Repository variable `PRE_DOWNLOAD=off` skips the pre-download and its artifact. Each `build` job then downloads its own APK, which saves `check-versions` time and artifact storage for forks that build few apps. The default is unchanged.
 
+Repository variable `DAILY_BUILDS=paused` skips scheduled runs, for forks that start builds another way; manual runs still build. The default is unchanged.
+
 **Notes:**
 
 - The CLI jar is **never** cached. `download_morphe_tools.sh` always `rm -f` and re-downloads it, because `actions/cache@v5` only saves on a cache miss — a restore would silently put a stale jar back into `tools/`. Both download scripts verify the jar's `Implementation-Version` from `META-INF/MANIFEST.MF` matches `CLI_VERSION` after download.
