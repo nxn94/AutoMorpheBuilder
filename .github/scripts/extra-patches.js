@@ -14,10 +14,11 @@
  */
 
 const { execFileSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 
-/** Local path of an extra bundle, derived from its repo slug. */
+/** Local path of an extra bundle. Hashed so that no two repos can share a path. */
 function extraBundlePath(toolsDir, repo) {
-  return `${toolsDir}/extra-${repo.replace(/\//g, '-')}.mpp`;
+  return `${toolsDir}/extra-${createHash('sha256').update(repo).digest('hex')}.mpp`;
 }
 
 /** The app's extra patches as `{ repo: [names] }`; empty when unset. */
@@ -82,6 +83,7 @@ function resolveExtraTags(config, lookup = latestTag, warn = console.log) {
 // CONFIG_FILE, EXTRA_PATCH_TAGS (JSON `{ repo: tag }`, may be empty).
 //   repos        bundle repos to fetch, one per line
 //   tag <repo>   the pinned tag for <repo>, or nothing
+//   path <repo>  local path of <repo>'s bundle
 //   args         NUL-separated morphe-desktop arguments
 if (require.main === module) {
   const fs = require('node:fs');
@@ -93,10 +95,12 @@ if (require.main === module) {
   } else if (command === 'tag') {
     const pinned = process.env.EXTRA_PATCH_TAGS ? JSON.parse(process.env.EXTRA_PATCH_TAGS) : {};
     if (pinned?.[repo]) console.log(pinned[repo]);
+  } else if (command === 'path') {
+    console.log(extraBundlePath(process.env.TOOLS_DIR, repo));
   } else if (command === 'args') {
     for (const arg of extraPatchArgs(entry, process.env.PATCH_REPO, process.env.TOOLS_DIR)) process.stdout.write(`${arg}\0`);
   } else {
-    console.error(`Usage: extra-patches.js repos | tag <repo> | args`);
+    console.error(`Usage: extra-patches.js repos | tag <repo> | path <repo> | args`);
     process.exit(2);
   }
 }

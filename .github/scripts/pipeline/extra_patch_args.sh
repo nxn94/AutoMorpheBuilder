@@ -17,7 +17,7 @@ set -Eeuo pipefail
 . "$(dirname "$0")/lib/common.sh"
 
 EXTRA_JS="$(dirname "$0")/../extra-patches.js"
-TOOLS_DIR="${TOOLS_DIR:-./tools}"
+export TOOLS_DIR="${TOOLS_DIR:-./tools}"
 
 while IFS= read -r repo; do
   [ -n "$repo" ] || continue
@@ -28,7 +28,7 @@ while IFS= read -r repo; do
     log_error "No patches-*.mpp asset on ${repo}@${tag}"
     exit 1
   fi
-  mpp="${TOOLS_DIR}/extra-${repo//\//-}.mpp"
+  mpp="$(node "$EXTRA_JS" path "$repo")"
   rm -f "$mpp"
   gh release download "$tag" --repo "$repo" --pattern "$asset" --output "$mpp" --clobber >&2
   want="${want#sha256:}"
