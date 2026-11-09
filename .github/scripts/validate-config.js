@@ -52,6 +52,7 @@ const KNOWN_ABIS = new Set([
 const KNOWN_TOP_LEVEL = new Set([
   'preferred_arch',
   'auto_update_urls',
+  'honor_patch_opt_ins',
   'patch_repos',
   'cli',
   'download_urls',
@@ -138,6 +139,14 @@ function validateConfig(config) {
       level: 'error',
       appId: null,
       message: `auto_update_urls must be a boolean (got ${typeof config.auto_update_urls}).`,
+    });
+  }
+
+  if ('honor_patch_opt_ins' in config && typeof config.honor_patch_opt_ins !== 'boolean') {
+    issues.push({
+      level: 'error',
+      appId: null,
+      message: `honor_patch_opt_ins must be a boolean (got ${typeof config.honor_patch_opt_ins}).`,
     });
   }
 

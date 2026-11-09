@@ -328,8 +328,27 @@ function generatedVersions(list, appId, choices = {}, pin = '') {
   return [...new Set(restricted.reduce((a, b) => a.filter((v) => b.includes(v))))]
     .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
 }
-function enableArgs(list, appId, choices) {
-  if (!list.generated) return [];
+function structuredPackages(patch) {
+  const raw = patch.compatiblePackages ?? patch.compatible_packages ?? null;
+  if (raw === null) return null;
+  return Array.isArray(raw) ? raw.map((c) => c.packageName ?? c.name) : Object.keys(raw);
+}
+// -e only for a chosen patch that is off by default: the CLI acts on every patch
+// of that name, so enabling a default-on one can switch on a same-named universal
+// patch that should stay off.
+function structuredEnableArgs(list, appId, choices) {
+  const applies = (p) => (structuredPackages(p) ?? []).some((name) => matchesPackage(name, appId));
+  const patches = Array.isArray(list) ? list : (list.patches || []);
+  const offByDefault = (name) => {
+    const named = patches.filter((p) => p.name === name);
+    const own = named.filter(applies);
+    const used = own.length ? own : named.filter((p) => structuredPackages(p) === null);
+    return used.some((p) => (p.default ?? p.use) === false);
+  };
+  return Object.keys(choices).filter((name) => choices[name] === true && offByDefault(name)).flatMap((name) => ['-e', name]);
+}
+function enableArgs(list, appId, choices, { honorOptIns = false } = {}) {
+  if (!list.generated) return honorOptIns ? structuredEnableArgs(list, appId, choices) : [];
   return effectivePatches(list, appId, choices).filter((p) => choices[p.name] === true && !p.use)
     .flatMap((p) => ['-e', p.name]);
 }

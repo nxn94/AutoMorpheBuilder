@@ -100,6 +100,13 @@ test('invalidates release identity on patch, CLI, architecture or pipeline chang
   expect(appFingerprint(config, patches, 'com.dev', 'v2', 'pipeline')).not.toBe(digest);
   expect(appFingerprint({ ...config, preferred_arch: 'x86_64' }, patches, 'com.dev', 'v1', 'pipeline')).not.toBe(digest);
   expect(appFingerprint(config, patches, 'com.dev', 'v1', 'changed')).not.toBe(digest);
+  const optedIn = appFingerprint({ ...config, honor_patch_opt_ins: true }, patches, 'com.dev', 'v1', 'pipeline');
+  expect(optedIn).not.toBe(digest);
+  expect(appFingerprint({ ...config, honor_patch_opt_ins: false }, patches, 'com.dev', 'v1', 'pipeline')).toBe(digest);
+  const { releaseIsCurrent: isCurrent } = require('../build-fingerprint');
+  const optInRelease = { body: `<!-- build-input:${digest} -->`, assets: ['App.apk', 'SHA256SUMS', 'build-inputs.json'].map((name) => ({ name })) };
+  expect(isCurrent(optInRelease, 'App', digest)).toBe(true);
+  expect(isCurrent(optInRelease, 'App', optedIn)).toBe(false);
   expect(fingerprint({ b: 2, a: 1 })).toBe(fingerprint({ a: 1, b: 2 }));
   const release = { body: `<!-- build-input:${digest} -->`, assets: ['app.apk', 'SHA256SUMS', 'build-inputs.json'].map((name) => ({ name })) };
   expect(releaseIsCurrent(release, 'app', digest)).toBe(true);
