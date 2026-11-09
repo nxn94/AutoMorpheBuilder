@@ -1,4 +1,5 @@
 name: Build Morphe-patched apps
+run-name: ${{ inputs.apps && format('Build only {0}', inputs.apps) || 'Build Morphe-patched apps' }}
 
 on:
   workflow_dispatch:
