@@ -181,6 +181,18 @@ function main() {
   matrix = withoutCompatFailures(matrix, compatFailed);
   setOutput('compat-failed', JSON.stringify(compatFailed));
 
+  // Manual run limited to named apps. After the compat filter, so a dropped
+  // app can't be built by naming it.
+  const selection = require('./only-apps').selectApps(matrix, process.env.ONLY_APPS);
+  if (selection) {
+    if (selection.unknown.length) console.log(`::warning::Not in config.json or dropped: ${selection.unknown.join(', ')}`);
+    console.log(`::notice::Building only: ${selection.matrix.map((e) => e.name).join(', ') || '(none)'}`);
+    setOutput('matrix-include', JSON.stringify(selection.matrix));
+    setOutput('skip-list', JSON.stringify(selection.skipList));
+    setOutput('should-build', String(selection.matrix.length > 0));
+    return;
+  }
+
   // Manual trigger (workflow_dispatch): the workflow sets FORCE_BUILD so
   // a manual run always patches + releases, regardless of whether the
   // current APK version + patches tag already has a release. The

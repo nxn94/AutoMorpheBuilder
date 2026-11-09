@@ -2,6 +2,15 @@ name: Build Morphe-patched apps
 
 on:
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild apps even if their release is current"
+        type: boolean
+        default: true
+      apps:
+        description: "Build only these apps (names or package ids, comma-separated). Empty = all"
+        type: string
+        default: ""
   schedule:
     - cron: "15 5 * * *" # daily at 05:15 UTC
 
@@ -158,7 +167,8 @@ jobs:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           TOOLS_DIR: tools
           CLI_VERSION: ${{ steps.check.outputs.cli-version }}
-          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' }}
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+          ONLY_APPS: ${{ github.event_name == 'workflow_dispatch' && inputs.apps || '' }}
         run: bash .github/scripts/pipeline/check_existing_releases.sh
 
       - name: Cache Playwright browsers
