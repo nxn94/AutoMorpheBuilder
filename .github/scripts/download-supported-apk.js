@@ -522,7 +522,7 @@ if (isSplitPackageFile(apkCandidate)) {
     let archiveContents = '';
     try {
       const probe = spawnSync('unzip', ['-Z1', apkCandidate], {
-        encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+        encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
       });
       if (probe.status === 0) archiveContents = probe.stdout.split('\n').filter(Boolean).join(' ');
     } catch { /* ignore */ }
