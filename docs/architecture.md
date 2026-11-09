@@ -5,9 +5,8 @@ AutoMorpheBuilder is a **GitHub Actions pipeline** that produces signed, patched
 ## High-level flow
 
 1. **`check-versions`** resolves per-app patch tags and the CLI tag, then skips only complete releases with matching build-input provenance. Manual runs force rebuilding.
-2. **`build`** (matrix per app, gated by the `signing` GitHub environment) downloads the APK and runs `morphe-desktop patch --keystore`, which patches **and** signs the APK in one step. morphe-desktop auto-detects PKCS12 / JKS / BKS from file contents (not extension) and converts internally — no manual type detection, no BouncyCastle conversion step.
-3. (Removed — see "Signing model" below for the dissolved trust boundary.)
-4. **`create-release`** downloads the signed APKs, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
+2. **`build`** (matrix per app, no signing secrets) downloads the APK, runs `morphe-desktop patch --unsigned`, and uploads an unsigned APK artifact.
+3. **`create-release`** (gated by the `signing` GitHub environment) downloads the unsigned APKs, signs and verifies them with `apksigner`, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
 
 `build` patches with `morphe-desktop patch --unsigned` and holds no signing secrets. `create-release`, which runs no patch code, decodes the keystore and signs with `apksigner` (`sign_apks.sh`), then verifies each APK. Separate jobs matter: a later step in the same job could be reached by a process a malicious patch left running.
 
@@ -48,8 +47,9 @@ flowchart TD
 
     C9 --> D[create-release job<br/>environment: signing<br/>signs with apksigner]
 
-    D --> D1[Download signed APKs from build<br/>pattern *-v* with merge-multiple]
-    D1 --> D2[Publish per-app releases<br/>create_release.sh<br/>tag = name-v apk -v patches]
+    D --> D1[Download unsigned APKs from build<br/>pattern *-v* with merge-multiple]
+    D1 --> DS[Install build-tools, align, sign and verify<br/>sign_apks.sh]
+    DS --> D2[Publish per-app releases<br/>create_release.sh<br/>tag = name-v apk -v patches]
     D2 --> D3[Prune old releases per app<br/>prune_old_releases.sh<br/>keep KEEP_COUNT = 2 by default]
 
     style B6 stroke-dasharray: 4 4
@@ -112,17 +112,17 @@ Holds no signing secrets. Untrusted inputs (APKMirror HTML/JSON, third-party pat
 | Cache APK | `actions/cache@v5` keyed on `apk-<name>-<version>`. |
 | Install aapt | For post-download version validation. |
 | Download supported APK | `download-supported-apk.js`. Reuse validated local/pre-downloaded APKs; otherwise try **goopdl (Google Play)** → URL cache (`~/.cache/auto-morphe-builder/urls/`) → `config.json download_urls` → parallel resolution via apkeep (APKPure), APKMirror-API (if creds), APKMirror scraper (curl → Chromium fallback). **Cleanup on failure** removes partial APK on ABI / version validation throw so a stale file does not pre-empt the good one. |
-
 | Patch APK | `patch_apk.sh` runs `morphe-desktop.jar patch --unsigned`. |
-| Upload signed APK | `${{ matrix.name }}-v${{ version }}-${{ patches-tag }}` artifact. |
+| Upload unsigned APK | `${{ matrix.name }}-v${{ version }}-${{ patches-tag }}` artifact. Signing occurs only in `create-release`. |
 
 ### `create-release`
 
-Runs after `build` succeeds (`needs: [check-versions, build]`). Also gated by the `signing` GitHub environment.
+Depends on `check-versions` and `build`; publishes successful matrix artifacts even when another app failed. Skips when no build was requested or the build was cancelled. Only this job uses the `signing` GitHub environment.
 
 | Step | Purpose |
 |------|---------|
-| Download signed APKs from build job | `actions/download-artifact@v8` with `pattern: '*-v*'` + `merge-multiple: true` — pulls every `<name>-v<ver>-<patches>` artifact the `build` matrix uploaded. |
+| Download unsigned APKs from build job | `actions/download-artifact@v8` with `pattern: '*-v*'` + `merge-multiple: true` — pulls every `<name>-v<ver>-<patches>` artifact the `build` matrix uploaded. |
+| Install build-tools and sign APKs | `install_aapt.sh` provides `zipalign` and `apksigner`; `sign_apks.sh` aligns when needed, signs with the release keystore, and verifies each output before publication. Any failure stops the job. |
 | Publish per-app releases | `create_release.sh` creates or updates one GitHub Release per app, tag `<name>-v<base-version>-<patches-version>`, containing that app's APK, `SHA256SUMS` and `build-inputs.json`. |
 | Prune old releases | `prune_old_releases.sh` caps each app's release history at `KEEP_COUNT` (default `2`) by `gh release delete --cleanup-tag` on the oldest beyond the window. Failures on a single tag (race / already gone) are warnings only. |
 
@@ -161,7 +161,7 @@ Signing is enforced end-to-end. `build` patches with `morphe-desktop patch --uns
 
 **Trust boundary.** The signing secrets are referenced only by `create-release`. A code-execution bug during APK download or patching cannot reach the keystore, although it can still tamper with the APK it is producing. Pin the patch repo (`pin_patch_tag`) and APK version (`pin_version`) to limit that.
 
-Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` (auto-detected as the keystore's first alias via `keytool -list` when unset — morphe-desktop's own default `"Morphe"` is hardcoded and not first-alias), `KEY_PASSWORD` (defaults to `KEYSTORE_PASSWORD` when unset — same morphe-desktop default caveat).
+Required secrets: `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`. Optional: `KEY_ALIAS` (auto-detected as the keystore's first alias via `keytool -list` when unset), `KEY_PASSWORD` (defaults to `KEYSTORE_PASSWORD` when unset). Use PKCS12 or JKS. Existing BKS keystores must be converted locally with a suitable provider, preserving the private key and certificate; do not generate a replacement key, which would break upgrade compatibility.
 
 **Original APK signer.** Before any merge or patch, `download-supported-apk.js` checks that the original APK (or, in a bundle, every APK the merge will use: the base and every split) is signed by a certificate listed for the app in `.github/scripts/apk-signers.json`, using `apksigner verify --print-certs` (`src/download/signer.js`). A wrong signer or an unverifiable original fails the app. Unlisted apps are skipped with a notice. The one exception is this builder's own cached merge (`<appId>.apk`, unsigned by nature): its bundle is checked and merged again instead.
 
@@ -174,11 +174,12 @@ The workflow is **fail-open** on version resolution (per app) and **fail-closed*
 `build-plan.js` constructs each app's resolved tag and tag-derived bundle slug.
 The compatibility probe writes `tools/supported-versions.json`; filtering,
 pre-download, and matrix resolution reuse those versions. The check job never
-restores archives over freshly verified tools. Signing secrets are scoped to
-decode and patch/sign steps. The final selected/merged APK must pass archive,
+restores archives over freshly verified tools. Signing secrets are referenced
+only in the signing step of the separate `create-release` job. The final selected/merged APK must pass archive,
 package ID, exact version, dex, and native ABI checks. Pure Java APKs need no
-native ABI. Patched output must appear at the declared path and pass
-`apksigner verify` before artifact upload.
+native ABI. Unsigned patched output must appear at the declared path before
+artifact upload; `create-release` signs it and requires `apksigner verify`
+before publication.
 
 URL metadata is cached separately, bounded to three recent versions per app.
 Matrix jobs restore it after the check job completes. Every cached URL still

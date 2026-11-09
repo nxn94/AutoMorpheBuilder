@@ -26,7 +26,7 @@ You should receive an acknowledgement within 7 days. We aim to ship a fix or doc
 This pipeline signs patched APKs with **your** keystore (`KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`). Treat them as high-value secrets:
 
 - **Never** paste a real `KEYSTORE_BASE64` value into an issue, PR, or workflow log. If you need to share a sample, base64-encode an empty/dummy keystore.
-- **Never** reuse your production keystore for testing. Generate a throwaway BKS/PKCS12 keystore per experiment.
+- **Never** reuse your production keystore for testing. Generate a throwaway PKCS12/JKS keystore per experiment.
 - **Never** commit keystore files. The repository's `.gitignore` blocks `*.jks`, `*.keystore`, `*.p12`, `*.pfx`, `*.pem`, `*.b64`, and `morphe.jks*` for this reason — keep it that way.
 - **Rotate** your keystore if you suspect it has leaked (a leaked keystore lets an attacker sign malicious APKs that your device will trust).
 - The release step runs as `contents: write` because it creates / deletes GitHub Releases — this is the **only** step with write permission. The `check-versions` and `build` jobs are read-only.

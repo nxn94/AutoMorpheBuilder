@@ -61,7 +61,7 @@ or `META-INF not found in the input APK` from `iiec`'s `BypassSignatureCheckPatc
 
 **Cause:** the APKEditor merge used to pass `-clean-meta`, which deletes the bundle's whole `META-INF` directory. Patches that read the original APK's metadata then find nothing. Only bundle-sourced apps were affected — a monolithic APK skips the merge entirely.
 
-**Fix:** none needed on current `main`; the merge keeps `META-INF` (see `apkeditorMergeArgs` in `src/download/merge-args.js`). If you see this on an older checkout, update, or drop `-clean-meta` from the merge argv. Keeping the directory does not ship a stale signature: `morphe-desktop` signs the patched APK and its signer replaces the v1 signature files, so the released APK carries only its own `META-INF/<alias>.{SF,RSA}`.
+**Fix:** none needed on current `main`; the merge keeps `META-INF` (see `apkeditorMergeArgs` in `src/download/merge-args.js`). If you see this on an older checkout, update, or drop `-clean-meta` from the merge argv. Keeping the directory makes the original metadata available to patches; `create-release` later signs the patched APK with `apksigner`, replacing old signature entries, and verifies the result before publication.
 
 A patch can still fail for its own reasons after this. If the error names a resource or method rather than `META-INF`, it is a patch-side problem — reproduce against the unmerged `base.apk` from the bundle to tell the two apart, and report it to the patch repository.
 
@@ -317,10 +317,11 @@ check the upstream source before retrying. Two-part versions such as `24.3` are
 supported. Bundles containing inner APKs are merged even when saved as `.apk` or
 when their outer archive contains `AndroidManifest.xml`.
 
-The patch command must create its declared output. Directory scans cannot replace
-missing output with another APK. Android build-tools `apksigner verify` checks the
-result before it is uploaded. Signing secrets are supplied only to keystore decode
-and patch/sign steps; downloader processes do not receive them.
+The patch command must create its declared unsigned output. Directory scans cannot
+replace missing output with another APK. The separate `create-release` job signs
+it and runs Android build-tools `apksigner verify` before publication. Signing
+secrets are supplied only to that job's signing step; download and patch jobs do
+not receive them.
 
 ## `Signature check failed`
 
