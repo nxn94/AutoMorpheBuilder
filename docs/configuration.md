@@ -33,6 +33,10 @@ Selects the preferred native architecture when APKMirror / APKPure lists multipl
 
 Validation: `schemas/config.schema.json` enforces the four-value ABI enum. `universal` is a possible upstream variant, not an accepted `preferred_arch` value. Actual delivered libraries must still pass ABI validation.
 
+## `honor_patch_opt_ins`
+
+Optional Boolean, default `false`. Generated patch metadata always honours a patch set `true` in `patches.json`. Structured patch lists do not by default, because the old sync marked every new patch `true`, so such entries may not be real choices. Set this to `true` once your `patches.json` reflects what you want: a patch that is off by default is then enabled when you set it `true`. Review diagnostic patches first.
+
 ## `auto_update_urls`
 
 | | |

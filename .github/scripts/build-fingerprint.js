@@ -14,27 +14,41 @@ function fingerprint(inputs) {
   return crypto.createHash('sha256').update(JSON.stringify(canonical(inputs))).digest('hex');
 }
 
+// The epoch remains an explicit escape hatch for inputs outside this digest.
+const REBUILD_EPOCH = 1;
+
+// Browser and inspection-tool refreshes do not by themselves alter APK output.
+function outputToolPins(text) {
+  return [...text.matchAll(/^([0-9a-f]{64})\s+(morphe-desktop\.jar|APKEditor\.jar)(?=\s|$)/gm)]
+    .map((m) => `${m[1]}  ${m[2]}\n`).join('');
+}
+
 function pipelineDigest(root = path.resolve(__dirname, '../..')) {
-  const files = [];
+  const files = ['package-lock.json', '.github/workflows/morphe-build.yml'];
   function visit(dir) {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === '__tests__' || entry.name === 'fixtures') continue;
-      const file = path.join(dir, entry.name);
+    if (!fs.existsSync(path.join(root, dir))) return;
+    for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+      if (['__tests__', 'fixtures'].includes(entry.name)) continue;
+      const file = `${dir}/${entry.name}`;
       if (entry.isDirectory()) visit(file);
-      else if (/\.(js|sh|yml)$/.test(file)) files.push(file);
+      else if (/\.(js|sh|json)$/.test(entry.name)
+        && !['check-agents-doc.js', 'generate-readme-tables.js'].includes(entry.name)) files.push(file);
     }
   }
-  for (const dir of ['.github/scripts', '.github/workflows', 'src', 'scripts']) visit(path.join(root, dir));
-  files.push(path.join(root, 'package-lock.json'), path.join(root, 'checksums/tools.sha256'));
-  const hash = crypto.createHash('sha256');
-  for (const file of files.sort()) hash.update(path.relative(root, file)).update('\0').update(fs.readFileSync(file)).update('\0');
+  for (const dir of ['src', '.github/scripts', 'scripts']) visit(dir);
+  const hash = crypto.createHash('sha256').update(`epoch:${REBUILD_EPOCH}\0`)
+    .update(outputToolPins(fs.readFileSync(path.join(root, 'checksums/tools.sha256'), 'utf8')));
+  for (const file of files.sort()) {
+    hash.update(file).update('\0').update(fs.readFileSync(path.join(root, file))).update('\0');
+  }
   return hash.digest('hex');
 }
 
 function appFingerprint(config, patches, appId, cliVersion, pipeline) {
   const entry = config.patch_repos[appId];
   return fingerprint({ appId, app: entry, patches: patches[entry.repo]?.[appId] || {},
-    architecture: config.preferred_arch || '', cli: config.cli, cliVersion, pipeline });
+    architecture: config.preferred_arch || '', cli: config.cli, cliVersion, pipeline,
+    ...(config.honor_patch_opt_ins === true ? { honorPatchOptIns: true } : {}) });
 }
 
 function releaseIsCurrent(release, name, digest) {

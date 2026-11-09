@@ -16,6 +16,10 @@
       "type": "boolean",
       "description": "When true, pre_download_apks.sh writes resolved URLs back into download_urls."
     },
+    "honor_patch_opt_ins": {
+      "type": "boolean",
+      "description": "When true, patches set true in patches.json are enabled even if off by default in structured patch lists."
+    },
     "patch_repos": {
       "type": "object",
       "minProperties": 1,

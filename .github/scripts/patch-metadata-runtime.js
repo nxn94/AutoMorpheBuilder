@@ -53,7 +53,9 @@ async function main() {
       ? JSON.parse(fs.readFileSync(path.join(toolsDir, 'patches-list.json'), 'utf8')) : null);
   const choices = readSelections()[repo]?.[appId] || {};
   if (mode === 'enables') {
-    console.log(JSON.stringify(enableArgs(list || {}, appId, choices)));
+    const configFile = process.env.CONFIG_FILE || 'config.json';
+    const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {};
+    console.log(JSON.stringify(enableArgs(list || {}, appId, choices, { honorOptIns: config.honor_patch_opt_ins === true })));
     return;
   }
   if (mode !== 'versions') throw new Error('Unknown metadata runtime command');
