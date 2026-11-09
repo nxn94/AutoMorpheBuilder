@@ -229,7 +229,7 @@ jobs:
 
       - name: Pre-download APKs (parallel)
         id: download-apks
-        if: steps.filter.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true' && vars.PRE_DOWNLOAD != 'off'
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
           APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
@@ -240,7 +240,7 @@ jobs:
         run: bash .github/scripts/pipeline/pre_download_apks.sh
 
       - name: Upload pre-downloaded APKs
-        if: steps.filter.outputs.should-build == 'true'
+        if: steps.filter.outputs.should-build == 'true' && vars.PRE_DOWNLOAD != 'off'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: pre-downloaded-apks
@@ -329,6 +329,7 @@ jobs:
         continue-on-error: true
 
       - name: Restore pre-downloaded APKs from check-versions
+        if: vars.PRE_DOWNLOAD != 'off'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
           name: pre-downloaded-apks
@@ -496,7 +497,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
-          path: out/${{ steps.patch.outputs.output }}
+          path: |
+            out/${{ steps.patch.outputs.output }}
+            out/*.package
           retention-days: 3
           compression-level: 0
 
@@ -531,6 +534,7 @@ jobs:
     environment: signing
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -574,6 +578,7 @@ jobs:
         run: bash .github/scripts/pipeline/sign_apks.sh
 
       - name: Publish per-app releases
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           APKS_DIR: apks
@@ -592,3 +597,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/pipeline/prune_old_releases.sh
+
+      - name: Delete this run's temporary artifacts
+        # Published APKs live on the releases. Private repos on GitHub Free get
+        # 500 MB of artifact storage, so drop the copies once publishing worked.
+        # After a failed publish they stay, for Re-run failed jobs.
+        if: always() && steps.publish.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pipeline/delete_run_artifacts.sh
