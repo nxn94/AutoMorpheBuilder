@@ -37,7 +37,18 @@
  * Within each DPI tier: preferred APK → preferred BUNDLE → universal
  * APK → universal BUNDLE → noarch APK. BUNDLE is skipped for the
  * noarch tier (noarch never ships as a split package).
+ *
+ * Rows that match the same priority can differ only in minimum Android
+ * version. The highest minimum wins: patches target the current build,
+ * and the first row can be an old one kept for old devices.
  */
+
+/** Pure. Minimum Android from a cell like "Android 9.0+" or "Android 12L+"; 0 if unknown. */
+function minAndroid(text) {
+  const m = /android\s*(\d+)(?:\.(\d+))?(l)?/i.exec(String(text || ''));
+  if (!m) return 0;
+  return Number(m[1]) + (m[2] ? Number(m[2]) / 10 : 0) + (m[3] ? 0.05 : 0);
+}
 
 /**
  * @param {string} preferredArch
@@ -83,16 +94,17 @@ function selectVariant($, priorities) {
       dpi: $(cells[3]).text().trim().toLowerCase(),
       arch: $(cells[1]).text().trim().toLowerCase(),
       type,
+      minver: minAndroid($(cells[2]).text()),
       href,
     });
   });
 
   for (const { arch, dpi, type } of priorities) {
-    const match = rows.find((r) =>
+    const matches = rows.filter((r) =>
       r.arch.includes(arch.toLowerCase()) &&
       r.dpi === dpi.toLowerCase() &&
       r.type === type);
-    if (match) return match.href;
+    if (matches.length) return matches.reduce((best, r) => (r.minver > best.minver ? r : best)).href;
   }
 
   const found = rows.map((r) => `${r.arch}/${r.dpi}/${r.type}`).join(', ') || 'none';
@@ -102,4 +114,5 @@ function selectVariant($, priorities) {
 module.exports = {
   buildVariantPriorities,
   selectVariant,
+  minAndroid,
 };
