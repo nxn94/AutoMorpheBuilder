@@ -46,10 +46,11 @@ const { InvalidApkError } = require('../errors');
 
 const DEX_ENTRY_RE = /^classes(?:\d+)?\.dex$/;
 
-function listArchiveEntries(archivePath) {
+function listArchiveEntries(archivePath, { timeoutMs } = {}) {
   let out;
   try {
     out = execFileSync('unzip', ['-Z1', archivePath], {
+      timeout: timeoutMs?.(),
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -63,13 +64,14 @@ function listArchiveEntries(archivePath) {
   return out.split('\n').filter(Boolean);
 }
 
-function assertArchiveIntegrity(archivePath) {
+function assertArchiveIntegrity(archivePath, { timeoutMs } = {}) {
   // `unzip -t` runs the CRC + structure check and exits non-zero on any
   // corruption. Stderr is suppressed because the listing is noisy and
   // not actionable for callers — the non-zero status is what matters.
   let r;
   try {
     r = execFileSync('unzip', ['-t', archivePath], {
+      timeout: timeoutMs?.(),
       encoding: 'utf8',
       stdio: ['ignore', 'ignore', 'pipe'],
     });
@@ -153,15 +155,15 @@ function validateApkBoundary(archivePath) {
  * inner APKs are merged later — the merge step performs its own dex
  * validation via apkHasDex.
  */
-function validateArchiveSafe(archivePath) {
+function validateArchiveSafe(archivePath, limits = {}) {
   if (!fs.existsSync(archivePath)) {
     throw new InvalidApkError(
       `Archive path does not exist: ${archivePath}`,
       { code: 'INVALID_APK', details: { check: 'exists', path: archivePath } },
     );
   }
-  assertArchiveIntegrity(archivePath);
-  const entries = listArchiveEntries(archivePath);
+  assertArchiveIntegrity(archivePath, limits);
+  const entries = listArchiveEntries(archivePath, limits);
   assertSafeEntries(entries);
   return entries;
 }

@@ -5,15 +5,16 @@
  * numbers per CPU type; APKPure's version listing doesn't always show them.
  *
  * Each file gets the usual downloadWithUrl and developer-signature checks, plus
- * a check here that it really is the build that was asked for. The whole step
- * shares one time limit, so a stalled APKPure can't use up the downloader's
- * 600 seconds before the other sources get a turn.
+ * a check here that it really is the build that was asked for. Transfers and
+ * every check in this step share one end time, so a stalled APKPure or a slow bundle
+ * can't use up the downloader's 600 seconds before the other sources get a turn.
  */
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
+const { performance } = require('node:perf_hooks');
 const { versionMatches } = require('./version-match');
 
 // APKPure answers curl's default User-Agent with 403.
@@ -55,28 +56,39 @@ function exactBuildUrls(appId, codes) {
   return codes.flatMap((code) => ['XAPK', 'APK'].map((kind) => ({ code, url: `https://d.apkpure.com/b/${kind}/${encodeURIComponent(appId)}?versionCode=${code}` })));
 }
 
-function readPackage(apk, exec) {
+/** One end time; synchronous checks can't be interrupted, so each gets only what's left. */
+function createDeadline(budgetMs) {
+  const end = performance.now() + budgetMs;
+  return {
+    // At least 1: a child-process timeout of 0 means no limit.
+    timeoutMs: () => Math.max(1, Math.ceil(end - performance.now())),
+    expired: () => performance.now() >= end,
+  };
+}
+
+function readPackage(apk, exec, deadline) {
   let output;
   try {
-    output = exec('aapt', ['dump', 'badging', apk], { encoding: 'utf8', timeout: 60000 });
+    output = exec('aapt', ['dump', 'badging', apk], { encoding: 'utf8', timeout: deadline?.timeoutMs() });
   } catch {
-    output = exec('aapt2', ['dump', 'badging', apk], { encoding: 'utf8', timeout: 60000 });
+    output = exec('aapt2', ['dump', 'badging', apk], { encoding: 'utf8', timeout: deadline?.timeoutMs() });
   }
   const line = String(output).split('\n').find((l) => l.startsWith('package:')) || '';
   return Object.fromEntries([...line.matchAll(/(\w+)='([^']*)'/g)].map((m) => [m[1], m[2]]));
 }
 
 /** The base APK's package details; a bundle's base is the APK that isn't a split. */
-function readBase(file, isBundle, exec) {
-  if (!isBundle) return readPackage(file, exec);
-  const entries = String(exec('unzip', ['-Z1', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }))
+function readBase(file, isBundle, exec, deadline) {
+  if (!isBundle) return readPackage(file, exec, deadline);
+  const entries = String(exec('unzip', ['-Z1', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: deadline?.timeoutMs() }))
     .split('\n').map((e) => e.trim()).filter((e) => /^[^/]+\.apk$/i.test(e));
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'apkpure-exact-'));
   try {
     for (const entry of entries) {
+      if (deadline?.expired()) break;
       try {
-        exec('unzip', ['-o', '-j', '-q', file, entry, '-d', temp], { timeout: 60000 });
-        const attrs = readPackage(path.join(temp, entry), exec);
+        exec('unzip', ['-o', '-j', '-q', file, entry, '-d', temp], { timeout: deadline?.timeoutMs() });
+        const attrs = readPackage(path.join(temp, entry), exec, deadline);
         if (attrs.name && !attrs.split) return attrs;
       } catch { /* not readable; no base found from this entry */ }
     }
@@ -87,8 +99,8 @@ function readBase(file, isBundle, exec) {
 }
 
 /** Throws unless the file (or a bundle's base APK) is appId at exactly this build number. */
-function assertExactBuild(file, appId, code, { isBundle = false, execFileSyncImpl = execFileSync } = {}) {
-  const attrs = readBase(file, isBundle, execFileSyncImpl);
+function assertExactBuild(file, appId, code, { isBundle = false, execFileSyncImpl = execFileSync, deadline } = {}) {
+  const attrs = readBase(file, isBundle, execFileSyncImpl, deadline);
   if (attrs.name !== appId || attrs.versionCode !== String(code)) {
     throw new Error(`expected ${appId} build ${code}, got ${attrs.name} build ${attrs.versionCode}`);
   }
@@ -97,13 +109,17 @@ function assertExactBuild(file, appId, code, { isBundle = false, execFileSyncImp
 /** The first candidate that passes every check as { result, url }, or null to move on. */
 async function downloadExactBuild({ appId, version, codes, partialPath, download, isBundle, execFileSyncImpl, budgetMs = BUDGET_MS }) {
   console.error(`[apkpure-exact] Build numbers for ${appId} v${version}: ${codes.join(', ')}`);
+  const deadline = createDeadline(budgetMs);
   const signal = AbortSignal.timeout(budgetMs);
   let lastError = null;
   for (const { url, code } of exactBuildUrls(appId, codes)) {
-    if (signal.aborted) break;
+    if (deadline.expired()) break;
     try {
-      const result = await download(url, { signal, userAgent: USER_AGENT });
-      assertExactBuild(result.path, appId, code, { isBundle: isBundle(result.path), execFileSyncImpl });
+      const result = await download(url, { signal, userAgent: USER_AGENT, timeoutMs: deadline.timeoutMs, expired: deadline.expired });
+      assertExactBuild(result.path, appId, code, { isBundle: isBundle(result.path, deadline.timeoutMs), execFileSyncImpl, deadline });
+      // Some checks treat "couldn't run" as a pass, so a check cut off by the
+      // limit proves nothing: past the end time, the file is not accepted.
+      if (deadline.expired()) throw new Error('time limit reached during file checks');
       return { result, url };
     } catch (e) {
       lastError = e;
@@ -111,7 +127,7 @@ async function downloadExactBuild({ appId, version, codes, partialPath, download
       try { fs.rmSync(partialPath, { force: true }); } catch { /* best-effort: the next source overwrites it */ }
     }
   }
-  console.error(`[apkpure-exact] Failed: ${signal.aborted ? `timed out after ${budgetMs / 1000}s` : lastError.message}`);
+  console.error(`[apkpure-exact] Failed: ${deadline.expired() ? `timed out after ${budgetMs / 1000}s` : lastError.message}`);
   return null;
 }
 

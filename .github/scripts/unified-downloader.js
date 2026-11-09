@@ -631,6 +631,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
   const sleep = opts.sleepImpl || ((ms) => new Promise((r) => setTimeout(r, ms)));
 
   const MAX_RETRIES = 3;
+  const limits = { timeoutMs: opts.timeoutMs, expired: opts.expired };
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 1) {
@@ -677,10 +678,10 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
           // Content-based detection is required: the downloader hardcodes
           // the saved filename to `${packageId}_${version}.apk`,
           // extension-based detection would miss every split-package URL.
-          const isSplitPackage = detectApkShape(outputPath) === 'bundle';
+          const isSplitPackage = detectApkShape(outputPath, limits) === 'bundle';
           let validation = { valid: true, actualVersion: version };
           if (!isSplitPackage) {
-            validation = validateApkVersion(outputPath, version, { execFileSyncImpl: opts.execFileSyncImpl });
+            validation = validateApkVersion(outputPath, version, { execFileSyncImpl: opts.execFileSyncImpl, timeoutMs: opts.timeoutMs });
             if (!validation.valid) {
               // Cleanup-on-failure: same TOCTOU rationale as the
               // unlinkSync below.
@@ -696,7 +697,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
           // (apk-abi-validator.js): it extracts inner .apk files for
           // XAPK/APKM/APKS and checks each one for lib/<arch>/*.so.
           try {
-            validateDownloadedApkAbi(outputPath, preferredArchForUrl);
+            validateDownloadedApkAbi(outputPath, preferredArchForUrl, limits);
           } catch (e) {
             // Cleanup-on-failure: same rationale as VERSION MISMATCH.
             try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
@@ -722,7 +723,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
         // Version mismatch won't fix itself — break early
         throw err;
       }
-      if (attempt === MAX_RETRIES || opts.signal?.aborted) {
+      if (attempt === MAX_RETRIES || opts.signal?.aborted || opts.expired?.()) {
         throw err;
       }
       console.error(`[download-url] Attempt ${attempt} failed: ${err.message}`);
@@ -1519,7 +1520,7 @@ async function download(packageId, version, outputDir, opts = {}) {
       partialPath: path.join(outputDir, `${packageId}_${version}.apk`),
       budgetMs: opts.apkpureExactBudgetMs,
       execFileSyncImpl: opts.execFileSyncImpl,
-      isBundle: (file) => detectApkShape(file) === 'bundle',
+      isBundle: (file, timeoutMs) => detectApkShape(file, { timeoutMs }) === 'bundle',
       download: (url, extra) => downloadWithUrl(url, outputDir, packageId, version, { ...opts, ...extra }),
     });
     if (exact) {

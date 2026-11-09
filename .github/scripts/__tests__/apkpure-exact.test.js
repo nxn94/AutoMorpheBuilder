@@ -93,9 +93,74 @@ describe('downloadExactBuild', () => {
     expect(download).toHaveBeenCalledTimes(3);
   });
 
+  const block = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+  test('a check past the limit is not accepted, even if it reports a match', async () => {
+    const timeouts = [];
+    const execFileSyncImpl = (_tool, _args, options) => {
+      timeouts.push(options.timeout);
+      block(60);
+      return "package: name='com.app' versionCode='7'\n";
+    };
+    const download = jest.fn(async () => ({ path: 'file' }));
+    await expect(downloadExactBuild({ ...common, codes: [7], download, execFileSyncImpl, budgetMs: 20 })).resolves.toBeNull();
+    expect(download).toHaveBeenCalledTimes(1);
+    expect(timeouts[0]).toBeGreaterThanOrEqual(1);
+    expect(timeouts[0]).toBeLessThanOrEqual(20);
+  });
+
+  test('checks inside the download past the limit also reject the file, and stop further candidates', async () => {
+    const download = jest.fn(async () => { block(40); return { path: 'file' }; });
+    const execFileSyncImpl = exec(7);
+    await expect(downloadExactBuild({ ...common, codes: [7, 8], download, execFileSyncImpl, budgetMs: 10 })).resolves.toBeNull();
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  test('the download is given the remaining time for its own checks', async () => {
+    const download = jest.fn(async () => ({ path: 'file' }));
+    const isBundle = jest.fn(() => false);
+    await downloadExactBuild({ ...common, isBundle, codes: [7], download, execFileSyncImpl: exec(7), budgetMs: 5000 });
+    const { timeoutMs, expired } = download.mock.calls[0][1];
+    expect(timeoutMs()).toBeGreaterThanOrEqual(1);
+    expect(timeoutMs()).toBeLessThanOrEqual(5000);
+    expect(expired()).toBe(false);
+    expect(typeof isBundle.mock.calls[0][1]).toBe('function');
+  });
+
   test('stops at the shared limit, cancelling the transfer', async () => {
     const download = jest.fn((_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason))));
     await expect(downloadExactBuild({ ...common, codes: [7, 8], download, budgetMs: 20 })).resolves.toBeNull();
     expect(download).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('existing checks honour the time limit', () => {
+  const { validateApkVersion } = require('../../../src/download/aapt');
+  const { detectApkShape } = require('../apk-selection');
+  const { validateDownloadedApkAbi } = require('../apk-abi-validator');
+  const posixTest = process.platform === 'win32' ? test.skip : test;
+
+  test('validateApkVersion passes the remaining time to aapt', () => {
+    const execFileSyncImpl = jest.fn(() => "package: name='com.app' versionCode='7' versionName='1.2'\n");
+    validateApkVersion('a.apk', '1.2', { execFileSyncImpl, timeoutMs: () => 123 });
+    expect(execFileSyncImpl.mock.calls[0][2].timeout).toBe(123);
+  });
+
+  posixTest('a stalled unzip is cut off at the limit', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'slow-unzip-'));
+    const originalPath = process.env.PATH;
+    fs.writeFileSync(path.join(dir, 'unzip'), '#!/bin/sh\nsleep 30\n', { mode: 0o755 });
+    const apk = path.join(dir, 'a.apk');
+    fs.writeFileSync(apk, Buffer.from('PK\x03\x04'));
+    process.env.PATH = `${dir}${path.delimiter}${originalPath}`;
+    try {
+      const start = Date.now();
+      expect(detectApkShape(apk, { timeoutMs: () => 50 })).toBe('unknown');
+      expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a', { timeoutMs: () => 50 })).not.toThrow();
+      expect(Date.now() - start).toBeLessThan(5000);
+    } finally {
+      process.env.PATH = originalPath;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

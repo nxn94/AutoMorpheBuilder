@@ -88,7 +88,7 @@ Repository variable `PRE_DOWNLOAD=off` skips the pre-download and its artifact. 
 
 ### APKPure by exact build number
 
-When the patch list publishes `versionCodes` for the version, `src/download/apkpure-exact.js` tries APKPure's address for each build number after Google Play and before the URL cache. Each file must also carry that exact package and build number, read from the APK or a bundle's base APK. The step shares one 150-second limit, so a stalled endpoint still leaves time for the other sources; any failure continues through the existing chain.
+When the patch list publishes `versionCodes` for the version, `src/download/apkpure-exact.js` tries APKPure's address for each build number after Google Play and before the URL cache. Each file must also carry that exact package and build number, read from the APK or a bundle's base APK. Transfers and every check in this step share one 150-second end time, and a file is not accepted past it, so a stalled endpoint or slow bundle still leaves time for the other sources; any failure continues through the existing chain.
 
 ### Google Play first
 
