@@ -142,6 +142,8 @@ The repo defends against this in three layers:
 
 ## APK download fails / `No APK could be downloaded`
 
+The run's `Could not download` annotation lists why each source failed.
+
 **Symptom:** the `Download supported APK` step fails with `No APK could be downloaded` or hangs on Cloudflare 403s from APKMirror.
 
 **Cause:** Cloudflare rate-limiting on APKMirror, transient APKMirror-API outage, or an invalid `apkmirror_path` slug.

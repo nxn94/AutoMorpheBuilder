@@ -149,6 +149,7 @@ build_patch_cmd() {
 
 mapfile -d '' -t PATCH_CMD < <(build_patch_cmd)
 if ! run_patch unsigned "${PATCH_CMD[@]}"; then
+  node "$(dirname "$0")/../failure-reasons.js" "$PATCH_LOG" || true
   exit 1
 fi
 
