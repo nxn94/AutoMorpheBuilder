@@ -81,7 +81,7 @@ Boolean selections, preferred architecture, CLI configuration/version, lockfile,
 tool pins, and pipeline source. Changing these inputs rebuilds an existing tag.
 Older releases without provenance are rebuilt once.
 
-`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison.
+`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison unless its `force` box is unticked. Its `apps` box limits the run to the named apps, which build even if current.
 Publication replaces the APK, checksum manifest, and provenance with `--clobber`.
 It removes the completion marker before replacement and restores it only after
 all uploads succeed. A partial publication is retried by the next scheduled run.
