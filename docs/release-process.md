@@ -82,6 +82,8 @@ tool pins, and pipeline source. Changing these inputs rebuilds an existing tag.
 Older releases without provenance are rebuilt once.
 
 `workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison.
+
+After a successful publish, `create-release` deletes the run's artifacts; the APKs live on the releases. After a failed publish they stay for **Re-run failed jobs**.
 Publication replaces the APK, checksum manifest, and provenance with `--clobber`.
 It removes the completion marker before replacement and restores it only after
 all uploads succeed. A partial publication is retried by the next scheduled run.
