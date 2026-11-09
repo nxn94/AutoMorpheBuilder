@@ -61,11 +61,16 @@ for app_name in "${APPS[@]}"; do
 
   TAG="${app_name}-${version_str}"
   TITLE="${app_name} ${version_str}"
+  INSTALLS_AS=""
+  if [ -s "${first_apk%.apk}.package" ]; then
+    INSTALLS_AS="$(head -n1 "${first_apk%.apk}.package" | tr -cd 'A-Za-z0-9._')"
+  fi
 
   RELEASE_NOTES="$(printf '%s\n\n' \
     "${TITLE}" \
     "**CLI version:** ${CLI_VERSION}" \
     "**Base + patches:** ${version_str}" \
+    ${INSTALLS_AS:+"**Installs as:** \`${INSTALLS_AS}\`"} \
     "" \
     "**Patch repo versions:**" \
     "${PATCHES_SUMMARY}" \

@@ -486,7 +486,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
-          path: out/${{ steps.patch.outputs.output }}
+          path: |
+            out/${{ steps.patch.outputs.output }}
+            out/*.package
           retention-days: 3
           compression-level: 0
 

@@ -163,4 +163,12 @@ fi
 OUTPUT_NAME="${APP_NAME}-v${APK_VERSION}-${PATCH_TAG}.apk"
 mv "$OUT_APK" "$OUT_DIR/$OUTPUT_NAME"
 json_set_output output "$OUTPUT_NAME"
+# Patches can rename the package: record what the APK installs as for the
+# release notes.
+PKG_FILE="$OUT_DIR/${OUTPUT_NAME%.apk}.package"
+if command -v aapt >/dev/null 2>&1; then
+  aapt dump badging "$OUT_DIR/$OUTPUT_NAME" 2>/dev/null \
+    | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n1 > "$PKG_FILE" || true
+  if [ -s "$PKG_FILE" ]; then log "Patched APK installs as $(cat "$PKG_FILE")"; else rm -f "$PKG_FILE"; fi
+fi
 log "Patched (unsigned) APK ready: $OUT_DIR/$OUTPUT_NAME"
