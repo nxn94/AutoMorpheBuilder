@@ -52,7 +52,13 @@ FINGERPRINTS="$(node "$(dirname "$0")/../build-fingerprint.js")"
 
 # --- publish each app's release -------------------------------------------
 
+# Each app publishes in its own subshell, so one failed upload doesn't stop
+# the apps after it. The script still exits non-zero at the end.
+FAILED_APPS=()
 for app_name in "${APPS[@]}"; do
+  set +e
+  (
+  set -e
   read -r -a apk_files <<<"${APP_APKS[$app_name]}"
   first_apk="${apk_files[0]}"
   apk_basename="$(basename "$first_apk" .apk)"
@@ -61,11 +67,16 @@ for app_name in "${APPS[@]}"; do
 
   TAG="${app_name}-${version_str}"
   TITLE="${app_name} ${version_str}"
+  INSTALLS_AS=""
+  if [ -s "${first_apk%.apk}.package" ]; then
+    INSTALLS_AS="$(head -n1 "${first_apk%.apk}.package" | tr -cd 'A-Za-z0-9._')"
+  fi
 
   RELEASE_NOTES="$(printf '%s\n\n' \
     "${TITLE}" \
     "**CLI version:** ${CLI_VERSION}" \
     "**Base + patches:** ${version_str}" \
+    ${INSTALLS_AS:+"**Installs as:** \`${INSTALLS_AS}\`"} \
     "" \
     "**Patch repo versions:**" \
     "${PATCHES_SUMMARY}" \
@@ -154,4 +165,16 @@ for app_name in "${APPS[@]}"; do
   with_retry 5 3 gh release upload "$TAG" "$provenance" --clobber
   gh release edit "$TAG" --title "$TITLE" --notes "$RELEASE_NOTES"
   log "::notice::Published release: ${TAG}"
+  )
+  app_status=$?
+  set -e
+  if [ "$app_status" -ne 0 ]; then
+    FAILED_APPS+=("$app_name")
+    log_error "Publishing $app_name failed; carrying on with the remaining apps."
+  fi
 done
+
+if [ "${#FAILED_APPS[@]}" -gt 0 ]; then
+  log_error "Not published: ${FAILED_APPS[*]}. Use 'Re-run failed jobs' to try again."
+  exit 1
+fi

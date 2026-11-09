@@ -15,6 +15,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
+// Bundles can list more than Node's default 1 MB of entry names.
+const LIST_BUFFER = 64 * 1024 * 1024;
+
 // Canonical candidate-based ranking API (from src/apk/rank-candidates.js).
 // `findPackageCandidate` and `bestRankedApkInDir` now build candidate
 // objects (via `createCandidate` from src/apk/candidate.js) from the
@@ -45,6 +48,7 @@ function detectApkShape(filePath) {
   try {
     const out = execFileSync('unzip', ['-Z1', filePath], {
       encoding: 'utf8',
+      maxBuffer: LIST_BUFFER,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const lines = out.split('\n');
@@ -253,7 +257,7 @@ function bestRankedApkInDir(dir) {
  */
 function apkHasDex(apk) {
   try {
-    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
     return /^classes(?:\d+)?\.dex$/m.test(out);
   } catch {
     return false;
@@ -274,7 +278,7 @@ function apkHasNativeLibsForArch(apk, arch) {
   if (!arch) return true;
   const safe = String(arch).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {
-    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
     return new RegExp(`^lib/${safe}/[^/]+\\.so$`, 'm').test(out);
   } catch {
     return false;
@@ -336,7 +340,7 @@ function findBundleInDir(dir) {
  */
 function listApkAbis(apk) {
   try {
-    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    const out = execFileSync('unzip', ['-Z1', apk], { encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] });
     const abis = new Set();
     for (const line of out.split('\n')) {
       const m = line.match(/^lib\/([^/]+)\//);

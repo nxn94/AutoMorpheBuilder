@@ -24,7 +24,7 @@
       "type": "object",
       "minProperties": 1,
       "propertyNames": {
-        "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+        "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$",
         "description": "Android package id, e.g. com.google.android.youtube."
       },
       "additionalProperties": { "$ref": "#/$defs/app" }

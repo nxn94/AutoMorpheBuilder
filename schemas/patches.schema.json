@@ -8,7 +8,7 @@
     "type": "object",
     "description": "A patch repo, keyed by Android package id.",
     "propertyNames": {
-      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$",
       "description": "Android package id (matches the keys under config.json patch_repos)."
     },
     "additionalProperties": {

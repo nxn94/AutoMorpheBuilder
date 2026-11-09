@@ -641,7 +641,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
     // explicitly so no cached value can become a curl upload/config flag.
     try {
       const result = await new Promise((resolve, reject) => {
-        const curl = spawnImpl('curl', ['-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl]);
+        const curl = spawnImpl('curl', ['-sS', '-L', '--proto', '=https', '--proto-redir', '=https', '--connect-timeout', '20', '--max-time', '180', '-o', outputPath, '-w', '%{http_code}', '--fail', '--', safeUrl]);
 
         curl.on('error', reject);
         let stderr = '';
@@ -652,7 +652,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
 
         curl.on('close', (code) => {
           if (code !== 0) {
-            reject(new Error(`curl failed: ${stderr}`));
+            reject(new Error(`curl failed: ${stderr.trim()}`));
             return;
           }
 

@@ -51,6 +51,7 @@ function listArchiveEntries(archivePath) {
   try {
     out = execFileSync('unzip', ['-Z1', archivePath], {
       encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (e) {
