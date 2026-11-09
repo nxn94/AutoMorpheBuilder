@@ -5,7 +5,6 @@ const os = require('node:os');
 const path = require('node:path');
 const { pipelineDigest } = require('../build-fingerprint');
 
-const jar = (c) => `${c.repeat(64)}  morphe-desktop.jar  # v1\n`;
 let root;
 const write = (file, text) => {
   fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -14,22 +13,19 @@ const write = (file, text) => {
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'digest-'));
-  write('checksums/tools.sha256', jar('a'));
-  write('.github/workflows/build.yml', 'a');
-  write('package-lock.json', '{}');
+  for (const file of ['checksums/tools.sha256', 'package-lock.json', '.github/workflows/ci.yml', '.github/workflows/morphe-build.yml',
+    '.github/scripts/pipeline/patch_apk.sh', 'src/patch.js', 'scripts/check-agents-doc.js']) write(file, 'a');
 });
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 
-test('builder code and unrelated pins do not change the digest', () => {
+test.each(['.github/workflows/ci.yml', 'scripts/check-agents-doc.js'])('%s does not change the digest', (file) => {
   const before = pipelineDigest(root);
-  write('.github/workflows/build.yml', 'b');
-  write('package-lock.json', '{"x":1}');
-  write('checksums/tools.sha256', `# note\n${jar('a')}${'c'.repeat(64)}  chrome-linux64.zip\n`);
+  write(file, 'b');
   expect(pipelineDigest(root)).toBe(before);
 });
 
-test('a patcher pin changes the digest', () => {
+test.each(['src/patch.js', '.github/scripts/pipeline/patch_apk.sh', '.github/workflows/morphe-build.yml', 'package-lock.json', 'checksums/tools.sha256'])('%s changes the digest', (file) => {
   const before = pipelineDigest(root);
-  write('checksums/tools.sha256', jar('b'));
+  write(file, 'b');
   expect(pipelineDigest(root)).not.toBe(before);
 });

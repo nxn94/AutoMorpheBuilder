@@ -77,9 +77,8 @@ If a release is marked as a prerelease, enable "Include prereleases" in Obtainiu
 Scheduled builds skip an app only when the expected tag contains its APK,
 `SHA256SUMS`, and `build-inputs.json`, and the release notes contain a matching
 build-input fingerprint. The fingerprint includes the app configuration, patch
-Boolean selections, preferred architecture, CLI configuration/version, the `morphe-desktop` and APKEditor pins, and
-`REBUILD_EPOCH` in `build-fingerprint.js`. Changing these inputs rebuilds an
-existing tag. Changes to the builder's own code do not; raise the epoch when one should.
+Boolean selections, preferred architecture, CLI configuration/version, lockfile,
+tool pins, and pipeline source, except tests and CI-only files. Changing these inputs rebuilds an existing tag.
 Older releases without provenance are rebuilt once.
 
 `workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison unless its `force` box is unticked. Its `apps` box limits the run to the named apps, which build even if current.

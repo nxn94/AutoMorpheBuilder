@@ -14,20 +14,31 @@ function fingerprint(inputs) {
   return crypto.createHash('sha256').update(JSON.stringify(canonical(inputs))).digest('hex');
 }
 
-// Raise this when a builder change really should rebuild every app.
-const REBUILD_EPOCH = 1;
-
-// Only the tools that shape the APK count, so a builder change, a Chromium or
-// aapt refresh or a comment doesn't rebuild every app.
-function outputToolPins(text) {
-  return [...text.matchAll(/^([0-9a-f]{64})\s+(morphe-desktop\.jar|APKEditor\.jar)(?=\s|$)/gm)]
-    .map((m) => `${m[1]}  ${m[2]}\n`).join('');
-}
+// Run only by CI or README tooling, so they can't affect a built APK.
+const CI_ONLY = new Set([
+  '.github/workflows/ci.yml',
+  '.github/workflows/codeql.yml',
+  '.github/workflows/update-patches.yml',
+  '.github/scripts/generate-readme-tables.js',
+  'scripts/generate-readme-tables.js',
+  'scripts/check-agents-doc.js',
+]);
 
 function pipelineDigest(root = path.resolve(__dirname, '../..')) {
-  return crypto.createHash('sha256').update(`epoch:${REBUILD_EPOCH}\0`)
-    .update(outputToolPins(fs.readFileSync(path.join(root, 'checksums/tools.sha256'), 'utf8')))
-    .digest('hex');
+  const files = [];
+  function visit(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === '__tests__' || entry.name === 'fixtures') continue;
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(file);
+      else if (/\.(js|sh|yml)$/.test(file) && !CI_ONLY.has(path.relative(root, file).split(path.sep).join('/'))) files.push(file);
+    }
+  }
+  for (const dir of ['.github/scripts', '.github/workflows', 'src', 'scripts']) visit(path.join(root, dir));
+  files.push(path.join(root, 'package-lock.json'), path.join(root, 'checksums/tools.sha256'));
+  const hash = crypto.createHash('sha256');
+  for (const file of files.sort()) hash.update(path.relative(root, file)).update('\0').update(fs.readFileSync(file)).update('\0');
+  return hash.digest('hex');
 }
 
 function appFingerprint(config, patches, appId, cliVersion, pipeline) {
