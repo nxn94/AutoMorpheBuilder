@@ -56,13 +56,17 @@ function exactBuildUrls(appId, codes) {
   return codes.flatMap((code) => ['XAPK', 'APK'].map((kind) => ({ code, url: `https://d.apkpure.com/b/${kind}/${encodeURIComponent(appId)}?versionCode=${code}` })));
 }
 
-/** One end time; synchronous checks can't be interrupted, so each gets only what's left. */
+/** One limit (end time and cancel signal); synchronous checks can't be interrupted, so each gets only what's left. */
 function createDeadline(budgetMs) {
   const end = performance.now() + budgetMs;
+  // The timer can fire just before the clock below reaches the end, so a
+  // cancelled signal also counts as expired.
+  const signal = AbortSignal.timeout(budgetMs);
   return {
+    signal,
     // At least 1: a child-process timeout of 0 means no limit.
     timeoutMs: () => Math.max(1, Math.ceil(end - performance.now())),
-    expired: () => performance.now() >= end,
+    expired: () => signal.aborted || performance.now() >= end,
   };
 }
 
@@ -110,7 +114,7 @@ function assertExactBuild(file, appId, code, { isBundle = false, execFileSyncImp
 async function downloadExactBuild({ appId, version, codes, partialPath, download, isBundle, execFileSyncImpl, budgetMs = BUDGET_MS }) {
   console.error(`[apkpure-exact] Build numbers for ${appId} v${version}: ${codes.join(', ')}`);
   const deadline = createDeadline(budgetMs);
-  const signal = AbortSignal.timeout(budgetMs);
+  const { signal } = deadline;
   let lastError = null;
   for (const { url, code } of exactBuildUrls(appId, codes)) {
     if (deadline.expired()) break;
