@@ -25,12 +25,15 @@ permissions:
   contents: read
 
 # Queue builds instead of cancelling a run that may already be publishing.
+# A scheduled run skipped by DAILY_BUILDS=paused gets its own group, or it
+# would replace a manual run waiting in this one.
 concurrency:
-  group: morphe-build
+  group: ${{ (github.event_name == 'schedule' && vars.DAILY_BUILDS == 'paused') && 'morphe-build-skipped' || 'morphe-build' }}
   cancel-in-progress: false
 
 jobs:
   check-versions:
+    if: github.event_name != 'schedule' || vars.DAILY_BUILDS != 'paused'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
