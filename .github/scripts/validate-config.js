@@ -68,9 +68,42 @@ const KNOWN_APP_KEYS = new Set([
   'pin_patch_tag',
   'display_name',
   'extra_patches',
+  'patch_options',
 ]);
 
 const { parsePatchSource } = require('./patch-source');
+
+/** Option key: what morphe-desktop takes before `=` in -Okey=value. */
+const OPTION_KEY_RE = /^[^\s=\0]+$/;
+
+/** Problems with a patch_options value; empty when valid. Values are strings,
+ * Booleans, safe whole numbers or plain decimals (no exponent). */
+function patchOptionsErrors(options) {
+  const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isMap(options)) return ['patch_options must be an object of {"Patch name": {"key": value}}.'];
+  const errors = [];
+  const seen = new Map();
+  for (const [patch, values] of Object.entries(options)) {
+    if (!patch.length) errors.push('patch_options has an empty patch name.');
+    if (patch.includes('\0')) errors.push(`patch_options["${patch}"]: patch names can't contain NUL.`);
+    const other = seen.get(patch.toLowerCase());
+    if (other !== undefined) errors.push(`patch_options has "${other}" and "${patch}", which differ only in case.`);
+    seen.set(patch.toLowerCase(), patch);
+    if (!isMap(values) || !Object.keys(values).length) {
+      errors.push(`patch_options["${patch}"] must be a non-empty object of {"key": value}.`);
+      continue;
+    }
+    for (const [key, value] of Object.entries(values)) {
+      const where = `patch_options["${patch}"]["${key}"]`;
+      if (!OPTION_KEY_RE.test(key)) errors.push(`${where}: option keys must be non-empty, without spaces, "=" or NUL.`);
+      const ok = typeof value === 'boolean'
+        || (typeof value === 'string' && !value.includes('\0'))
+        || (typeof value === 'number' && (Number.isSafeInteger(value) || /^-?\d+\.\d+$/.test(String(value))));
+      if (!ok) errors.push(`${where} must be a string (no NUL), true/false, a whole number up to 2^53, or a plain decimal.`);
+    }
+  }
+  return errors;
+}
 
 /** owner/repo slug — used by every <owner>/<repo> entry. */
 const REPO_RE = /^[^/\s]+\/[^/\s]+$/;
@@ -390,6 +423,11 @@ function validateConfig(config) {
           }
         }
       }
+    }
+
+    // patch_options (optional): { "Patch name": { "key": value, ... } }
+    if ('patch_options' in entry) {
+      for (const message of patchOptionsErrors(entry.patch_options)) issues.push({ level: 'error', appId, message });
     }
 
     // display_name (optional)

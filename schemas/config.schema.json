@@ -104,6 +104,17 @@
           },
           "description": "Optional. Named patches from other GitHub patch sources, applied in addition to the app's own: { \"owner/repo\": [\"Patch name\", ...] }. Each source's latest release is used (one release per run, shared by all apps) and SHA-256-verified like other patches bundles. Changing this rebuilds only this app; a new release of an extra source alone does not. GitLab sources are not supported here."
         },
+        "patch_options": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[^\\u0000]+$" },
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "propertyNames": { "pattern": "^[^\\s=\\u0000]+$" },
+            "additionalProperties": { "anyOf": [{ "type": "string", "pattern": "^[^\\u0000]*$" }, { "type": "boolean" }, { "type": "number" }] }
+          },
+          "description": "Optional. Values for patches that take settings, for patches in the app's own repo: { \"Patch name\": { \"key\": value } }. Each is passed as -Okey=value after the patch's -e. Settings never change which patches run. Changing this rebuilds only this app."
+        },
         "display_name": {
           "type": "string",
           "minLength": 1,

@@ -347,9 +347,58 @@ function structuredEnableArgs(list, appId, choices) {
   };
   return Object.keys(choices).filter((name) => choices[name] === true && offByDefault(name)).flatMap((name) => ['-e', name]);
 }
-function enableArgs(list, appId, choices, { honorOptIns = false } = {}) {
+function baseEnableArgs(list, appId, choices, honorOptIns) {
   if (!list.generated) return honorOptIns ? structuredEnableArgs(list, appId, choices) : [];
   return effectivePatches(list, appId, choices).filter((p) => choices[p.name] === true && !p.use)
     .flatMap((p) => ['-e', p.name]);
 }
-module.exports = { matchesPackage, reconcileExperimental, generatedVersions, enableArgs, parseListPatches, VERSION, metadataUsable, createMetadataResolver, deriveMetadata, atomicWrite };
+// The CLI converts -O values itself ("true" to a Boolean, "1" to a number,
+// "null" to null), so a string is wrapped in double quotes, which it strips once.
+function optionArg(key, value) {
+  return `-O${key}=${typeof value === 'string' ? `"${value}"` : String(value)}`;
+}
+// Settings never switch a patch on or off: they apply only to a patch that runs
+// anyway, and each -O must directly follow its patch's -e. The CLI keys settings
+// by the -e text and the patcher looks them up by exact patch name, so names must
+// match exactly. -e and -d act on every patch of that name, ignoring case, so -e
+// that would newly switch on a same-named patch that is off by default fails.
+function optionEnableArgs(list, appId, choices, base, options, warn) {
+  const patches = Array.isArray(list) ? list : (list.patches || []);
+  const applies = (p) => { const names = structuredPackages(p); return names === null || names.some((n) => matchesPackage(n, appId)); };
+  const lower = (name) => name.toLowerCase();
+  const on = (p) => (p.default ?? p.use) !== false;
+  const baseNames = base.filter((_, i) => i % 2 === 1);
+  const enabledLower = new Set(baseNames.map(lower));
+  const disabledLower = new Set(Object.keys(choices).filter((name) => choices[name] === false).map(lower));
+  const extra = [];
+  for (const name of Object.keys(options)) {
+    const ignored = (why) => warn(`Patch settings for "${name}" ignored: ${why}`);
+    const same = patches.filter((p) => typeof p.name === 'string' && lower(p.name) === lower(name) && applies(p));
+    const exact = same.filter((p) => p.name === name);
+    if (disabledLower.has(lower(name))) { ignored('it is disabled in patches.json'); continue; }
+    if (!exact.length) {
+      ignored(same.length ? `this release spells it "${same[0].name}"` : `no patch of that name for ${appId} in this release`);
+      continue;
+    }
+    if (baseNames.includes(name)) continue;
+    if (!enabledLower.has(lower(name))) {
+      if (!exact.some(on)) { ignored(`the patch is off for ${appId}`); continue; }
+      if (same.some((p) => !on(p))) {
+        throw new Error(`Patch settings for "${name}" would also switch on a same-named patch that is off by default for ${appId}`);
+      }
+    }
+    extra.push('-e', name);
+  }
+  const args = [...base, ...extra].flatMap((arg, i) => (i % 2 === 1 && Object.hasOwn(options, arg)
+    ? [arg, ...Object.entries(options[arg]).map(([key, value]) => optionArg(key, value))] : [arg]));
+  // patch_apk.sh splits the arguments on NUL, so one inside an argument would
+  // turn into extra patcher flags. validate-config rejects it; this is the backstop.
+  const bad = args.find((arg) => arg.includes('\0'));
+  if (bad !== undefined) throw new Error(`Patch settings argument contains NUL: ${JSON.stringify(bad)}`);
+  return args;
+}
+function enableArgs(list, appId, choices, { honorOptIns = false, options = {}, warn = () => {} } = {}) {
+  const base = baseEnableArgs(list, appId, choices, honorOptIns);
+  return Object.keys(options).length ? optionEnableArgs(list, appId, choices, base, options, warn) : base;
+}
+module.exports = { matchesPackage, reconcileExperimental, generatedVersions, enableArgs, optionArg, parseListPatches, VERSION, metadataUsable, createMetadataResolver, deriveMetadata, atomicWrite };
