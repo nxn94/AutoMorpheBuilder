@@ -115,7 +115,7 @@ The next workflow run will rebuild and republish it (or skip it, if you have not
 
 ## Manual workflow run
 
-`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to enabled. Untick it to skip current releases when `apps` is empty; explicitly selected apps build even if current.
+`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to enabled. Untick it to skip current releases when `apps` is empty; explicitly selected apps build even if current. A run limited to named apps is titled `Build only <apps>` in the run list.
 
 To trigger only the patch-toggles refresh (no APK build), use `Actions → Update patches.json from upstream repos → Run workflow`.
 
