@@ -77,7 +77,8 @@ The dynamic build matrix. Each key is an Android package id (`applicationId`), e
   "pin_version":    "1.2.3",                   // optional, lock to this APK version
   "pin_patch_tag":  "v1.0.0",                  // optional, lock the patches release tag
   "display_name":   "Example",                 // optional, human-readable name for README/Obtainium
-  "extra_patches":  { "owner/other-patches": ["Patch name"] } // optional, named patches from other sources
+  "extra_patches":  { "owner/other-patches": ["Patch name"] }, // optional, named patches from other sources
+  "patch_options":  { "Change app name": { "appName": "My Maps" } } // optional, patch settings
 }
 ```
 
@@ -207,6 +208,24 @@ Applies the named patches from other patch sources in addition to the app's own 
 - **Integrity:** the bundle's SHA-256 must match the digest GitHub serves for the release asset, as for other `.mpp` files. A missing digest, a mismatch, or any failure to fetch a listed bundle fails that app's build.
 - **Rebuilds:** changing `extra_patches` rebuilds that app only. A new release of an extra source does not rebuild anything on its own; apps pick it up the next time they rebuild.
 - **Version resolution:** supported versions and the compatibility probe consider only the app's own bundle. Extra patches are not part of them, so use patches that are not tied to specific app versions.
+- Apps without the field behave exactly as before.
+
+#### `patch_options` (optional)
+
+| | |
+|---|---|
+| Type | `object` (`{ "Patch name": { "key": value, ... } }`) |
+| Required | no |
+| Example | `{ "Change app name": { "appName": "My Maps" } }` |
+
+Sets values for patches that take settings, for patches in the app's own `repo`. `patches.json` still only says which patches are on; this only gives them values.
+
+- **Values:** strings, `true`/`false`, whole numbers, or decimals such as `1.5`. Whole numbers are passed as integers, so a decimal setting needs a fractional value. Each is passed as its own `-Okey=value` argument straight after the patch's `-e`, with no shell in between, so spaces and quotes are kept. Strings are wrapped in double quotes, which morphe-desktop removes once, so `"1"` or `"true"` stays a string. Keys can't contain spaces or `=`.
+- **Names:** patch names must match the patch list exactly, including case, because morphe-desktop looks settings up by exact name. A different spelling is skipped with a warning naming the right one.
+- **Errors:** a setting the patch doesn't have, or a value it rejects, fails the app's build. morphe-desktop itself would only log it.
+- **Selection is unchanged:** settings apply only to a patch that runs anyway (on by default, or chosen in `patches.json` where opt-ins are honoured). A patch set `false` stays off, and settings for a patch that is off, or not in this release, are skipped with a warning.
+- **Same-named patches:** morphe-desktop's `-e` acts on every patch of that name, ignoring case. If passing `-e` for a patch's settings would also switch on a same-named patch that is off by default (for example a universal one), the app's build fails instead.
+- **Rebuilds:** changing `patch_options` rebuilds that app only (it is part of the app entry).
 - Apps without the field behave exactly as before.
 
 #### `display_name` (optional)

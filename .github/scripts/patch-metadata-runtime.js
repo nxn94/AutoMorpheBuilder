@@ -55,7 +55,11 @@ async function main() {
   if (mode === 'enables') {
     const configFile = process.env.CONFIG_FILE || 'config.json';
     const config = fs.existsSync(configFile) ? JSON.parse(fs.readFileSync(configFile, 'utf8')) : {};
-    console.log(JSON.stringify(enableArgs(list || {}, appId, choices, { honorOptIns: config.honor_patch_opt_ins === true })));
+    console.log(JSON.stringify(enableArgs(list || {}, appId, choices, {
+      honorOptIns: config.honor_patch_opt_ins === true,
+      options: config.patch_repos?.[appId]?.patch_options || {},
+      warn: (message) => console.error(`::warning::${message}`),
+    })));
     return;
   }
   if (mode !== 'versions') throw new Error('Unknown metadata runtime command');

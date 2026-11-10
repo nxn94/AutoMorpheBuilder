@@ -159,6 +159,12 @@ if ! run_patch unsigned "${PATCH_CMD[@]}"; then
   node "$(dirname "$0")/../failure-reasons.js" "$PATCH_LOG" || true
   exit 1
 fi
+# The patcher only logs a setting it can't apply (unknown key, wrong type or a
+# value the patch rejects) and still succeeds; don't publish without it.
+if grep -F 'Could not set option' "$PATCH_LOG" >&2; then
+  log_error "A patch setting in config.json patch_options was not applied (see the line above)"
+  exit 1
+fi
 
 # --- locate patched output -----------------------------------------------
 

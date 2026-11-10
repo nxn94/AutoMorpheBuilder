@@ -307,6 +307,12 @@ The HEAD probe will not run on any non-https URL — even a tampered cache file 
 
 One app's upload failed; the others were published. Use **Re-run failed jobs**: uploads overwrite, so apps already published are unaffected.
 
+## `Patch settings for "<name>" would also switch on a same-named patch` / `A patch setting ... was not applied`
+
+**Cause:** `patch_options` in `config.json`. The first means passing `-e` for the patch's settings would also switch on another patch with the same name (any case) that is off by default, often a universal one, because morphe-desktop's `-e` acts on every patch of that name. The second means morphe-desktop logged `Could not set option` for a setting: the key doesn't exist for that patch, or the value has the wrong type or was rejected.
+
+**Fix:** for the first, remove the settings, or turn the same-named patch on in `patches.json` if you want it. For the second, check the key and value against the patch's options (`morphe-desktop list-patches --with-options`) and correct them in `patch_options`.
+
 ## Reporting a new failure
 
 If you hit a failure not listed here:
