@@ -140,6 +140,21 @@ describe('option values', () => {
     expect(script).toContain(`mapfile -d '' -t ENABLE_ARGS < <(jq -j '.[] + "\\u0000"' <<< "$ENABLE_ARGS_JSON")`);
   });
 
+  test('a NUL in a setting cannot become extra arguments on the way to the patcher', () => {
+    // The same transport patch_apk.sh uses: JSON list -> NUL-separated -> bash array.
+    const transport = (args) => JSON.parse(execFileSync('bash', ['-c',
+      `mapfile -d '' -t ENABLE_ARGS < <(jq -j '.[] + "\\u0000"' <<< "$ENABLE_ARGS_JSON")
+      jq -cn '$ARGS.positional' --args -- "\${ENABLE_ARGS[@]}"`],
+    { env: { ...process.env, ENABLE_ARGS_JSON: JSON.stringify(args) }, encoding: 'utf8' }));
+    const sneaky = { Rename: { 'unused\u0000--force\u0000-Ok': 'Maps' } };
+    // Without the checks, this one argument would arrive as three, one of them --force.
+    expect(transport([optionArg('unused\u0000--force\u0000-Ok', 'Maps')])).toEqual(['-Ounused', '--force', '-Ok="Maps"']);
+    expect(() => run(sneaky)).toThrow(/contains NUL/);
+    // A normal value with spaces and quotes stays one argument.
+    const { args } = run({ Rename: { appName: 'Tom\'s "Maps"  app' } });
+    expect(transport(args)).toEqual(['-e', 'Rename', '-OappName="Tom\'s "Maps"  app"']);
+  });
+
   test('patch_apk.sh fails when the patcher logs a setting it could not apply', () => {
     const script = fs.readFileSync(path.resolve(__dirname, '../pipeline/patch_apk.sh'), 'utf8');
     const check = script.indexOf("if grep -F 'Could not set option' \"$PATCH_LOG\"");
@@ -171,6 +186,8 @@ describe('validation', () => {
     ['an exponent', { Rename: { k: 1e21 } }],
     ['a whole number past 2^53', { Rename: { k: 2 ** 53 } }],
     ['a NUL', { Rename: { k: 'a\u0000b' } }],
+    ['a NUL in a key', { Rename: { 'unused\u0000--force\u0000-Ok': 'Maps' } }],
+    ['a NUL in a patch name', { 'Rename\u0000--force': { k: 'v' } }],
     ['patch names differing only in case', { Rename: { k: 'a' }, rename: { k: 'b' } }],
   ])('rejects %s', (_, patchOptions) => {
     expect(errors(patchOptions).join()).toMatch(/patch_options/);
@@ -187,7 +204,8 @@ describe('validation', () => {
     const withOptions = (patchOptions) => ({ ...real, patch_repos: { ...real.patch_repos, [id]: { ...real.patch_repos[id], patch_options: patchOptions } } });
     expect(schema(real)).toBe(true);
     expect(schema(withOptions({ Rename: { appName: 'My Maps', n: 2, b: true } }))).toBe(true);
-    for (const bad of [{ Rename: {} }, { Rename: { 'a b': 'x' } }, { Rename: { k: null } }, { Rename: { k: ['a'] } }, []]) {
+    for (const bad of [{ Rename: {} }, { Rename: { 'a b': 'x' } }, { Rename: { k: null } }, { Rename: { k: ['a'] } }, [],
+      { Rename: { 'unused\u0000--force\u0000-Ok': 'Maps' } }, { 'Rename\u0000--force': { k: 'v' } }, { Rename: { k: 'a\u0000b' } }]) {
       expect(schema(withOptions(bad))).toBe(false);
     }
   });

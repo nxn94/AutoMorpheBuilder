@@ -106,12 +106,12 @@
         },
         "patch_options": {
           "type": "object",
-          "propertyNames": { "minLength": 1 },
+          "propertyNames": { "pattern": "^[^\\u0000]+$" },
           "additionalProperties": {
             "type": "object",
             "minProperties": 1,
-            "propertyNames": { "pattern": "^[^\\s=]+$" },
-            "additionalProperties": { "anyOf": [{ "type": "string" }, { "type": "boolean" }, { "type": "number" }] }
+            "propertyNames": { "pattern": "^[^\\s=\\u0000]+$" },
+            "additionalProperties": { "anyOf": [{ "type": "string", "pattern": "^[^\\u0000]*$" }, { "type": "boolean" }, { "type": "number" }] }
           },
           "description": "Optional. Values for patches that take settings, for patches in the app's own repo: { \"Patch name\": { \"key\": value } }. Each is passed as -Okey=value after the patch's -e. Settings never change which patches run. Changing this rebuilds only this app."
         },

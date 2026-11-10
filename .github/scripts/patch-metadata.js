@@ -389,8 +389,13 @@ function optionEnableArgs(list, appId, choices, base, options, warn) {
     }
     extra.push('-e', name);
   }
-  return [...base, ...extra].flatMap((arg, i) => (i % 2 === 1 && Object.hasOwn(options, arg)
+  const args = [...base, ...extra].flatMap((arg, i) => (i % 2 === 1 && Object.hasOwn(options, arg)
     ? [arg, ...Object.entries(options[arg]).map(([key, value]) => optionArg(key, value))] : [arg]));
+  // patch_apk.sh splits the arguments on NUL, so one inside an argument would
+  // turn into extra patcher flags. validate-config rejects it; this is the backstop.
+  const bad = args.find((arg) => arg.includes('\0'));
+  if (bad !== undefined) throw new Error(`Patch settings argument contains NUL: ${JSON.stringify(bad)}`);
+  return args;
 }
 function enableArgs(list, appId, choices, { honorOptIns = false, options = {}, warn = () => {} } = {}) {
   const base = baseEnableArgs(list, appId, choices, honorOptIns);
