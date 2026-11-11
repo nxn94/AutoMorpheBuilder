@@ -44,7 +44,7 @@ Each app gets its own GitHub Release and tag, containing that app's patched APK,
 
 ## Pruning (`KEEP_COUNT`)
 
-After publishing, `prune_old_releases.sh` caps each app's release history at `KEEP_COUNT` (default `2`). Older releases + their tags are deleted via `gh release delete --cleanup-tag`. The freshly-created/-updated release is always the newest of its app's set, so it survives the prune.
+After publishing, `prune_old_releases.sh` caps each app's release history at `KEEP_COUNT` (default `2`). Releases built longest ago + their tags are deleted via `gh release delete --cleanup-tag`. A rebuild of the same version replaces that release's files but keeps its first publish date, so "newest" means last built: the `build-inputs.json` upload time (else the newest file, else the publish date). The freshly-created/-updated release is therefore always the newest of its app's set, so it survives the prune.
 
 Override the count per workflow run by setting the `KEEP_COUNT` environment variable in the workflow file (default `2`). Failures on a single tag (race / already gone) are warnings only — the list call is the hard gate so the cleanup never silently skips.
 

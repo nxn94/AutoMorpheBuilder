@@ -5,7 +5,7 @@
  * prune-old-releases.js
  *
  * After a successful build, prune GitHub Releases so each app keeps only
- * the N most recently published releases (default N=2). Older releases
+ * the N most recently built releases (default N=2). Older releases
  * and their underlying git tags are deleted via `gh release delete
  * --cleanup-tag`. Runs as the last step in the create-release job so a
  * fresh publish becomes the newest and the rest fall out of the
@@ -23,10 +23,13 @@
  * starting with `youtube-music-…`. App names with special characters
  * are regex-escaped before constructing the pattern.
  *
- * Selection rule: for each app's matching releases, sort by publishedAt
- * descending (newest first), keep the first KEEP_COUNT, delete the rest.
- * Ties on publishedAt (rare; same-second re-publishes) break on tagName
- * descending so the deletion order is deterministic.
+ * Selection rule: for each app's matching releases, sort by when each was
+ * last built, newest first, keep the first KEEP_COUNT, delete the rest.
+ * A rebuild of the same version replaces the release's files in place, and
+ * GitHub keeps its first publishedAt, so the last build is read from
+ * build-inputs.json (uploaded last), or else the newest file, or else
+ * publishedAt. Ties break on tagName descending so the deletion order is
+ * deterministic.
  *
  * Idempotent: re-running with the same release list and keep-count is a
  * no-op. A missing tag (already deleted by another run) is logged as
@@ -49,9 +52,25 @@ const RAW_KEEP_COUNT = process.env.KEEP_COUNT || '2';
 const GH_TOKEN = process.env.GH_TOKEN || '';
 
 /**
+ * Pure: when a release was last built, as an RFC3339 string ('' if unknown).
+ * A rebuild of the same version replaces the release's files but keeps its
+ * first publishedAt. build-inputs.json is uploaded last, so a rebuild that
+ * stopped part-way still counts from the build before it. A draft (no
+ * publishedAt) stays the oldest, as before.
+ */
+function lastBuilt(release) {
+  const published = release.publishedAt || '';
+  if (!published) return '';
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  const inputs = assets.find((a) => a && a.name === 'build-inputs.json' && a.updatedAt);
+  const times = inputs ? [inputs.updatedAt] : assets.map((a) => (a && a.updatedAt) || '');
+  return [published, ...times].reduce((max, t) => (t > max ? t : max), '');
+}
+
+/**
  * Pure: select which tags to delete for one app.
  *
- * releases   array of { tagName, publishedAt }
+ * releases   array of { tagName, publishedAt, assets?: [{ name, updatedAt }] }
  * appName    the app's short name from config.json patch_repos[*].name
  * keepCount  number of newest releases to retain
  *
@@ -66,12 +85,12 @@ function selectTagsToDelete(releases, appName, keepCount) {
   const matches = releases
     .filter((r) => typeof r.tagName === 'string' && prefix.test(r.tagName))
     // RFC3339 lexicographic sort = chronological sort. Falls back to
-    // tagName descending so two releases published in the same second
+    // tagName descending so two releases built in the same second
     // get a deterministic order (cheaper than sorting on unstable
     // keys).
     .sort((a, b) => {
-      const ta = a.publishedAt || '';
-      const tb = b.publishedAt || '';
+      const ta = lastBuilt(a);
+      const tb = lastBuilt(b);
       if (ta !== tb) return tb.localeCompare(ta); // newest first
       return b.tagName.localeCompare(a.tagName);
     });
@@ -82,22 +101,21 @@ function selectTagsToDelete(releases, appName, keepCount) {
 }
 
 /**
- * Fetch every release in the repo with its publish time. One API call.
- * 1000 is a generous ceiling: with KEEP_COUNT=2 and the current 7 apps
- * we cap at 14 retained + a few dozen stale candidates at any moment,
- * and 1000 leaves headroom for future apps without re-tuning.
+ * Fetch every release in the repo with its publish time and its files'
+ * upload times (`gh release list` has no file times). One line of JSON per
+ * release, every page.
  */
 function listReleases() {
-  const json = execFileSync(
+  const out = execFileSync(
     'gh',
-    ['release', 'list', '--json', 'tagName,publishedAt', '--limit', '1000'],
-    { encoding: 'utf8' },
+    ['api', '--paginate', 'repos/{owner}/{repo}/releases?per_page=100', '--jq',
+      '.[] | {tagName: .tag_name, publishedAt: .published_at, assets: [.assets[]? | {name, updatedAt: .updated_at}]} | tojson'],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
   try {
-    const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? parsed : [];
+    return out.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line));
   } catch (e) {
-    throw new Error(`Failed to parse gh release list output as JSON: ${e.message}`, { cause: e });
+    throw new Error(`Failed to parse the release list from gh api: ${e.message}`, { cause: e });
   }
 }
 
@@ -175,4 +193,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { selectTagsToDelete, listReleases, deleteRelease, main };
+module.exports = { lastBuilt, selectTagsToDelete, listReleases, deleteRelease, main };

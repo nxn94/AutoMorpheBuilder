@@ -2,11 +2,11 @@
 'use strict';
 
 // Tests for the pure `selectTagsToDelete` helper in prune-old-releases.js.
-// We exercise the selection logic only; the env-dependent
-// `gh release list` / `gh release delete` calls are integration-tested
-// by the workflow itself.
+// We exercise the selection logic and the release-list parsing; the
+// `gh release delete` calls are integration-tested by the workflow itself.
 
-const { selectTagsToDelete } = require('../prune-old-releases');
+const childProcess = require('node:child_process');
+const { lastBuilt, selectTagsToDelete } = require('../prune-old-releases');
 
 const makeRelease = (tagName, publishedAt) => ({ tagName, publishedAt });
 
@@ -168,5 +168,58 @@ describe('selectTagsToDelete', () => {
 
   test('returns an empty array for an empty release list', () => {
     expect(selectTagsToDelete([], 'youtube', 2)).toEqual([]);
+  });
+});
+
+describe('rebuilt releases', () => {
+  const rebuilt = (tagName, publishedAt, ...files) => ({
+    tagName, publishedAt, assets: files.map(([name, updatedAt]) => ({ name, updatedAt })),
+  });
+
+  test('a release rebuilt in place counts from its last build, not its first publish', () => {
+    const releases = [
+      rebuilt('gboard-v18.6-v4.3.0', '2026-11-12T10:00:00Z', ['build-inputs.json', '2026-11-12T10:00:05Z']),
+      // First published earliest, but rebuilt last night: the one in use until 18.6.
+      rebuilt('gboard-v18.5-release-v4.2.0', '2026-11-06T14:03:32Z',
+        ['gboard.apk', '2026-11-10T22:54:54Z'], ['build-inputs.json', '2026-11-10T22:54:57Z']),
+      rebuilt('gboard-v18.5-v4.2.0', '2026-11-06T22:29:06Z', ['build-inputs.json', '2026-11-06T22:29:08Z']),
+    ];
+    expect(selectTagsToDelete(releases, 'gboard', 2)).toEqual(['gboard-v18.5-v4.2.0']);
+  });
+
+  test('a rebuild that stopped part-way counts from the build before it', () => {
+    expect(lastBuilt(rebuilt('a-v1-v1', '2026-11-06T14:00:00Z',
+      ['a.apk', '2026-11-11T09:00:00Z'], ['build-inputs.json', '2026-11-10T22:00:00Z']))).toBe('2026-11-10T22:00:00Z');
+  });
+
+  test('without build-inputs.json the newest file counts, then publishedAt', () => {
+    expect(lastBuilt(rebuilt('a-v1-v1', '2026-11-06T14:00:00Z', ['a.apk', '2026-11-08T09:00:00Z']))).toBe('2026-11-08T09:00:00Z');
+    expect(lastBuilt(rebuilt('a-v1-v1', '2026-11-06T14:00:00Z'))).toBe('2026-11-06T14:00:00Z');
+    expect(lastBuilt({ tagName: 'a-v1-v1', publishedAt: null, assets: null })).toBe('');
+  });
+
+  test('a draft stays the oldest even with newer files', () => {
+    expect(lastBuilt(rebuilt('a-v1-v1', null, ['build-inputs.json', '2026-11-12T10:00:00Z']))).toBe('');
+  });
+});
+
+describe('listReleases', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('reads every page from gh api, one release per line', () => {
+    const lines = [
+      { tagName: 'a-v1-v1', publishedAt: '2026-11-06T14:00:00Z', assets: [{ name: 'build-inputs.json', updatedAt: '2026-11-10T22:00:00Z' }] },
+      { tagName: 'a-v2-v1', publishedAt: null, assets: [] },
+    ].map((r) => JSON.stringify(r)).join('\n');
+    const exec = jest.spyOn(childProcess, 'execFileSync').mockReturnValue(`${lines}\n`);
+    jest.resetModules();
+    const { listReleases } = require('../prune-old-releases');
+    expect(listReleases()).toEqual([
+      { tagName: 'a-v1-v1', publishedAt: '2026-11-06T14:00:00Z', assets: [{ name: 'build-inputs.json', updatedAt: '2026-11-10T22:00:00Z' }] },
+      { tagName: 'a-v2-v1', publishedAt: null, assets: [] },
+    ]);
+    const [cmd, args] = exec.mock.calls[0];
+    expect(cmd).toBe('gh');
+    expect(args.slice(0, 3)).toEqual(['api', '--paginate', 'repos/{owner}/{repo}/releases?per_page=100']);
   });
 });

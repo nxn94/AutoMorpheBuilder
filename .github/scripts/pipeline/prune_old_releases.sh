@@ -5,7 +5,7 @@
 # style so the pipeline stays uniform.
 #
 # See .github/scripts/prune-old-releases.js for the actual logic. The
-# Node.js script does the env-dependent `gh release list` /
+# Node.js script does the env-dependent `gh api` release list /
 # `gh release delete` calls and the pure keep/delete decision; this
 # wrapper just validates env vars and hands off.
 #
