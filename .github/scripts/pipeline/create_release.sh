@@ -160,8 +160,11 @@ for app_name in "${APPS[@]}"; do
   fi
 
   provenance="$APKS_DIR/build-inputs.json"
-  jq -n --arg fingerprint "$digest" --arg cli "$CLI_VERSION" --arg tag "$TAG" \
-    '{fingerprint: $fingerprint, cliVersion: $cli, releaseTag: $tag}' > "$provenance"
+  # The commit built from. The tag doesn't reliably point at it: a rebuild
+  # keeps the existing tag, and a new tag is made at the default branch's head.
+  jq -n --arg fingerprint "$digest" --arg cli "$CLI_VERSION" --arg tag "$TAG" --arg commit "${GITHUB_SHA:-}" \
+    '{fingerprint: $fingerprint, cliVersion: $cli, releaseTag: $tag}
+     + (if $commit == "" then {} else {commit: $commit} end)' > "$provenance"
   with_retry 5 3 gh release upload "$TAG" "$provenance" --clobber
   gh release edit "$TAG" --title "$TITLE" --notes "$RELEASE_NOTES"
   log "::notice::Published release: ${TAG}"

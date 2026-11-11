@@ -76,7 +76,10 @@ If a release is marked as a prerelease, enable "Include prereleases" in Obtainiu
 
 Scheduled builds skip an app only when the expected tag contains its APK,
 `SHA256SUMS`, and `build-inputs.json`, and the release notes contain a matching
-build-input fingerprint. The fingerprint includes the app configuration, patch
+build-input fingerprint. `build-inputs.json` records that fingerprint, the CLI
+version and the commit built from (`commit`, missing on older releases). The
+tag doesn't reliably point at that commit: a rebuild keeps the existing tag,
+and a new tag is made at the default branch's head. The fingerprint includes the app configuration, patch
 Boolean selections, preferred architecture, CLI configuration/version, dependency lockfile,
 output and validation source (including runtime JSON policies), the build workflow,
 the `morphe-desktop` and APKEditor pins, and `REBUILD_EPOCH` in
