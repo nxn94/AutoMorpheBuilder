@@ -225,9 +225,13 @@ describe('pipeline integration regressions', () => {
     command('gh', 'node -e \'require("node:fs").appendFileSync(process.env.CALLS, JSON.stringify(process.argv.slice(1))+"\\n")\' "$@"');
     const result = spawnSync('bash', [path.join(root, '.github/scripts/pipeline/create_release.sh')], {
       encoding: 'utf8', env: environment({ CONFIG_FILE: configFile, APKS_DIR: apks,
-        CLI_VERSION: 'v1', CLI_BRANCH: 'main', REPO_VERSIONS: JSON.stringify(versions), CALLS: calls }),
+        CLI_VERSION: 'v1', CLI_BRANCH: 'main', REPO_VERSIONS: JSON.stringify(versions), CALLS: calls,
+        GITHUB_SHA: 'c'.repeat(40) }),
     });
     expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(apks, 'build-inputs.json'), 'utf8'))).toMatchObject({
+      cliVersion: 'v1', releaseTag: 'dev-app-v24.3-v3-dev.1', commit: 'c'.repeat(40),
+    });
     const commands = fs.readFileSync(calls, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
     const uploads = commands.filter((args) => args[1] === 'upload');
     expect(uploads.map((args) => path.basename(args[3]))).toEqual([filename, 'SHA256SUMS', 'build-inputs.json']);
@@ -235,6 +239,21 @@ describe('pipeline integration regressions', () => {
     expect(commands.at(-1)[1]).toBe('edit');
     expect(commands.at(-1).at(-1)).toContain('<!-- build-input:');
     expect(fs.readFileSync(path.join(apks, 'SHA256SUMS'), 'utf8')).toContain(filename);
+  });
+
+  test('leaves the commit out of build-inputs.json when GITHUB_SHA is unset', () => {
+    const apks = path.join(dir, 'apks');
+    fs.mkdirSync(apks);
+    fs.writeFileSync(path.join(apks, 'dev-app-v24.3-v3-dev.1.apk'), 'signed fixture');
+    const configFile = path.join(dir, 'config.json');
+    fs.writeFileSync(configFile, JSON.stringify(config));
+    command('gh', 'exit 0');
+    const result = spawnSync('bash', [path.join(root, '.github/scripts/pipeline/create_release.sh')], {
+      encoding: 'utf8', env: environment({ CONFIG_FILE: configFile, APKS_DIR: apks,
+        CLI_VERSION: 'v1', CLI_BRANCH: 'main', REPO_VERSIONS: JSON.stringify(versions), GITHUB_SHA: '' }),
+    });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(apks, 'build-inputs.json'), 'utf8'))).not.toHaveProperty('commit');
   });
 });
 
