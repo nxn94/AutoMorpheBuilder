@@ -132,6 +132,21 @@ describe('downloadExactBuild', () => {
     await expect(downloadExactBuild({ ...common, codes: [7, 8], download, budgetMs: 20 })).resolves.toBeNull();
     expect(download).toHaveBeenCalledTimes(1);
   });
+
+  test('a cancel that fires before the end time still stops further candidates', async () => {
+    const controller = new AbortController();
+    const timeout = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+    try {
+      const download = jest.fn(async (_url, { signal }) => {
+        if (!signal.aborted) controller.abort(new Error('cancelled'));
+        throw signal.reason;
+      });
+      await expect(downloadExactBuild({ ...common, codes: [7, 8], download, budgetMs: 5000 })).resolves.toBeNull();
+      expect(download).toHaveBeenCalledTimes(1);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
 });
 
 describe('existing checks honour the time limit', () => {
