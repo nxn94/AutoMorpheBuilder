@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { downloadWithUrl } = require('../unified-downloader');
-const { codesFromPatchList, patchListCodes, exactBuildUrls, assertExactBuild, downloadExactBuild } = require('../../../src/download/apkpure-exact');
+const { codesFromPatchList, targetsForApp, patchListCodes, exactBuildUrls, assertExactBuild, downloadExactBuild } = require('../../../src/download/apkpure-exact');
 
 const list = {
   patches: [{
@@ -20,6 +20,30 @@ test('preferred CPU first; other apps, versions and bad values ignored', () => {
   expect(codesFromPatchList(list, 'com.app', '1.2', 'arm64-v8a')).toEqual([20, 10]);
   expect(codesFromPatchList(list, 'com.app', '1.3', 'arm64-v8a')).toEqual([]);
   expect(codesFromPatchList(null, 'com.app', '1.2', 'arm64-v8a')).toEqual([]);
+});
+
+// Excerpt of SysAdminDoc/Hushfacebook's patches-list.json (v0.22.0): the packages are
+// an object of version lists, and the targets (with their build numbers) are in compatibility[].
+const hushfacebook = {
+  version: 'v0.22.0',
+  patches: [{
+    name: 'AMOLED black theme',
+    compatiblePackages: { 'com.facebook.katana': ['586.0.0.52.53'] },
+    compatibility: [{
+      name: 'Facebook',
+      packageName: 'com.facebook.katana',
+      description: null,
+      targets: [{ version: '586.0.0.52.53', experimental: false, versionCodes: { ARM64_V8A: 476217123, ARMEABI_V7A: 476217122 } }],
+    }],
+  }],
+};
+
+test("a patch list with compatibility[].targets (Hushfacebook's layout) gives its build numbers", () => {
+  expect(codesFromPatchList(hushfacebook, 'com.facebook.katana', '586.0.0.52.53', 'arm64-v8a')).toEqual([476217123, 476217122]);
+  expect(codesFromPatchList(hushfacebook, 'com.facebook.katana', '586.0.0.52.53', 'armeabi-v7a')).toEqual([476217122, 476217123]);
+  expect(codesFromPatchList(hushfacebook, 'com.facebook.katana', '587.0.0.39.55', 'arm64-v8a')).toEqual([]);
+  expect(codesFromPatchList(hushfacebook, 'com.other', '586.0.0.52.53', 'arm64-v8a')).toEqual([]);
+  expect(targetsForApp(hushfacebook, 'com.facebook.katana')).toHaveLength(1);
 });
 
 test('a missing or broken patch list gives no build numbers', () => {
@@ -84,6 +108,15 @@ describe('assertExactBuild', () => {
 describe('downloadExactBuild', () => {
   const common = { appId: 'com.app', version: '1.2', partialPath: path.join(os.tmpdir(), 'exact-none.apk'), isBundle: () => false };
   const exec = (code) => () => `package: name='com.app' versionCode='${code}'\n`;
+
+  test('a verify hook that throws rejects the candidate and the next is tried', async () => {
+    const download = jest.fn(async (url) => ({ path: url.includes('=7') ? 'seven' : 'eight' }));
+    const verify = jest.fn((result) => { if (result.path === 'seven') throw new Error('too old'); });
+    const execFileSyncImpl = (_tool, args) => exec(args[2] === 'seven' ? 7 : 8)();
+    const found = await downloadExactBuild({ ...common, codes: [7, 8], download, execFileSyncImpl, verify });
+    expect(found.url).toBe('https://d.apkpure.com/b/XAPK/com.app?versionCode=8');
+    expect(verify).toHaveBeenCalledTimes(3); // XAPK and APK of build 7 both rejected, then XAPK of build 8
+  });
 
   test('a wrong build is rejected and the next candidate tried', async () => {
     const download = jest.fn(async (url) => ({ path: url.includes('=7') ? 'seven' : 'eight' }));
