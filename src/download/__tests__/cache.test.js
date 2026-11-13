@@ -8,6 +8,7 @@ const {
   DEFAULT_CACHE_DIR,
   getCachedUrl,
   saveCachedUrl,
+  removeCachedUrl,
   cleanupOldUrls,
 } = require('../cache');
 
@@ -180,5 +181,28 @@ describe('download/cache', () => {
       expect(getCachedUrl('com.x', '1.0.0', tmpCache)).toBeTruthy();
       expect(getCachedUrl('com.x', '1.0.1', tmpCache)).toBeTruthy();
     });
+  });
+});
+
+describe('download/cache removeCachedUrl', () => {
+  let dir;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'url-cache-rm-')); });
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+  test('removes the entry; a later lookup misses', () => {
+    saveCachedUrl('com.app', '1.2', 'https://x.test/a', 'apkeep', dir);
+    expect(removeCachedUrl('com.app', '1.2', undefined, dir)).toBe(true);
+    expect(getCachedUrl('com.app', '1.2', dir)).toBeNull();
+  });
+
+  test('with a url, removes only an entry holding exactly that url', () => {
+    saveCachedUrl('com.app', '1.2', 'https://x.test/a', 'apkeep', dir);
+    expect(removeCachedUrl('com.app', '1.2', 'https://x.test/other', dir)).toBe(false);
+    expect(getCachedUrl('com.app', '1.2', dir).url).toBe('https://x.test/a');
+    expect(removeCachedUrl('com.app', '1.2', 'https://x.test/a', dir)).toBe(true);
+  });
+
+  test('a missing entry is not an error', () => {
+    expect(removeCachedUrl('com.app', '9.9', undefined, dir)).toBe(false);
   });
 });

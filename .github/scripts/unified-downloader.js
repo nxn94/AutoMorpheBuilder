@@ -40,6 +40,7 @@ const { collectCookies } = require('../../src/download/cookies');
 const {
   getCachedUrl,
   saveCachedUrl,
+  removeCachedUrl,
   cleanupOldUrls,
 } = require('../../src/download/cache');
 const { loadConfig, loadExistingUrl } = require('../../src/download/config');
@@ -49,6 +50,7 @@ const { findApkFile } = require('../../src/download/scan');
 const { pickSmallestMatchingVariant, versionCodeOf } = require('../../src/download/apkeep-variant');
 const { inferReleaseUrl } = require('../../src/download/release-slug');
 const apkpureExact = require('../../src/download/apkpure-exact');
+const minSdkLib = require('../../src/download/min-sdk');
 
 // Source priority for the resolver fallback chain. Higher = preferred.
 // This is the single source of truth for the order in which APK sources
@@ -86,6 +88,8 @@ const TIMEOUTS = {
   sourceResolve:      60_000,   // per-source timeout for parallelResolveSources.
   commandDefault:    120_000,   // runCommand fallback when no override given.
   playwrightDownload:120_000,   // page.waitForEvent('download') ceiling.
+  totalDownload:     540_000,   // download(): best effort, no new step after this once a build was rejected (the caller kills at 600 s).
+  minStepRemaining:   30_000,   // ...and none is started with less than this left.
 };
 
 /**
@@ -1501,17 +1505,89 @@ async function download(packageId, version, outputDir, opts = {}) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
+  // Minimum Android the patches support (0 = no check). A file built for an
+  // older Android is dropped here, minutes before the patcher would fail on it.
+  let config = {};
+  try { config = loadConfig() || {}; } catch { /* default */ }
+  const minSdk = opts.minSdk !== undefined ? opts.minSdk : minSdkLib.minSdkFromConfig(config, packageId);
+  const rejectedSdks = [];
+  // URLs already turned away, so no later path downloads the same build again.
+  const rejectedUrls = new Set();
+  // The caller kills this process at 600 s; stop starting new steps well
+  // before that so a "Wrong build" message can still be reported.
+  const startedAt = Date.now();
+  const totalBudgetMs = opts.totalBudgetMs !== undefined ? opts.totalBudgetMs : TIMEOUTS.totalDownload;
+  const remainingMs = () => Math.max(0, totalBudgetMs - (Date.now() - startedAt));
+  /**
+   * True if the file the source produced may be used. A file below the
+   * floor is deleted and, if its URL came from the URL cache, uncached;
+   * a minSdk that can't be read is not a reason to reject.
+   */
+  function acceptMinSdk(result, source, { url, fromCache = false, deadline } = {}) {
+    if (!minSdk) return true;
+    const file = result && (result.path || result.filepath || result.file);
+    if (!file) return true;
+    let sdk = null;
+    try {
+      sdk = opts.readMinSdkImpl
+        ? opts.readMinSdkImpl(file)
+        : minSdkLib.readMinSdk(file, {
+          isBundle: detectApkShape(file) === 'bundle',
+          execFileSyncImpl: opts.execFileSyncImpl,
+          deadline,
+        });
+    } catch (e) {
+      console.error(`[min-sdk] ${source}: could not read the minimum Android (${e.message})`);
+    }
+    if (sdk == null) {
+      console.error(`[min-sdk] ${source}: minimum Android unknown; keeping the file (the patcher will judge it)`);
+      return true;
+    }
+    if (minSdkLib.checkMinSdk(sdk, minSdk).ok) return true;
+    console.error(`[min-sdk] ${source}: build is for Android API ${sdk}+, the patches need API ${minSdk}+`);
+    rejectedSdks.push(sdk);
+    const rejectedUrl = url || result.url;
+    if (rejectedUrl) rejectedUrls.add(rejectedUrl);
+    try { fs.rmSync(file, { force: true }); } catch { /* best-effort: the next source overwrites it */ }
+    if (fromCache && url) removeCachedUrl(packageId, version, url, cacheDir);
+    return false;
+  }
+  // The error to end with: a clear "wrong build" when files were turned away
+  // for their Android version, else the last source's own error.
+  function finalError(lastError) {
+    if (!rejectedSdks.length) return lastError;
+    // Nothing was accepted, so nothing may stay behind in the output folder.
+    try { fs.rmSync(path.join(outputDir, `${packageId}_${version}.apk`), { force: true }); } catch { /* best-effort */ }
+    return new Error(minSdkLib.wrongBuildMessage({
+      appId: packageId,
+      version,
+      rejectedSdks,
+      floor: minSdk,
+      arch: config.preferred_arch || 'arm64-v8a',
+    }));
+  }
+
+  // Once files have been turned away and the time is up, end with the clear
+  // error (called before each step, outside any try, so it propagates).
+  function checkBudget(needMs = TIMEOUTS.minStepRemaining) {
+    if (rejectedSdks.length && remainingMs() <= needMs) {
+      console.error('[min-sdk] Time limit reached after rejecting older builds; stopping');
+      throw finalError();
+    }
+  }
+
   // Google Play first; preserve the existing URL/resolver chain on any failure.
   try {
-    return await downloadWithGoopdl(packageId, version, outputDir, { resolveVersionCode: resolveGooglePlayVersionCode, ...opts });
+    const played = await downloadWithGoopdl(packageId, version, outputDir, { resolveVersionCode: resolveGooglePlayVersionCode, ...opts });
+    if (acceptMinSdk(played, 'goopdl')) return played;
   } catch (error) {
     console.error(`[goopdl] ${error.message}; trying existing sources`);
   }
 
   // The exact build the patch list names, before any cached or listed URL.
-  let exactArch = 'arm64-v8a';
-  try { exactArch = loadConfig().preferred_arch || exactArch; } catch { /* default */ }
+  const exactArch = config.preferred_arch || 'arm64-v8a';
   const exactCodes = apkpureExact.patchListCodes(packageId, version, exactArch);
+  checkBudget();
   if (exactCodes.length) {
     const exact = await apkpureExact.downloadExactBuild({
       appId: packageId,
@@ -1522,6 +1598,10 @@ async function download(packageId, version, outputDir, opts = {}) {
       execFileSyncImpl: opts.execFileSyncImpl,
       isBundle: (file, timeoutMs) => detectApkShape(file, { timeoutMs }) === 'bundle',
       download: (url, extra) => downloadWithUrl(url, outputDir, packageId, version, { ...opts, ...extra }),
+      // Throwing sends the exact-build loop on to its next candidate.
+      verify: (result, deadline) => {
+        if (!acceptMinSdk(result, 'apkpure-exact', { deadline })) throw new Error('built for an older Android than the patches support');
+      },
     });
     if (exact) {
       remember(exact.url, 'apkpure-exact');
@@ -1530,16 +1610,19 @@ async function download(packageId, version, outputDir, opts = {}) {
   }
 
   // Step 1: Check URL cache
+  checkBudget();
   const cachedUrl = getCachedUrl(packageId, version, cacheDir);
-  if (cachedUrl) {
+  if (cachedUrl && !rejectedUrls.has(cachedUrl.url)) {
     console.error(`[download] Trying cache for ${packageId} v${version}`);
     try {
       const isValid = await verifyUrl(cachedUrl.url);
       if (isValid) {
         const result = await downloadWithUrl(cachedUrl.url, outputDir, packageId, version, opts);
-        // Update cache with incremented download count
-        remember(cachedUrl.url, cachedUrl.source);
-        return result;
+        if (acceptMinSdk(result, 'url-cache', { url: cachedUrl.url, fromCache: true })) {
+          // Update cache with incremented download count
+          remember(cachedUrl.url, cachedUrl.source);
+          return result;
+        }
       }
     } catch (e) {
       console.error(`[download] Cache URL invalid: ${e.message}`);
@@ -1547,16 +1630,19 @@ async function download(packageId, version, outputDir, opts = {}) {
   }
 
   // Step 2: Check patches.json for existing URL
+  checkBudget();
   const existingUrl = loadExistingUrl(packageId, version);
-  if (existingUrl) {
+  if (existingUrl && !rejectedUrls.has(existingUrl)) {
     console.error(`[download] Trying patches.json URL for ${packageId} v${version}`);
     try {
       const isValid = await verifyUrl(existingUrl);
       if (isValid) {
         const result = await downloadWithUrl(existingUrl, outputDir, packageId, version, opts);
-        // Save to our URL cache
-        remember(existingUrl, 'patches.json');
-        return result;
+        if (acceptMinSdk(result, 'patches.json', { url: existingUrl })) {
+          // Save to our URL cache
+          remember(existingUrl, 'patches.json');
+          return result;
+        }
       }
     } catch (e) {
       console.error(`[download] patches.json URL invalid: ${e.message}`);
@@ -1564,13 +1650,20 @@ async function download(packageId, version, outputDir, opts = {}) {
   }
 
   // Step 3: Try parallel resolution
+  checkBudget();
   console.error(`[download] Starting parallel resolution for ${packageId} v${version}`);
   try {
     const resolved = await parallelResolveSources(packageId, version, opts);
-    const result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
-    // Save to URL cache
-    remember(resolved.url, resolved.source);
-    return result;
+    if (!rejectedUrls.has(resolved.url)) {
+      const result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
+      if (acceptMinSdk(result, resolved.source, { url: resolved.url })) {
+        // Save to URL cache
+        remember(resolved.url, resolved.source);
+        return result;
+      }
+    } else {
+      console.error(`[download] ${resolved.source} gave a URL that was already rejected; not downloading it again`);
+    }
   } catch (e) {
     console.error(`[download] Parallel resolution failed: ${e.message}`);
   }
@@ -1586,36 +1679,47 @@ async function download(packageId, version, outputDir, opts = {}) {
   // driver loop yet (the parallel pass already finished, so this is a
   // pure tail of the pipeline).
   // Try apkeep
+  checkBudget();
   console.error(`[apkeep] Attempting download for ${packageId} v${version}`);
   try {
     const result = await downloadWithApkeep(packageId, version, outputDir);
     const url = result.url || `apkeep:${packageId}@${version}`;
-    remember(url, 'apkeep');
-    return result;
+    if (acceptMinSdk(result, 'apkeep')) {
+      remember(url, 'apkeep');
+      return result;
+    }
   } catch (e) {
     console.error(`[apkeep] Failed: ${e.message}`);
   }
 
   // Try APKMirror API
+  checkBudget();
   console.error(`[apkmirror-api] Attempting download for ${packageId} v${version} via API`);
   try {
     const result = await downloadWithApkmirrorApi(packageId, version, outputDir);
-    remember(result.url, 'apkmirror-api');
-    return result;
+    if (acceptMinSdk(result, 'apkmirror-api')) {
+      remember(result.url, 'apkmirror-api');
+      return result;
+    }
   } catch (e) {
     console.error(`[apkmirror-api] Failed: ${e.message}`);
   }
 
   // Try APKMirror Playwright - last resort
+  checkBudget();
   console.error(`[apkmirror] Starting APKMirror Playwright fallback...`);
+  let lastError;
   try {
     const result = await downloadWithApkmirror(packageId, version, outputDir);
-    remember(result.url, 'apkmirror');
-    return result;
+    if (acceptMinSdk(result, 'apkmirror')) {
+      remember(result.url, 'apkmirror');
+      return result;
+    }
   } catch (e) {
     console.error(`[apkmirror] Failed: ${e.message}`);
-    throw e;
+    lastError = e;
   }
+  throw finalError(lastError || new Error(`No source produced a usable ${packageId} ${version}`));
 }
 
 /**
