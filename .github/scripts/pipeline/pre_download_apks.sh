@@ -123,7 +123,7 @@ download_for() {
   if [ -s "$stderr_log" ]; then
     log_warn "  [$pkg]   stderr:"
     sed 's/^/    /' "$stderr_log" \
-      | grep -E '^\s+\[(apkeep-resolve|apkmirror-api-resolve|apkmirror-resolve|parallel-resolve|apkeep|apkmirror-api|apkmirror-pw|apkmirror|download)\] ' \
+      | grep -E '^\s+\[(apkeep-resolve|apkmirror-api-resolve|apkmirror-resolve|parallel-resolve|apkeep|apkmirror-api|apkmirror-pw|apkmirror|download|min-sdk)\] ' \
       | while IFS= read -r line; do
           log_warn "  [$pkg]   ${line}"
         done
