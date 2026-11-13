@@ -47,7 +47,7 @@ const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
-const { pickSmallestMatchingVariant, versionCodeOf } = require('../../src/download/apkeep-variant');
+const { pickSmallestMatchingVariant, remainingMatchingVariants, variantKey, buildCodeOf, exactBuildOf, versionCodeOf } = require('../../src/download/apkeep-variant');
 const { inferReleaseUrl } = require('../../src/download/release-slug');
 const apkpureExact = require('../../src/download/apkpure-exact');
 const minSdkLib = require('../../src/download/min-sdk');
@@ -88,6 +88,7 @@ const TIMEOUTS = {
   sourceResolve:      60_000,   // per-source timeout for parallelResolveSources.
   commandDefault:    120_000,   // runCommand fallback when no override given.
   playwrightDownload:120_000,   // page.waitForEvent('download') ceiling.
+  apkpureVariants:   150_000,   // all of APKPure's other variants of one version, together.
   totalDownload:     540_000,   // download(): best effort, no new step after this once a build was rejected (the caller kills at 600 s).
   minStepRemaining:   30_000,   // ...and none is started with less than this left.
 };
@@ -381,13 +382,13 @@ async function verifyUrl(url) {
  * @param {typeof fetch} [fetchImpl]
  * @returns {Promise<string>}
  */
-async function fetchApkpureVersionListing(packageId, fetchImpl = fetch) {
+async function fetchApkpureVersionListing(packageId, fetchImpl = fetch, signal) {
   const apiUrl = `https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=${encodeURIComponent(packageId)}`;
   // codeql[js/file-access-to-http] reason: apiUrl is the public APKPure
   // protobuf endpoint; only the response text is returned, never
   // written to disk.
   const response = await fetchImpl(apiUrl, {
-    signal: AbortSignal.timeout(TIMEOUTS.sourceResolve),
+    signal: signal ? AbortSignal.any([AbortSignal.timeout(TIMEOUTS.sourceResolve), signal]) : AbortSignal.timeout(TIMEOUTS.sourceResolve),
     headers: {
       'User-Agent': 'Mozilla/5.0',
       'x-cv': '3172501',
@@ -1478,6 +1479,51 @@ async function resolveApkmirrorUrl(apkmirrorPath, version) {
 
 
 /**
+ * After APKPure's smallest-first variant was turned away, try the other
+ * XAPK variants it lists for the exact version, smallest first, each with
+ * the usual download checks plus the caller's accept check (minimum Android).
+ * All of them share one time limit.
+ *
+ * @returns {Promise<{ url: string, result: object }|null>} The first variant
+ *   that passes, or null.
+ */
+async function tryOtherApkpureVariants(packageId, version, outputDir, tried, opts, accept, remainingMs = Infinity) {
+  // One limit for the listing fetch and every download and check after it.
+  const deadline = apkpureExact.createDeadline(Math.max(1, Math.min(opts.apkpureVariantsBudgetMs || TIMEOUTS.apkpureVariants, remainingMs)));
+  let urls;
+  try {
+    urls = remainingMatchingVariants(await fetchApkpureVersionListing(packageId, opts.fetchImpl, deadline.signal), version, tried);
+  } catch (e) {
+    console.error(`[apkpure-variants] Could not list other variants: ${e.message}`);
+    return null;
+  }
+  console.error(`[apkpure-variants] ${urls.length} other variant(s) of ${packageId}@${version} to try`);
+  for (const url of urls) {
+    if (deadline.expired()) break;
+    try {
+      const result = await downloadWithUrl(url, outputDir, packageId, version, {
+        ...opts, signal: deadline.signal, timeoutMs: deadline.timeoutMs, expired: deadline.expired,
+      });
+      if (accept(result, 'apkeep', { url, deadline })) {
+        // A file accepted after the time ran out may have been kept only
+        // because its checks were cut short; don't trust it.
+        if (deadline.expired()) {
+          console.error('[apkpure-variants] Time limit reached while checking the file; discarding it');
+          try { fs.rmSync(path.join(outputDir, `${packageId}_${version}.apk`), { force: true }); } catch { /* best-effort */ }
+          return null;
+        }
+        return { url, result };
+      }
+    } catch (e) {
+      console.error(`[apkpure-variants] ${e.message}`);
+      // An aborted or failed transfer can leave a partial file behind.
+      try { fs.rmSync(path.join(outputDir, `${packageId}_${version}.apk`), { force: true }); } catch { /* best-effort */ }
+    }
+  }
+  return null;
+}
+
+/**
  * Main download function with fallback chain
  */
 /**
@@ -1513,6 +1559,7 @@ async function download(packageId, version, outputDir, opts = {}) {
   const rejectedSdks = [];
   // URLs already turned away, so no later path downloads the same build again.
   const rejectedUrls = new Set();
+  const wasRejected = (url) => rejectedUrls.has(variantKey(url)) || rejectedUrls.has(`build:${buildCodeOf(url)}`);
   // The caller kills this process at 600 s; stop starting new steps well
   // before that so a "Wrong build" message can still be reported.
   const startedAt = Date.now();
@@ -1547,7 +1594,13 @@ async function download(packageId, version, outputDir, opts = {}) {
     console.error(`[min-sdk] ${source}: build is for Android API ${sdk}+, the patches need API ${minSdk}+`);
     rejectedSdks.push(sdk);
     const rejectedUrl = url || result.url;
-    if (rejectedUrl) rejectedUrls.add(rejectedUrl);
+    if (rejectedUrl) {
+      rejectedUrls.add(variantKey(rejectedUrl));
+      // An exact-build URL names one build for certain: remember it by build number alone,
+      // since the same build comes back under other URLs.
+      const code = exactBuildOf(rejectedUrl);
+      if (code) rejectedUrls.add(`build:${code}`);
+    }
     try { fs.rmSync(file, { force: true }); } catch { /* best-effort: the next source overwrites it */ }
     if (fromCache && url) removeCachedUrl(packageId, version, url, cacheDir);
     return false;
@@ -1612,7 +1665,7 @@ async function download(packageId, version, outputDir, opts = {}) {
   // Step 1: Check URL cache
   checkBudget();
   const cachedUrl = getCachedUrl(packageId, version, cacheDir);
-  if (cachedUrl && !rejectedUrls.has(cachedUrl.url)) {
+  if (cachedUrl && !wasRejected(cachedUrl.url)) {
     console.error(`[download] Trying cache for ${packageId} v${version}`);
     try {
       const isValid = await verifyUrl(cachedUrl.url);
@@ -1632,7 +1685,7 @@ async function download(packageId, version, outputDir, opts = {}) {
   // Step 2: Check patches.json for existing URL
   checkBudget();
   const existingUrl = loadExistingUrl(packageId, version);
-  if (existingUrl && !rejectedUrls.has(existingUrl)) {
+  if (existingUrl && !wasRejected(existingUrl)) {
     console.error(`[download] Trying patches.json URL for ${packageId} v${version}`);
     try {
       const isValid = await verifyUrl(existingUrl);
@@ -1652,9 +1705,10 @@ async function download(packageId, version, outputDir, opts = {}) {
   // Step 3: Try parallel resolution
   checkBudget();
   console.error(`[download] Starting parallel resolution for ${packageId} v${version}`);
+  let triedApkpureVariants = false;
   try {
     const resolved = await parallelResolveSources(packageId, version, opts);
-    if (!rejectedUrls.has(resolved.url)) {
+    if (!wasRejected(resolved.url)) {
       const result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
       if (acceptMinSdk(result, resolved.source, { url: resolved.url })) {
         // Save to URL cache
@@ -1663,6 +1717,16 @@ async function download(packageId, version, outputDir, opts = {}) {
       }
     } else {
       console.error(`[download] ${resolved.source} gave a URL that was already rejected; not downloading it again`);
+    }
+    // APKPure lists several variants of one version; the smallest-first
+    // pick was rejected, so try the others before moving on.
+    if (resolved.source === 'apkeep') {
+      triedApkpureVariants = true;
+      const other = await tryOtherApkpureVariants(packageId, version, outputDir, [...rejectedUrls], opts, acceptMinSdk, remainingMs());
+      if (other) {
+        remember(other.url, 'apkeep');
+        return other.result;
+      }
     }
   } catch (e) {
     console.error(`[download] Parallel resolution failed: ${e.message}`);
@@ -1678,18 +1742,23 @@ async function download(packageId, version, outputDir, opts = {}) {
   // SOURCE_PRIORITY, update this block to match — there's no shared
   // driver loop yet (the parallel pass already finished, so this is a
   // pure tail of the pipeline).
-  // Try apkeep
+  // Try apkeep (skipped once APKPure's variants were tried: it would fetch
+  // APKPure's own pick again)
   checkBudget();
-  console.error(`[apkeep] Attempting download for ${packageId} v${version}`);
-  try {
-    const result = await downloadWithApkeep(packageId, version, outputDir);
-    const url = result.url || `apkeep:${packageId}@${version}`;
-    if (acceptMinSdk(result, 'apkeep')) {
-      remember(url, 'apkeep');
-      return result;
+  if (triedApkpureVariants) {
+    console.error('[apkeep] Skipped: APKPure\'s variants were already tried');
+  } else {
+    console.error(`[apkeep] Attempting download for ${packageId} v${version}`);
+    try {
+      const result = await downloadWithApkeep(packageId, version, outputDir);
+      const url = result.url || `apkeep:${packageId}@${version}`;
+      if (acceptMinSdk(result, 'apkeep')) {
+        remember(url, 'apkeep');
+        return result;
+      }
+    } catch (e) {
+      console.error(`[apkeep] Failed: ${e.message}`);
     }
-  } catch (e) {
-    console.error(`[apkeep] Failed: ${e.message}`);
   }
 
   // Try APKMirror API
@@ -1781,6 +1850,7 @@ module.exports = {
   resolveApkmirrorUrl,
   resolveApkeep,
   resolveApkeepVariant,
+  tryOtherApkpureVariants,
   cleanupOldUrls,
   parallelResolveSources,
   download,
