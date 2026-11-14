@@ -11,6 +11,8 @@ const {
   CACHE_PATTERNS_ORDERED,
   classifyCache,
   isActive,
+  cacheGroup,
+  planDeletions,
 } = require('../cleanup-caches');
 
 describe('CACHE_PATTERNS_ORDERED', () => {
@@ -129,5 +131,74 @@ describe('isActive', () => {
 
   test('handles empty active keys list', () => {
     expect(isActive('morphe-desktop-v1.11.0', [])).toBe(false);
+  });
+});
+
+describe('apk-urls- caches are not APK caches', () => {
+  test('classified as their own pattern, ahead of apk-', () => {
+    expect(classifyCache({ key: 'apk-urls-Linux-abc123-100-1' })).toBe('apk-urls-');
+    expect(CACHE_PATTERNS_ORDERED.indexOf('apk-urls-')).toBeLessThan(CACHE_PATTERNS_ORDERED.indexOf('apk-'));
+  });
+});
+
+describe('cacheGroup', () => {
+  test('apk caches group per app', () => {
+    expect(cacheGroup({ key: 'apk-com.google.android.youtube-20.45.36' })).toBe('apk-com.google.android.youtube');
+    expect(cacheGroup({ key: 'apk-com.google.android.youtube-20.45.36-none-555' })).toBe('apk-com.google.android.youtube');
+    expect(cacheGroup({ key: 'apk-com.reddit.frontpage-2024.01.01' })).toBe('apk-com.reddit.frontpage');
+  });
+
+  test('other patterns are one group each and foreign keys have none', () => {
+    expect(cacheGroup({ key: 'morphe-patches-owner-repo-v1' })).toBe('morphe-patches-');
+    expect(cacheGroup({ key: 'apk-urls-Linux-x-1-1' })).toBe('apk-urls-');
+    expect(cacheGroup({ key: 'npm-123' })).toBeNull();
+  });
+});
+
+describe('planDeletions keeps the newest cache per group', () => {
+  const cache = (key, createdAt, sizeInBytes = 10) => ({ id: key, key, createdAt, sizeInBytes });
+  const deleted = (caches, active = []) => planDeletions(caches, active).toDelete.map((c) => c.key).sort();
+
+  test('an apk-urls cache newer than every APK cache no longer shields the APK caches from cleanup', () => {
+    // Before: one shared apk- group, so apk-urls-* (newest) was the only entry
+    // kept and the newest APK of each app was deleted with the rest.
+    const caches = [
+      cache('apk-urls-Linux-h-9-1', '2026-02-01T00:00:00Z'),
+      cache('apk-com.a-2.0', '2026-01-02T00:00:00Z'),
+      cache('apk-com.a-1.0', '2026-01-01T00:00:00Z'),
+      cache('apk-com.b-5.0', '2026-01-01T00:00:00Z'),
+    ];
+    expect(deleted(caches)).toEqual(['apk-com.a-1.0']);
+  });
+
+  test('older apk-urls caches are deleted, the newest is kept', () => {
+    const caches = [
+      cache('apk-urls-Linux-h-9-1', '2026-02-01T00:00:00Z'),
+      cache('apk-urls-Linux-h-8-1', '2026-01-01T00:00:00Z'),
+    ];
+    expect(deleted(caches)).toEqual(['apk-urls-Linux-h-8-1']);
+  });
+
+  test('each app keeps its own newest version even when another app is newer', () => {
+    const caches = [
+      cache('apk-com.a-2.0', '2026-03-01T00:00:00Z'),
+      cache('apk-com.b-1.0', '2026-01-01T00:00:00Z'),
+    ];
+    expect(deleted(caches)).toEqual([]);
+  });
+
+  test('active keys are kept regardless of age and bytes are summed', () => {
+    const caches = [
+      cache('apk-com.a-2.0', '2026-03-01T00:00:00Z', 5),
+      cache('apk-com.a-1.5', '2026-02-01T00:00:00Z', 7),
+      cache('apk-com.a-1.0', '2026-01-01T00:00:00Z', 11),
+    ];
+    const plan = planDeletions(caches, ['apk-com.a-1.0']);
+    expect(plan.toDelete.map((c) => c.key)).toEqual(['apk-com.a-1.5']);
+    expect(plan.bytesToFree).toBe(7);
+  });
+
+  test('keys that are not ours are never deleted', () => {
+    expect(deleted([cache('npm-1', '2026-01-01T00:00:00Z'), cache('npm-2', '2026-02-01T00:00:00Z')])).toEqual([]);
   });
 });
