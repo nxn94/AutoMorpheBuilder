@@ -37,8 +37,8 @@
  *   CONFIG_FILE    optional  default ./config.json
  *   FORCE_BUILD    optional  truthy bypasses the release-existence
  *                            comparison. The workflow sets this when
- *                            triggered via workflow_dispatch so a
- *                            manual run always patches + releases,
+ *                            a manual run has the `force` box ticked,
+ *                            so the run patches + releases
  *                            regardless of whether a release for the
  *                            current APK version + patches tag already
  *                            exists. Default behaviour (cron / push)
@@ -196,11 +196,10 @@ function main() {
     return;
   }
 
-  // Manual trigger (workflow_dispatch): the workflow sets FORCE_BUILD so
-  // a manual run always patches + releases, regardless of whether the
-  // current APK version + patches tag already has a release. The
-  // existing release-tag is overwritten on publish. This restores the
-  // pre-check-existing-releases behaviour for `Run workflow`.
+  // Manual trigger with the `force` box ticked: the workflow sets FORCE_BUILD
+  // so the run patches + releases even when the current APK version +
+  // patches tag already has a release. The existing release-tag is
+  // overwritten on publish.
   if (isTruthyEnv('FORCE_BUILD')) {
     console.log('::notice::FORCE_BUILD is set; building all apps without release-existence check.');
     for (const entry of matrix) {

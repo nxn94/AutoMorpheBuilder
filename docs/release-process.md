@@ -6,7 +6,7 @@ This document describes how AutoMorpheBuilder produces, tags, publishes, and pru
 
 The `morphe-build.yml` workflow runs on a daily cron (`15 5 * * *` UTC) and on `workflow_dispatch`. The full pipeline is:
 
-1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding.
+1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding only when **force** is ticked.
 2. **`build`** (matrix per app, no signing secrets) downloads the APK and runs `morphe-desktop patch --unsigned`. `create-release` then signs each APK with `apksigner` before publishing.
 3. **`create-release`** (the only job gated by the `signing` environment) downloads unsigned APK artifacts via `pattern: '*-v*'` + `merge-multiple: true`, aligns when needed, signs and verifies every APK, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
 
