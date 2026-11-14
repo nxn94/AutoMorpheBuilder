@@ -167,7 +167,7 @@ describe('validateDownloadedApkAbi', () => {
 
     // Wrap base.apk in an outer .apk (mimicking APKMirror's mislabel).
     const bundlePath = path.join(tmp, 'fake_bundle_named_apk.apk');
-    execFileSync('zip', ['-q', bundlePath, path.join('inner', 'base.apk')], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('zip', ['-q', bundlePath, 'base.apk'], { cwd: bundleDir, stdio: 'ignore' });
 
     // This must NOT throw — content-based detection sees the inner
     // .apk and routes through the bundle branch, which extracts and
@@ -196,7 +196,7 @@ describe('validateDownloadedApkAbi', () => {
     execFileSync('zip', ['-q', v7aInner, v7aLib], { cwd: tmp, stdio: 'ignore' });
 
     const xapk = path.join(tmp, 'v7a_only.xapk');
-    execFileSync('zip', ['-q', xapk, path.join('inner', 'config.armeabi_v7a.apk')], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('zip', ['-q', xapk, 'config.armeabi_v7a.apk'], { cwd: path.dirname(v7aInner), stdio: 'ignore' });
 
     // Sanity: the file really does start with the real PK signature.
     const head = fs.readFileSync(xapk).slice(0, 4);
