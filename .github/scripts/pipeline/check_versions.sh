@@ -78,6 +78,5 @@ log "Default should-build=true; check_existing_releases.sh will override if all 
 json_set_output matrix-include "$MATRIX_WITH_TAGS"
 json_set_output repo-versions "$REPO_VERSIONS"
 json_set_output cli-version "$CLI_TAG"
-json_set_output cli-branch "$CLI_BRANCH"
 json_set_output cli-repo "$CLI_REPO"
 json_set_output should-build "$SHOULD_BUILD"
