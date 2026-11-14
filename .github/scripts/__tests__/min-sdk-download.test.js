@@ -2,7 +2,7 @@
 
 // download() when a source serves a build for an older Android than the
 // patches support: the file is dropped, never cached, the URL is uncached,
-// and the next path is tried. curl and aapt are stubbed;
+// and the next path (or APKPure variant) is tried. curl and aapt are stubbed;
 // the package is not in config.json so the APKMirror sources fail fast.
 
 jest.mock('../goopdl-downloader', () => ({ downloadWithGoopdl: jest.fn() }));
@@ -18,7 +18,16 @@ const PKG = 'com.example.minsdk';
 const VER = '1.2.3';
 const placeholder = path.resolve(__dirname, '../../../test/fixtures/apk-metadata/placeholder.apk');
 
-const SMALL = 'https://download.pureapk.com/b/XAPK/small';
+const variant = (size, code) => {
+  const inner = Buffer.from(`dev=Example&t=xxapk&s=${size}&vn=${VER}&vc=${code}`).toString('base64');
+  return `https://download.pureapk.com/b/XAPK/${code}?_fn=x&c=1|CAT|${inner}`;
+};
+const SMALL = variant(100, 11);
+const MID = variant(200, 12);
+const BIG = variant(300, 13);
+const listing = [SMALL, MID, BIG].join('\n');
+// The same variant on a later fetch: another per-request token, same build.
+const retoken = (u) => `${u}&tok=2`;
 
 let dir;
 let outDir;
@@ -26,6 +35,8 @@ let cacheDir;
 let sdkByUrl;
 let fetched;
 let current;
+let currentCode;
+let codeByUrl;
 let errors;
 
 // Fake curl: writes the placeholder APK and remembers which URL it came from.
@@ -38,6 +49,7 @@ function spawnImpl(_cmd, args) {
   setImmediate(() => {
     fs.copyFileSync(placeholder, out);
     current = sdkByUrl[url];
+    currentCode = codeByUrl[url] || 1;
     child.emit('close', 0);
   });
   return child;
@@ -51,7 +63,7 @@ function execFileSyncImpl(tool, args) {
     throw error;
   }
   const sdk = path.basename(String(args[2])) === 'goopdl.apkm' ? sdkByUrl.goopdl : current;
-  return `package: name='${PKG}' versionCode='1' versionName='${VER}'\n${sdk ? `sdkVersion:'${sdk}'\n` : ''}`;
+  return `package: name='${PKG}' versionCode='${currentCode}' versionName='${VER}'\n${sdk ? `sdkVersion:'${sdk}'\n` : ''}`;
 }
 
 const resolvers = (url) => ({
@@ -66,6 +78,7 @@ const options = (extra = {}) => ({
   spawnImpl,
   execFileSyncImpl,
   sleepImpl: async () => {},
+  fetchImpl: async () => ({ ok: true, status: 200, text: async () => listing }),
   ...extra,
 });
 
@@ -83,6 +96,7 @@ beforeEach(() => {
   outDir = path.join(dir, 'out');
   cacheDir = path.join(dir, 'urls');
   sdkByUrl = {};
+  codeByUrl = {};
   fetched = [];
   current = undefined;
   downloadWithGoopdl.mockRejectedValue(new Error('Google Play unavailable'));
@@ -133,12 +147,28 @@ test("the patch list's own minSdk is not a floor: only config min_sdk is", async
   }
 });
 
+test("APKPure's other variants are tried, smallest first, skipping the one already tried", async () => {
+  sdkByUrl[SMALL] = 28;
+  sdkByUrl[MID] = 28;
+  sdkByUrl[BIG] = 30;
+  const result = await download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL) }));
+  expect(result.success).toBe(true);
+  expect(fetched).toEqual([SMALL, MID, BIG]);
+  expect(cachedUrl()).toBe(BIG);
+});
+
+const execFileImpl = jest.fn((_c, _a, _o, cb) => cb(new Error('no apkeep'), '', ''));
+
 test('a rejected build is never remembered, and every-path failure says which build to patch', async () => {
   sdkByUrl[SMALL] = 28;
-  await expect(download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL) })))
+  sdkByUrl[MID] = 26;
+  sdkByUrl[BIG] = 28;
+  await expect(download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL), execFileImpl })))
     .rejects.toThrow(`Wrong build: every download of ${PKG} ${VER} was for older Android (API 28+); `
       + `the patches need API 30+. Patch the arm64-v8a (Android 11+) build of ${PKG} instead.`);
-  expect(fetched).toEqual([SMALL]);
+  expect(fetched).toEqual([SMALL, MID, BIG]);
+  // APKPure's variants were tried, so the sequential apkeep step is skipped.
+  expect(logged()).toContain('[apkeep] Skipped');
   expect(cachedUrl()).toBeNull();
   expect(fs.existsSync(path.join(outDir, `${PKG}_${VER}.apk`))).toBe(false);
 });
@@ -176,11 +206,23 @@ test('a Google Play file below the floor is deleted and the other sources are tr
   expect(logged()).toContain('[min-sdk] goopdl: build is for Android API 28+');
 });
 
+test('a variant is the same build even when its URL differs between listings', async () => {
+  sdkByUrl[SMALL] = 28;
+  sdkByUrl[MID] = 28;
+  sdkByUrl[BIG] = 30;
+  const fetchImpl = async () => ({ ok: true, status: 200, text: async () => [retoken(SMALL), MID, BIG].join('\n') });
+  await download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL), fetchImpl }));
+  expect(fetched).toEqual([SMALL, MID, BIG]); // the re-tokened SMALL was not downloaded again
+});
+
 test('a URL rejected from the cache is not downloaded again by a later path', async () => {
   seedCache(SMALL);
   sdkByUrl[SMALL] = 28;
-  await expect(download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL) }))).rejects.toThrow(/^Wrong build:/);
-  expect(fetched).toEqual([SMALL]); // the resolver's identical URL was not fetched a second time
+  sdkByUrl[MID] = 28;
+  sdkByUrl[BIG] = 31;
+  // The resolver hands back the same build under a new token.
+  await download(PKG, VER, outDir, options({ sourceResolvers: resolvers(retoken(SMALL)) }));
+  expect(fetched).toEqual([SMALL, MID, BIG]);
 });
 
 test('once the time is up after a rejection, the clear error is thrown instead of starting another step', async () => {
@@ -192,5 +234,80 @@ test('once the time is up after a rejection, the clear error is thrown instead o
   await expect(download(PKG, VER, outDir, options({ totalBudgetMs: 0, sourceResolvers: resolvers(NEW) })))
     .rejects.toThrow(/^Wrong build: every download of com\.example\.minsdk 1\.2\.3 was for older Android \(API 28\+\)/);
   expect(fetched).toEqual([OLD]);
+  expect(fs.existsSync(path.join(outDir, `${PKG}_${VER}.apk`))).toBe(false);
+});
+
+test('a variant download cut off by the time limit leaves no partial file behind', async () => {
+  sdkByUrl[SMALL] = 28;
+  const target = path.join(outDir, `${PKG}_${VER}.apk`);
+  const spawnAbort = (cmd, args, spawnOptions) => {
+    if (args.at(-1) === SMALL) return spawnImpl(cmd, args);
+    const child = new EventEmitter();
+    child.stderr = new EventEmitter();
+    fetched.push(args.at(-1));
+    fs.writeFileSync(target, 'partial');
+    spawnOptions.signal.addEventListener('abort', () => child.emit('error', spawnOptions.signal.reason));
+    return child;
+  };
+  await expect(download(PKG, VER, outDir, options({ spawnImpl: spawnAbort, apkpureVariantsBudgetMs: 50, sourceResolvers: resolvers(SMALL), execFileImpl })))
+    .rejects.toThrow(/^Wrong build:/);
+  expect(fetched).toEqual([SMALL, MID]);
+  expect(fs.existsSync(target)).toBe(false);
+});
+
+test('a build rejected through the exact-build path is not fetched again as an APKPure variant', async () => {
+  const toolsDir = path.join(dir, 'tools');
+  fs.mkdirSync(toolsDir);
+  // The patch list names build 11, which is also what APKPure's smallest variant (SMALL) is.
+  fs.writeFileSync(path.join(toolsDir, 'patches-list.json'), JSON.stringify({
+    patches: [{ name: 'p', compatiblePackages: [{ packageName: PKG, targets: [{ version: VER, versionCodes: { ARM64_V8A: 11 } }] }] }],
+  }));
+  const exactX = `https://d.apkpure.com/b/XAPK/${PKG}?versionCode=11`;
+  const exactA = `https://d.apkpure.com/b/APK/${PKG}?versionCode=11`;
+  for (const u of [exactX, exactA]) { sdkByUrl[u] = 28; codeByUrl[u] = 11; }
+  sdkByUrl[MID] = 28;
+  sdkByUrl[BIG] = 30;
+  const previous = process.env.TOOLS_DIR;
+  process.env.TOOLS_DIR = toolsDir;
+  try {
+    const result = await download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL) }));
+    expect(result.success).toBe(true);
+    // SMALL (build 11) was never downloaded: that build was already rejected.
+    expect(fetched).toEqual([exactX, exactA, MID, BIG]);
+  } finally {
+    if (previous === undefined) delete process.env.TOOLS_DIR; else process.env.TOOLS_DIR = previous;
+  }
+});
+
+test('the variants share one limit that also covers the listing fetch', async () => {
+  sdkByUrl[SMALL] = 28;
+  sdkByUrl[MID] = 28;
+  let listingSignal;
+  const fetchImpl = async (_url, init) => {
+    listingSignal = init.signal;
+    return { ok: true, status: 200, text: async () => listing };
+  };
+  sdkByUrl[BIG] = 30;
+  await download(PKG, VER, outDir, options({ sourceResolvers: resolvers(SMALL), fetchImpl }));
+  expect(listingSignal).toBeInstanceOf(AbortSignal);
+  expect(listingSignal.aborted).toBe(false);
+});
+
+test('a variant whose check ran out of time is discarded, not kept', async () => {
+  sdkByUrl[SMALL] = 28;
+  sdkByUrl[MID] = undefined; // unreadable: would normally be kept for the patcher
+  // The read of MID takes longer than the variants' whole limit.
+  const slowAapt = (tool, args) => {
+    if (tool === 'aapt' && fetched.at(-1) === MID) {
+      const until = Date.now() + 80;
+      while (Date.now() < until) { /* busy-wait past the limit */ }
+    }
+    return execFileSyncImpl(tool, args);
+  };
+  await expect(download(PKG, VER, outDir, options({ execFileSyncImpl: slowAapt, apkpureVariantsBudgetMs: 50, sourceResolvers: resolvers(SMALL), execFileImpl })))
+    .rejects.toThrow(/^Wrong build:/);
+  expect(logged()).toContain('Time limit reached while checking the file');
+  expect(fetched).not.toContain(BIG);
+  expect(cachedUrl()).toBeNull();
   expect(fs.existsSync(path.join(outDir, `${PKG}_${VER}.apk`))).toBe(false);
 });
