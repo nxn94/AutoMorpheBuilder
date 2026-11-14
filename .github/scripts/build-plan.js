@@ -26,9 +26,32 @@ function buildMatrix(config, versions) {
   }));
 }
 
+// Descending version order: the dotted numeric core decides first (a longer core
+// beats its own prefix, as 24.3.1 > 24.3), then a plain version (or "+build")
+// outranks a "-label" version of the same core, so 1.2.3 > 1.2.3-beta. Between
+// two labelled versions of one core the label is compared numerically. Labels
+// such as 12.39.0-prod.01 are ordinary versions; they only rank below the same
+// core without a label.
+function compareVersionsDesc(a, b) {
+  const split = (v) => {
+    const m = /^(\d+(?:\.\d+)*)(.*)$/s.exec(v);
+    return m ? { core: m[1].split('.').map(Number), rest: m[2] } : { core: [], rest: v };
+  };
+  const x = split(a);
+  const y = split(b);
+  for (let i = 0; i < Math.max(x.core.length, y.core.length); i += 1) {
+    const xi = x.core[i] ?? -1;
+    const yi = y.core[i] ?? -1;
+    if (xi !== yi) return yi - xi;
+  }
+  const labelled = (r) => r.startsWith('-');
+  if (labelled(x.rest) !== labelled(y.rest)) return labelled(x.rest) ? 1 : -1;
+  return y.rest.localeCompare(x.rest, undefined, { numeric: true });
+}
+
 function supportedVersions(stdout) {
   return [...new Set(stdout.match(/(?<![\w./-])\d+(?:\.\d+)+(?:[-+][A-Za-z0-9][A-Za-z0-9._+-]*)?(?![\w./-])/g) || [])]
-    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    .sort(compareVersionsDesc);
 }
 
 if (require.main === module) {
@@ -37,4 +60,4 @@ if (require.main === module) {
   console.log(JSON.stringify(buildMatrix(config, JSON.parse(process.env.REPO_VERSIONS || '{}'))));
 }
 
-module.exports = { patchTag, patchSlug, buildMatrix, supportedVersions };
+module.exports = { patchTag, patchSlug, buildMatrix, supportedVersions, compareVersionsDesc };
