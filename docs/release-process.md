@@ -86,8 +86,8 @@ the `morphe-desktop` and APKEditor pins, and `REBUILD_EPOCH` in
 `build-fingerprint.js`. Changing these inputs rebuilds an existing tag.
 CI/security-only workflows, tests, documentation helpers, and unrelated tool pins
 are excluded. So are files that cannot change a built APK: release pruning, cache and
-run-artifact cleanup, the patch-sync scripts, Playwright installation, `apk-signers.json`
-and `goopdl-version-codes.json` (a release was already validated when it was built), and
+run-artifact cleanup, the patch-sync scripts, Playwright installation, `goopdl-version-codes.json`
+(source selection only; the downloaded APK is still version- and ABI-checked), and
 the lockfile's `dev` packages. These are listed in `NON_OUTPUT_FILES` in
 `build-fingerprint.js`. The list is an exclusion list on purpose: any other `.js`, `.sh` or
 `.json` file under `src/`, `.github/scripts/` or `scripts/` is hashed, so a new file

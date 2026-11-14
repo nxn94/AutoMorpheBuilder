@@ -38,7 +38,6 @@ const NON_OUTPUT_FILES = new Set([
   '.github/scripts/pipeline/install_playwright.sh',
   '.github/scripts/pipeline/sync-patches.sh',
   '.github/scripts/generate-readme-tables.js',
-  '.github/scripts/apk-signers.json',
   '.github/scripts/goopdl-version-codes.json',
   'scripts/check-agents-doc.js',
   'scripts/generate-readme-tables.js',

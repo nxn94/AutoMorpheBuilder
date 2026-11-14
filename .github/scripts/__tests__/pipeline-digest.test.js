@@ -23,7 +23,7 @@ afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 test.each([
   'src/patch.js', '.github/scripts/pipeline/patch_apk.sh',
   '.github/workflows/morphe-build.yml', 'scripts/download-tool.sh',
-  '.github/scripts/download-supported-apk.js', 'src/download/signer.js',
+  '.github/scripts/download-supported-apk.js', 'src/download/signer.js', '.github/scripts/apk-signers.json',
   '.github/scripts/pipeline/some-new-step.sh', // not listed anywhere: hashed by default
 ])('output or validation input %s changes the digest', (file) => {
   write(file, 'before');
