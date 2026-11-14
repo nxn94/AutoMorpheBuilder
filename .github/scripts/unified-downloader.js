@@ -1542,6 +1542,8 @@ async function tryOtherApkpureVariants(packageId, version, outputDir, tried, opt
 async function download(packageId, version, outputDir, opts = {}) {
   const cacheDir = opts.cacheDir || process.env.URL_CACHE_DIR
     || path.join(require('node:os').homedir(), '.cache', 'auto-morphe-builder', 'urls');
+  // FRESH_DOWNLOAD: the remembered URLs may lead back to the file that just failed to patch.
+  const fresh = opts.fresh !== undefined ? opts.fresh : /^(1|true)$/i.test(process.env.FRESH_DOWNLOAD || '');
   function remember(url, source) {
     try { saveCachedUrl(packageId, version, url, source, cacheDir); }
     catch (error) { console.error(`[url-cache] Could not persist URL: ${error.message}`); }
@@ -1664,7 +1666,7 @@ async function download(packageId, version, outputDir, opts = {}) {
 
   // Step 1: Check URL cache
   checkBudget();
-  const cachedUrl = getCachedUrl(packageId, version, cacheDir);
+  const cachedUrl = fresh ? null : getCachedUrl(packageId, version, cacheDir);
   if (cachedUrl && !wasRejected(cachedUrl.url)) {
     console.error(`[download] Trying cache for ${packageId} v${version}`);
     try {
@@ -1684,7 +1686,7 @@ async function download(packageId, version, outputDir, opts = {}) {
 
   // Step 2: Check patches.json for existing URL
   checkBudget();
-  const existingUrl = loadExistingUrl(packageId, version);
+  const existingUrl = fresh ? null : loadExistingUrl(packageId, version);
   if (existingUrl && !wasRejected(existingUrl)) {
     console.error(`[download] Trying patches.json URL for ${packageId} v${version}`);
     try {

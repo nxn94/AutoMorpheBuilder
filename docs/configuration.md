@@ -96,7 +96,7 @@ Short identifier used in:
 - Release tag: `<name>-v<base-version>-<patches-version>` (e.g. `youtube-v20.44.38-v1.24.0-dev.8`).
 - Artifact filename: `<name>-v<base-version>-<patches-version>.apk`.
 - Obtainium Release Tag Filter: `^<name>`.
-- APK cache key: `apk-<name>-<version>`.
+- APK cache key: `apk-<appId>-<version>-<run_id>-<run_attempt>`; the newest entry for the version is restored.
 
 Must be unique across `patch_repos`. The schema enforces `^[a-z0-9][a-z0-9-]*$`; the semantic validator rejects duplicate names.
 

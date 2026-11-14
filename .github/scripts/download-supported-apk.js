@@ -6,7 +6,10 @@
  * validate archives, merge bundles, then verify the exact final package,
  * version and architecture. Pins never silently change version.
  * Required env: APP_ID, TARGET_VERSION, APKS_DIR, TOOLS_DIR, GITHUB_OUTPUT.
- * Optional env: TARGET_VERSIONS, APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP.
+ * Optional env: TARGET_VERSIONS, APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP,
+ * FRESH_DOWNLOAD (1 = ignore the APKS_DIR cache (and delete what it holds), the
+ * pre-downloaded TOOLS_DIR/apks files and the downloader's URL caches; the retry after a patch fingerprint failure).
+ * Outputs: apk, version, source (cache | preloaded | download): where the original came from.
  */
 
 const { inspectIdentity } = require('./apk-identity');
@@ -39,6 +42,7 @@ const APKEDITOR_JAR = process.env.APKEDITOR_JAR || '';
 const MANUAL_URL = process.env.MANUAL_URL || '';
 const RUNNER_TEMP = process.env.RUNNER_TEMP || '/tmp';
 const GITHUB_OUTPUT = process.env.GITHUB_OUTPUT;
+const FRESH_DOWNLOAD = /^(1|true)$/i.test(process.env.FRESH_DOWNLOAD || '');
 
 if (!APP_ID || !APKS_DIR || !TOOLS_DIR) {
   console.error('::error::APP_ID, APKS_DIR, and TOOLS_DIR are required.');
@@ -269,6 +273,8 @@ console.log(`Downloading APK for ${APP_ID}...`);
 ensureDir(APKS_DIR);
 
 let downloadSuccess = false;
+// Where the original came from: cache (apps/), preloaded (tools/apks/) or download.
+let source = '';
 
 /**
  * Return true if `filePath` is OK to use as-is (either no preferred
@@ -314,7 +320,9 @@ function cachedFileMeetsMinSdk(filePath) {
 }
 
 // 1. Check for cached APK matching target version
-const cached = findCachedApk(APKS_DIR, TARGET_VERSION);
+// A fresh download skips the cache; the else branch below then clears APKS_DIR,
+// the stale original and any merged <appId>.apk with it.
+const cached = FRESH_DOWNLOAD ? null : findCachedApk(APKS_DIR, TARGET_VERSION);
 if (cached) {
   // Cached files survive across builds via actions/cache@v5 keyed by
   // apk-<appId>-<version>. Files written BEFORE the download-side ABI
@@ -325,6 +333,7 @@ if (cached) {
   if (cachedFileHasPreferredAbi(cached) && cachedFileMeetsMinSdk(cached)) {
     console.log(`Using cached APK: ${cached} (v${TARGET_VERSION})`);
     downloadSuccess = true;
+    source = 'cache';
   } else {
     console.log(`Discarding bad cached APK (missing ${loadPreferredArch() || 'preferred-arch'} libs, or built for too old an Android) — will re-download.`);
     try { fs.unlinkSync(cached); } catch { /* ignore */ }
@@ -345,7 +354,7 @@ if (!downloadSuccess) {
     process.exit(1);
   }
 
-  const preloaded = findCachedApk(path.join(TOOLS_DIR, 'apks', APP_ID), TARGET_VERSION);
+  const preloaded = FRESH_DOWNLOAD ? null : findCachedApk(path.join(TOOLS_DIR, 'apks', APP_ID), TARGET_VERSION);
   if (preloaded) {
     // Same ABI validation as the APKS_DIR cache above. The
     // pre-downloaded file was produced by pre_download_apks.sh, which
@@ -363,6 +372,7 @@ if (!downloadSuccess) {
       // output and patch_apk.sh fails with "Required env var APK is
       // empty." (see exp-3 report on run 31908351240).
       downloadSuccess = true;
+      source = 'preloaded';
     } else {
       // Preloaded file exists but is missing the preferred arch's libs, or is
       // built for an older Android than the patches support.
@@ -382,6 +392,7 @@ if (!downloadSuccess) {
     if (dl.ok) {
       console.log(`unified-downloader succeeded: ${JSON.stringify(dl.result)}`);
       downloadSuccess = true;
+      source = 'download';
     } else {
       console.log(`unified-downloader failed: ${dl.error}`);
       lastDownloaderError = dl.error;
@@ -390,6 +401,7 @@ if (!downloadSuccess) {
         const manualFile = downloadWithCurl(MANUAL_URL, APKS_DIR, APP_ID);
         if (manualFile && cachedFileMeetsMinSdk(manualFile)) {
           downloadSuccess = true;
+          source = 'download';
         } else if (manualFile) {
           try { fs.unlinkSync(manualFile); } catch { /* ignore */ }
           if (lastMinSdkRejection) {
@@ -624,6 +636,7 @@ try {
   process.exit(1);
 }
 setOutput('apk', finalApk);
+setOutput('source', source);
 // Name the build by the version the patches asked for. An APK whose
 // versionName adds a label (Gboard's "...-release-arm64-v8a") would
 // otherwise get a release tag the up-to-date check never finds, so the app

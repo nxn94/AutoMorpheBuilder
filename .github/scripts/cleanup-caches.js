@@ -98,7 +98,7 @@ function computeActiveKeys() {
     for (const [appId, info] of Object.entries(patchRepos)) {
       // Pinned version wins.
       if (info.pin_version) {
-        active.add(`apk-${appId}-${info.pin_version}`);
+        active.add(`apk-${appId}-${info.pin_version}-`);
       }
       // Otherwise, keep the version whose URL is the "latest_supported".
       // We can't know the version from a URL alone, so we keep the bare

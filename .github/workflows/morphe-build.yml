@@ -419,13 +419,16 @@ jobs:
           RESOLVED_VERSION: ${{ matrix.targetVersion }}
         run: bash scripts/resolve-target-version.sh
 
-      - name: Cache APK for ${{ matrix.appId }}
+      - name: Restore APK cache for ${{ matrix.appId }}
+        # Every save has its own key (see "Save APK cache"), so a bad original is
+        # replaced by a newer entry. The key below never exists; restore-keys
+        # restores the newest entry of this version.
         id: cache-apk
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
           path: ${{ env.APKS_DIR }}
-          key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}
-          restore-keys: apk-${{ matrix.appId }}-
+          key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-none-${{ github.run_id }}
+          restore-keys: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-
 
       - name: Install aapt for APK version validation
         id: aapt
@@ -479,7 +482,9 @@ jobs:
 
       - name: Patch ${{ matrix.name }} with morphe-desktop
         # See AGENTS.md "Common failures" → "java.lang.NoSuchMethodError".
+        # continue-on-error: "Retry on a fresh original" may rescue it; "Fail the build" ends it otherwise.
         id: patch
+        continue-on-error: true
         env:
           APP_ID: ${{ matrix.appId }}
           APP_NAME: ${{ matrix.name }}
@@ -497,13 +502,58 @@ jobs:
           EXTRA_PATCH_TAGS: ${{ toJSON(matrix.extraTags) }}
         run: bash .github/scripts/pipeline/patch_apk.sh
 
+      - name: Retry ${{ matrix.name }} on a fresh original
+        # A cached original can share the version and versionCode of the one the
+        # patches target but differ in code, which fails the same way every run.
+        if: steps.patch.outcome == 'failure' && steps.getapk.outputs.source == 'cache'
+        id: retry
+        env:
+          APP_ID: ${{ matrix.appId }}
+          APP_NAME: ${{ matrix.name }}
+          APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
+          APKMIRROR_API_PASS: ${{ secrets.APKMIRROR_API_PASS }}
+          TARGET_VERSION: ${{ steps.targetver.outputs.version }}
+          TARGET_VERSIONS: ${{ steps.targetver.outputs.versions }}
+          APKS_DIR: ${{ env.APKS_DIR }}
+          TOOLS_DIR: ${{ env.TOOLS_DIR }}
+          OUT_DIR: ${{ env.OUT_DIR }}
+          APKEDITOR_JAR: ${{ steps.morphe.outputs.apkeditor_jar }}
+          PINNED_CHECK: ${{ steps.targetver_prep.outputs.pinned }}
+          PATCH_REPO: ${{ matrix.patchRepo }}
+          PATCH_TAG: ${{ matrix.patchTag }}
+          PATCH_SLUG: ${{ matrix.patchSlug }}
+          MORPHE_CLI_JAR: ${{ steps.targetver_prep.outputs.jar }}
+          MANUAL_URL: ${{ steps.targetver_prep.outputs.url }}
+          RUNNER_TEMP: ${{ runner.temp }}
+          ANDROID_HOME: /tmp/android-sdk
+          ANDROID_BUILD_TOOLS_VERSION: ${{ steps.aapt.outputs.ANDROID_BUILD_TOOLS_VERSION }}
+          EXTRA_PATCH_TAGS: ${{ toJSON(matrix.extraTags) }}
+        run: bash .github/scripts/pipeline/retry_fresh_original.sh
+
+      - name: Save APK cache for ${{ matrix.appId }}
+        # Only a file this run fetched (download, pre-download or the retry), and
+        # also when patching failed, so a day the patches don't match isn't repeated.
+        if: ${{ !cancelled() && (steps.getapk.outputs.source == 'download' || steps.getapk.outputs.source == 'preloaded' || steps.retry.outputs.fresh == 'true') }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ${{ env.APKS_DIR }}
+          key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Fail the build if patching ${{ matrix.name }} failed
+        if: ${{ !cancelled() && steps.patch.outcome == 'failure' && steps.retry.outcome != 'success' }}
+        env:
+          APP_NAME: ${{ matrix.name }}
+        run: |
+          echo "::error::Patching $APP_NAME failed (see the patch step above)."
+          exit 1
+
       - name: Upload patched ${{ matrix.name }}
         # The artifact name is what create-release pattern-matches (`*-v*`).
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
         with:
           name: ${{ matrix.name }}-v${{ steps.getapk.outputs.version }}-${{ matrix.patchTag }}
           path: |
-            out/${{ steps.patch.outputs.output }}
+            out/${{ steps.retry.outputs.output || steps.patch.outputs.output }}
             out/*.package
           retention-days: 3
           compression-level: 0

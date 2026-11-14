@@ -25,6 +25,7 @@ under `lib/` and are sourced (not executed) by the per-step scripts.
 ├── pre_download_apks.sh      parallel pre-download APKs across all apps
 ├── prepare_target_version.sh gather inputs for download-supported-apk.js
 ├── patch_apk.sh              run morphe-desktop patch --keystore; rename output for Obtainium
+├── retry_fresh_original.sh   patch again on a fresh original after a fingerprint failure on a cached one
 ├── create_release.sh         publish per-app GitHub Releases
 ├── resolve-tag.sh            resolve branch → tag (sourced by check_versions.sh + update-patches.yml)
 └── sync-patches.sh           sync patches.json from upstream patch repos (invoked by update-patches.yml)
