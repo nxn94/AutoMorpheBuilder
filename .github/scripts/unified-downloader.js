@@ -509,6 +509,11 @@ async function resolveApkeep(packageId, version, _opts = {}) {
   }
 }
 
+/** True when both APKMirror API credentials are set. */
+function hasApkmirrorApiCreds(env = process.env) {
+  return Boolean(env.APKMIRROR_API_USER && env.APKMIRROR_API_PASS);
+}
+
 /**
  * Resolve URL using APKMirror API - returns URL only
  * @param {string} packageId - Package ID
@@ -728,6 +733,10 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   // apkmirror). This order is the single source of truth for which
   // resolver wins when several succeed — see the "Fixed priority
   // order" comment below.
+  const apiConfigured = Boolean(sourceResolvers.apkmirrorApi) || hasApkmirrorApiCreds();
+  if (!apiConfigured) {
+    console.error('[apkmirror-api-resolve] Skipped: APKMIRROR_API_USER/PASS not set');
+  }
   const sources = [
     {
       name: 'apkeep',
@@ -735,12 +744,12 @@ async function parallelResolveSources(packageId, version, opts = {}) {
         ? sourceResolvers.apkeep(packageId, version)
         : resolveApkeep(packageId, version, opts),
     },
-    {
+    ...(apiConfigured ? [{
       name: 'apkmirror-api',
       fn: () => sourceResolvers.apkmirrorApi
         ? sourceResolvers.apkmirrorApi(packageId, version)
         : resolveApkmirrorApi(packageId, version),
-    },
+    }] : []),
     {
       name: 'apkmirror',
       fn: () => sourceResolvers.apkmirror
@@ -760,7 +769,7 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   // actual contract is "the highest-priority source whose promise
   // resolved with a valid URL wins, with fall-through to the next
   // source on failure." apkeep at index 0 is always preferred over
-  // apkmirror-api at index 1 even when apkmirror-api returns faster,
+  // apkmirror-api (when configured) even when apkmirror-api returns faster,
   // because the apkeep URL is trusted to match the package/version
   // semantically (apkeep is the canonical APKPure resolver; the
   // apkmirror path is a Cloudflare-bypass fallback).
@@ -1742,17 +1751,20 @@ async function download(packageId, version, outputDir, opts = {}) {
     }
   }
 
-  // Try APKMirror API
+  // Try APKMirror API (only when credentials are configured)
   checkBudget();
-  console.error(`[apkmirror-api] Attempting download for ${packageId} v${version} via API`);
-  try {
-    const result = await downloadWithApkmirrorApi(packageId, version, outputDir);
-    if (acceptMinSdk(result, 'apkmirror-api')) {
-      remember(result.url, 'apkmirror-api');
-      return result;
+  if (!hasApkmirrorApiCreds()) {
+    console.error('[apkmirror-api] Skipped: APKMIRROR_API_USER/PASS not set');
+  } else {
+    try {
+      const result = await downloadWithApkmirrorApi(packageId, version, outputDir);
+      if (acceptMinSdk(result, 'apkmirror-api')) {
+        remember(result.url, 'apkmirror-api');
+        return result;
+      }
+    } catch (e) {
+      console.error(`[apkmirror-api] Failed: ${e.message}`);
     }
-  } catch (e) {
-    console.error(`[apkmirror-api] Failed: ${e.message}`);
   }
 
   // Try APKMirror Playwright - last resort
