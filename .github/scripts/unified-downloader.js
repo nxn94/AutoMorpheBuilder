@@ -17,7 +17,6 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, spawn } = require("child_process");
 const { chromium } = require("playwright");
-const os = require("node:os");
 const cheerio = require('cheerio');
 const { downloadWithGoopdl } = require('./goopdl-downloader');
 const { openApkmirror, navigateApkmirror, extractVersionCode } = require('./apkmirror-browser');
@@ -473,15 +472,16 @@ async function resolveApkeepVariant(packageId, version) {
  *
  * The default path hits APKPure's protobuf endpoint directly to pick
  * the arm64-v8a-only variant (see resolveApkeepVariant). The apkeep
- * binary is kept as a fallback — useful when APKPure's protobuf
- * response shape changes or the API is unavailable.
+ * resolver throws when that endpoint fails or its response shape changes;
+ * the caller then falls through to the other sources and finally to the
+ * download-based apkeep path (downloadWithApkeep).
  *
  * @param {string} packageId - Package ID
  * @param {string} version - Version to resolve
  * @param {object} [opts] - Optional command/source dependency overrides for tests
  * @returns {Promise<object>} { url, source }
  */
-async function resolveApkeep(packageId, version, opts = {}) {
+async function resolveApkeep(packageId, version, _opts = {}) {
   if (!packageId || !packageId.includes('.')) {
     throw new Error('Invalid packageId format');
   }
@@ -499,35 +499,14 @@ async function resolveApkeep(packageId, version, opts = {}) {
     const arm64Url = await resolveApkeepVariant(packageId, version);
     return { url: arm64Url, source: 'apkeep' };
   } catch (variantErr) {
-    console.error(`[apkeep-resolve] Custom resolver failed (${variantErr.message}), falling back to apkeep binary`);
+    // No second resolution path here. The apkeep binary only downloads a
+    // file, it exposes no URL, so running it would discard the download and
+    // return a page URL that downloadWithUrl cannot fetch. Fail instead so
+    // parallelResolveSources moves on to apkmirror-api / apkmirror, and the
+    // sequential tail in download() still runs downloadWithApkeep.
+    console.error(`[apkeep-resolve] Custom resolver failed (${variantErr.message})`);
+    throw new Error(`apkeep resolver failed: ${variantErr.message}`, { cause: variantErr });
   }
-
-  // Fallback: run apkeep with the preferred_arch hinted via the
-  // x-abis header. apkeep 1.0.0 doesn't pick the arm64-v8a variant
-  // from the response (its regex only captures the first URL), but the
-  // future versions may. The sequential downloadWithApkeep will pick
-  // up the actual download when the constructed URL fails.
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'apkeep-'));
-  const tempFile = path.join(tempDir, `${packageId}_${version}.apk`);
-
-  return new Promise((resolve, reject) => {
-    const args = ['-a', `${packageId}@${version}`, '-d', 'apk-pure', tempFile];
-
-    const execFileImpl = opts.execFileImpl || execFile;
-    execFileImpl('apkeep', args, { timeout: TIMEOUTS.apkeepResolve }, (error, stdout, stderr) => {
-      try { fs.unlinkSync(tempFile); fs.rmdirSync(tempDir); } catch (_e) { /* ignore */ }
-
-      if (error) {
-        console.error(`[apkeep-resolve] Failed: ${error.message}`);
-        reject(new Error(`apkeep failed: ${error.message}${stderr ? ` - ${stderr}` : ''}`));
-        return;
-      }
-
-      const url = `https://apkpure.com/${packageId.replace(/\./g, '/')}/${version}`;
-      console.error(`[apkeep-resolve] Got APK via apkeep`);
-      resolve({ url, source: 'apkeep' });
-    });
-  });
 }
 
 /**
