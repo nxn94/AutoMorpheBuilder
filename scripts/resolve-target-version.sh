@@ -58,9 +58,7 @@ fi
 
 if [ -z "${GITHUB_OUTPUT:-}" ]; then
   echo "version=$version"
-  echo "versions=$version"
 else
   echo "version=$version" >> "$GITHUB_OUTPUT"
-  echo "versions=$version" >> "$GITHUB_OUTPUT"
 fi
 echo "Selected version for $APP_ID: $version"
