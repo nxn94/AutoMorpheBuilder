@@ -49,7 +49,6 @@ jobs:
       compat-failed: ${{ steps.filter.outputs.compat-failed }}
       repo-versions: ${{ steps.check.outputs.repo-versions }}
       cli-version: ${{ steps.check.outputs.cli-version }}
-      cli-branch: ${{ steps.check.outputs.cli-branch }}
       cli-repo: ${{ steps.check.outputs.cli-repo }}
       skip-list: ${{ steps.filter.outputs.skip-list }}
     env:
@@ -299,7 +298,6 @@ jobs:
       PATCH_TAG: ${{ matrix.patchTag }}
       PATCH_SLUG: ${{ matrix.patchSlug }}
       CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
-      CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
       CLI_REPO: ${{ needs.check-versions.outputs.cli-repo }}
 
     steps:
@@ -315,7 +313,6 @@ jobs:
           java-version: "21"
 
       - name: Verify dependencies
-        id: deps
         run: |
           for tool in curl jq unzip; do
             if ! command -v "$tool" >/dev/null 2>&1; then
@@ -472,9 +469,7 @@ jobs:
           APKS_DIR: ${{ env.APKS_DIR }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
           APKEDITOR_JAR: ${{ steps.morphe.outputs.apkeditor_jar }}
-          PINNED_CHECK: ${{ steps.targetver_prep.outputs.pinned }}
           PATCH_REPO: ${{ matrix.patchRepo }}
-          MORPHE_CLI_JAR: ${{ steps.targetver_prep.outputs.jar }}
           MANUAL_URL: ${{ steps.targetver_prep.outputs.url }}
           RUNNER_TEMP: ${{ runner.temp }}
         run: node "$GITHUB_WORKSPACE/.github/scripts/download-supported-apk.js"
@@ -636,7 +631,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APKS_DIR: apks
           CLI_VERSION: ${{ needs.check-versions.outputs.cli-version }}
-          CLI_BRANCH: ${{ needs.check-versions.outputs.cli-branch }}
           REPO_VERSIONS: ${{ needs.check-versions.outputs.repo-versions }}
         run: bash .github/scripts/pipeline/create_release.sh
 

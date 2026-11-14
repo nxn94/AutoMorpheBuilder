@@ -10,7 +10,6 @@ set -Eeuo pipefail
 
 APKS_DIR="${APKS_DIR:-./apks}"
 CLI_VERSION="${CLI_VERSION:-}"
-CLI_BRANCH="${CLI_BRANCH:-main}"
 _default_repo_versions='{}'
 REPO_VERSIONS="${REPO_VERSIONS:-$_default_repo_versions}"
 
