@@ -1798,7 +1798,7 @@ async function download(packageId, version, outputDir, opts = {}) {
       lastError = e;
     }
   }
-  throw finalError(lastError || new Error(`No source produced a usable ${packageId} ${version}`));
+  throw finalError(lastError || new Error(`No source produced a usable ${packageId} ${version}${hasPath ? '' : ' (APKMirror skipped: no apkmirror_path)'}`));
 }
 
 /**

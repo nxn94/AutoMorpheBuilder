@@ -64,7 +64,7 @@ Apps with `pin_version` set **also** skip URL updates — the cached URL would n
 
 The dynamic build matrix. Each key is an Android package id (`applicationId`), each value is an `AppConfig` (below). The order is preserved in the matrix for stable log output.
 
-**Validation:** the `check-versions` job fails immediately if `patch_repos` is empty, and emits a per-app table of failures if a key is malformed (missing `name` / `repo` / `branch` / `apkmirror_path`).
+**Validation:** the `check-versions` job fails immediately if `patch_repos` is empty, and emits a per-app table of failures if a key is malformed (missing `name` / `repo` / `branch`, or an empty `apkmirror_path`).
 
 ### `AppConfig`
 

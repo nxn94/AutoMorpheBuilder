@@ -123,7 +123,7 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
 | `patch_repos[*].name` | App identifier — used in the release tag and the Obtainium filter |
 | `patch_repos[*].repo` | Patch repo (`MorpheApp/morphe-patches`, community fork, etc.) |
 | `patch_repos[*].branch` | Patch branch |
-| `patch_repos[*].apkmirror_path` | APKMirror package slug. The current slug is auto-resolved via `/all-versions/` if the configured one is deprecated |
+| `patch_repos[*].apkmirror_path` | Optional (recommended): APKMirror package slug. Leave it out if the app isn't on APKMirror. The current slug is auto-resolved via `/all-versions/` if the configured one is deprecated |
 | `patch_repos[*].pin_version` | Optional: lock to a specific APK version |
 | `patch_repos[*].pin_patch_tag` | Optional: lock to a specific upstream patch tag (needed for patch repos without `latest_supported`) |
 | `cli.repo` / `cli.branch` | morphe-desktop repo and branch |
