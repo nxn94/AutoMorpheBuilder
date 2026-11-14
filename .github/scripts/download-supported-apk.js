@@ -336,10 +336,12 @@ if (cached) {
     source = 'cache';
   } else {
     console.log(`Discarding bad cached APK (missing ${loadPreferredArch() || 'preferred-arch'} libs, or built for too old an Android) — will re-download.`);
-    try { fs.unlinkSync(cached); } catch { /* ignore */ }
   }
-} else {
-  // Clear stale files in APKS_DIR (preserves nothing for this run).
+}
+if (!downloadSuccess) {
+  // Clear stale files in APKS_DIR (preserves nothing for this run). This also
+  // removes a merged <appId>.apk built from a discarded original, which would
+  // otherwise outrank the fresh download in the candidate scoring below.
   try {
     for (const f of fs.readdirSync(APKS_DIR)) {
       try { fs.unlinkSync(path.join(APKS_DIR, f)); } catch { /* ignore */ }
