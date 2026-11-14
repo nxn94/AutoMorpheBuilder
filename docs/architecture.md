@@ -77,7 +77,7 @@ Runs first. Failures here short-circuit the rest of the workflow.
 | Cache + install Playwright | `actions/cache@v5` + `pipeline/install_playwright.sh` | The custom installer bypasses a yauzl extraction bug in Playwright 1.58. |
 | Install apkeep + aapt | `pipeline/install_apkeep.sh` + `pipeline/install_aapt.sh` | apkeep is pinned to SHA-256 against `APKEEP_VERSION`. |
 | Install optional goopdl | `pipeline/install_goopdl.sh` | Commit-pinned Python virtualenv; installation failure warns without disabling existing sources. Also installed in each build job. Skipped on GitHub-hosted runners unless repository variable `GOOPDL_ON_GITHUB_RUNNERS` is `on`. |
-| Pre-download APKs in parallel | `pipeline/pre_download_apks.sh` | Per-app `&` + `wait`. Honours `SKIP_LIST` from the filter step. Calls `update-download-urls.js` per app (writes back only when `auto_update_urls=true` and no `pin_version` is set). |
+| Pre-download APKs in parallel | `pipeline/pre_download_apks.sh` | Per-app `&` + `wait`. Honours `SKIP_LIST` from the filter step. Each downloader is limited to `PRE_DOWNLOAD_TIMEOUT_SECONDS` (default 480); a timed-out app is reported as `FAILED:timeout` and the build job downloads it itself, so a hung source cannot hold `check-versions` until its 15-minute limit. Calls `update-download-urls.js` per app (writes back only when `auto_update_urls=true` and no `pin_version` is set). |
 
 Repository variable `PRE_DOWNLOAD=off` skips the pre-download and its artifact. Each `build` job then downloads its own APK, which saves `check-versions` time and artifact storage for forks that build few apps. The default is unchanged.
 

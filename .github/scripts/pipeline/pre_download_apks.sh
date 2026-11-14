@@ -3,6 +3,8 @@
 # Reuse supported-versions.json from the compatibility probe. Pins stay exact.
 # Download failures are warnings here; the matrix retries and validates the
 # final APK. SKIP_LIST omits apps with complete matching releases.
+# Each downloader is bounded by PRE_DOWNLOAD_TIMEOUT_SECONDS (default 480) so one
+# hung source cannot hold the whole check-versions job until its own time limit.
 
 set -Eeuo pipefail
 
@@ -16,6 +18,7 @@ RESULTS_DIR="${RESULTS_DIR:-${RUNNER_TEMP:-/tmp}/download_results}"
 _default_repo_versions='{}'
 REPO_VERSIONS="${REPO_VERSIONS:-$_default_repo_versions}"
 SKIP_LIST="${SKIP_LIST:-[]}"
+PRE_DOWNLOAD_TIMEOUT_SECONDS="${PRE_DOWNLOAD_TIMEOUT_SECONDS:-480}"
 
 mkdir -p "$APK_DIR" "$RESULTS_DIR"
 
@@ -79,7 +82,7 @@ download_for() {
   local APK_DIR="${APK_DIR}/${pkg}"
   mkdir -p "$APK_DIR"
   log "  [$pkg] downloading v${version}..."
-  local result err stderr_log
+  local result err stderr_log rc=0 failed_reason=download
   stderr_log="$(mktemp)"
   # Single-quoted trap so $stderr_log is re-evaluated when the trap
   # fires (on RETURN) — that way the second node invocation below,
@@ -94,7 +97,15 @@ download_for() {
   # the cause was missing APKMirror API credentials, a Cloudflare
   # block on the Playwright path, an APKPure rate-limit, or something
   # else entirely.
-  result="$(node "$(dirname "$0")/../unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>"$stderr_log" || true)"
+  # timeout signals the whole process group (Playwright children included) and
+  # exits 124, or 137 if it had to kill it.
+  result="$(timeout --kill-after=30 "$PRE_DOWNLOAD_TIMEOUT_SECONDS" \
+    node "$(dirname "$0")/../unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>"$stderr_log")" || rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    failed_reason=timeout
+    log_warn "  [$pkg] unified-downloader timed out after ${PRE_DOWNLOAD_TIMEOUT_SECONDS}s; the build job downloads it again"
+    result=''
+  fi
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
     url="$(printf '%s' "$result" | jq -r '.url // empty')"
@@ -129,7 +140,7 @@ download_for() {
         done
   fi
 
-  echo "FAILED:download" > "$RESULTS_DIR/${pkg}.failed"
+  echo "FAILED:${failed_reason}" > "$RESULTS_DIR/${pkg}.failed"
   return 0
 }
 
