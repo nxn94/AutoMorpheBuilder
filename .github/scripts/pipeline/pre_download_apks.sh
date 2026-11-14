@@ -97,14 +97,16 @@ download_for() {
   # the cause was missing APKMirror API credentials, a Cloudflare
   # block on the Playwright path, an APKPure rate-limit, or something
   # else entirely.
-  # timeout signals the whole process group (Playwright children included) and
-  # exits 124, or 137 if it had to kill it.
+  # timeout exits 124, or 137 if it had to SIGKILL the downloader.
   result="$(timeout --kill-after=30 "$PRE_DOWNLOAD_TIMEOUT_SECONDS" \
     node "$(dirname "$0")/../unified-downloader.js" "$pkg" "$version" "$APK_DIR" 2>"$stderr_log")" || rc=$?
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     failed_reason=timeout
     log_warn "  [$pkg] unified-downloader timed out after ${PRE_DOWNLOAD_TIMEOUT_SECONDS}s; the build job downloads it again"
     result=''
+    # A killed download skips its own cleanup and can leave a truncated APK
+    # that would be uploaded and picked up by the build job's cache lookup.
+    rm -rf -- "${APK_DIR:?}"/*
   fi
   if printf '%s' "$result" | jq -e '.success' >/dev/null 2>&1; then
     local url
