@@ -272,6 +272,16 @@ describe('validateConfig — per-app entry', () => {
     expect(hasError(issues, 'pin_version')).toBe(true);
   });
 
+  test('min_sdk must be a positive whole API level', () => {
+    const run = (min_sdk) => validateConfig({
+      patch_repos: { 'com.getmimo': validApp({ min_sdk }) },
+      cli: { repo: 'a/b', branch: 'main' },
+    });
+    expect(hasError(run(30), 'min_sdk')).toBe(false);
+    expect(hasError(run(99), 'min_sdk')).toBe(false);
+    for (const bad of [0, -1, 30.5, '30', null, true, 100, 300]) expect(hasError(run(bad), 'min_sdk')).toBe(true);
+  });
+
   test('pin_patch_tag without `v` prefix and digits is allowed', () => {
     const issues = validateConfig({
       patch_repos: { 'com.getmimo': validApp({ pin_patch_tag: '1.18.3' }) },

@@ -2,6 +2,11 @@
 
 const {
   decodeApkeepCParam,
+  listMatchingVariants,
+  remainingMatchingVariants,
+  variantKey,
+  buildCodeOf,
+  exactBuildOf,
   pickSmallestMatchingVariant,
   versionCodeOf,
 } = require('../apkeep-variant');
@@ -139,5 +144,77 @@ describe('download/apkeep-variant', () => {
       expect(versionCodeOf('https://download.pureapk.com/b/XAPK/abc')).toBeNull();
       expect(versionCodeOf(null)).toBeNull();
     });
+  });
+});
+
+describe('download/apkeep-variant: every variant of a version', () => {
+  test('listMatchingVariants returns all matching URLs, smallest first, other versions left out', () => {
+    expect(listMatchingVariants(FAKE_BODY, '26.07.27')).toEqual([FAKE_URL_ARM64, FAKE_URL_UNIV]);
+    // FAKE_URL_V7A's inner params carry no usable version name, so it never matches.
+  });
+
+  test('listMatchingVariants is empty for no match, no version, or a non-string body', () => {
+    expect(listMatchingVariants(FAKE_BODY, '1.0.0')).toEqual([]);
+    expect(listMatchingVariants(FAKE_BODY, '')).toEqual([]);
+    expect(listMatchingVariants(null, '26.07.27')).toEqual([]);
+  });
+
+  test('pickSmallestMatchingVariant is the head of that list', () => {
+    expect(pickSmallestMatchingVariant(FAKE_BODY, '26.07.27')).toBe(FAKE_URL_ARM64);
+    expect(pickSmallestMatchingVariant(FAKE_BODY, '1.0.0')).toBeNull();
+  });
+
+  test('remainingMatchingVariants skips the URL(s) already tried and keeps the size order', () => {
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', FAKE_URL_ARM64)).toEqual([FAKE_URL_UNIV]);
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', [FAKE_URL_ARM64, FAKE_URL_UNIV])).toEqual([]);
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'https://elsewhere.test/x')).toHaveLength(2);
+    expect(remainingMatchingVariants(FAKE_BODY, '1.0.0', FAKE_URL_ARM64)).toEqual([]);
+  });
+});
+
+describe('download/apkeep-variant: variants are identified by build, not URL', () => {
+  const retoken = (u) => `${u}&tok=2`;
+
+  test('variantKey is the build number and size; other strings identify themselves', () => {
+    expect(variantKey(FAKE_URL_ARM64)).toBe('build:260727002:57302642');
+    expect(variantKey(retoken(FAKE_URL_ARM64))).toBe(variantKey(FAKE_URL_ARM64));
+    expect(variantKey(FAKE_URL_ARM64)).not.toBe(variantKey(FAKE_URL_UNIV));
+    expect(variantKey('build:1:2')).toBe('build:1:2');
+    expect(variantKey('https://elsewhere.test/x')).toBe('https://elsewhere.test/x');
+    expect(variantKey(undefined)).toBeUndefined();
+  });
+
+  test('a variant already tried is skipped even when a later listing gives it a different URL', () => {
+    const later = [retoken(FAKE_URL_ARM64), FAKE_URL_UNIV].join('\n');
+    expect(remainingMatchingVariants(later, '26.07.27', FAKE_URL_ARM64)).toEqual([FAKE_URL_UNIV]);
+    expect(remainingMatchingVariants(later, '26.07.27', variantKey(FAKE_URL_ARM64))).toEqual([FAKE_URL_UNIV]);
+  });
+});
+
+describe('download/apkeep-variant: a rejected build is skipped by build number alone', () => {
+  test('buildCodeOf reads variant URLs, exact-build URLs and keys', () => {
+    expect(buildCodeOf(FAKE_URL_ARM64)).toBe('260727002');
+    expect(buildCodeOf('https://d.apkpure.com/b/XAPK/com.app?versionCode=77')).toBe('77');
+    expect(buildCodeOf('build:77')).toBe('77');
+    expect(buildCodeOf('build:77:1234')).toBe('77');
+    expect(buildCodeOf('https://elsewhere.test/x')).toBeNull();
+    expect(buildCodeOf(undefined)).toBeNull();
+  });
+
+  test('exactBuildOf only counts a build named alone', () => {
+    expect(exactBuildOf('https://d.apkpure.com/b/APK/com.app?versionCode=77')).toBe('77');
+    expect(exactBuildOf('build:77')).toBe('77');
+    expect(exactBuildOf('build:77:1234')).toBeNull();
+    expect(exactBuildOf(FAKE_URL_ARM64)).toBeNull();
+  });
+
+  test('a variant key skips only that build and size', () => {
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'build:260727002:57302642')).toEqual([FAKE_URL_UNIV]);
+  });
+
+  test('a build named alone skips every variant with that build number', () => {
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'build:260727002')).toEqual([]);
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'https://d.apkpure.com/b/XAPK/x?versionCode=260727002')).toEqual([]);
+    expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'build:1')).toEqual([FAKE_URL_ARM64, FAKE_URL_UNIV]);
   });
 });

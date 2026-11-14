@@ -6,7 +6,10 @@
  * validate archives, merge bundles, then verify the exact final package,
  * version and architecture. Pins never silently change version.
  * Required env: APP_ID, TARGET_VERSION, APKS_DIR, TOOLS_DIR, GITHUB_OUTPUT.
- * Optional env: TARGET_VERSIONS, APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP.
+ * Optional env: TARGET_VERSIONS, APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP,
+ * FRESH_DOWNLOAD (1 = ignore the APKS_DIR cache (and delete what it holds), the
+ * pre-downloaded TOOLS_DIR/apks files and the downloader's URL caches; the retry after a patch fingerprint failure).
+ * Outputs: apk, version, source (cache | preloaded | download): where the original came from.
  */
 
 const { inspectIdentity } = require('./apk-identity');
@@ -28,6 +31,7 @@ const { validateApkBoundary, validateArchiveSafe } = require('../../src/apk/vali
 const { validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { checkSigner, UnsignedApkError } = require('../../src/download/signer');
 const { apkeditorMergeArgs } = require('../../src/download/merge-args');
+const minSdkLib = require('../../src/download/min-sdk');
 
 const APP_ID = process.env.APP_ID;
 const TARGET_VERSION = process.env.TARGET_VERSION || '';
@@ -38,6 +42,7 @@ const APKEDITOR_JAR = process.env.APKEDITOR_JAR || '';
 const MANUAL_URL = process.env.MANUAL_URL || '';
 const RUNNER_TEMP = process.env.RUNNER_TEMP || '/tmp';
 const GITHUB_OUTPUT = process.env.GITHUB_OUTPUT;
+const FRESH_DOWNLOAD = /^(1|true)$/i.test(process.env.FRESH_DOWNLOAD || '');
 
 if (!APP_ID || !APKS_DIR || !TOOLS_DIR) {
   console.error('::error::APP_ID, APKS_DIR, and TOOLS_DIR are required.');
@@ -65,6 +70,8 @@ function ensureDir(d) {
  * polluting the test environment).
  */
 let lastDownloaderStderr = '';
+let lastDownloaderError = '';
+const { parseDownloaderOutput, wrongBuildAnnotation, wrongBuildFromStderr } = require('./failure-reasons');
 function runUnifiedDownloader(appId, version, apksDir) {
   const script = path.join(__dirname, 'unified-downloader.js');
   // stderr still streams live to the log; tee keeps a copy for the failure reason.
@@ -80,16 +87,7 @@ function runUnifiedDownloader(appId, version, apksDir) {
   try { lastDownloaderStderr = fs.readFileSync(errFile, 'utf8'); } catch { lastDownloaderStderr = ''; }
   fs.rmSync(path.dirname(errFile), { recursive: true, force: true });
   if (r.error) return { ok: false, error: r.error.message };
-  const stdout = (r.stdout || '').trim();
-  if (!stdout) return { ok: false, error: 'unified-downloader produced no output' };
-  try {
-    const parsed = JSON.parse(stdout);
-    return parsed.success
-      ? { ok: true, result: parsed }
-      : { ok: false, error: parsed.error || 'unknown' };
-  } catch (e) {
-    return { ok: false, error: `could not parse unified-downloader output: ${e.message}` };
-  }
+  return parseDownloaderOutput(r.stdout);
 }
 
 /**
@@ -275,6 +273,8 @@ console.log(`Downloading APK for ${APP_ID}...`);
 ensureDir(APKS_DIR);
 
 let downloadSuccess = false;
+// Where the original came from: cache (apps/), preloaded (tools/apks/) or download.
+let source = '';
 
 /**
  * Return true if `filePath` is OK to use as-is (either no preferred
@@ -297,8 +297,32 @@ function cachedFileHasPreferredAbi(filePath) {
   }
 }
 
+/**
+ * Return true if `filePath` is not built for an older Android than the
+ * patches support (config.json `min_sdk`, opt-in per app).
+ * No floor, or a minimum that can't be read, keeps the file.
+ */
+let lastMinSdkRejection = null;
+function minSdkFloor() {
+  let config = {};
+  try { config = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'config.json'), 'utf8')); } catch { /* no config: no floor from it */ }
+  return minSdkLib.minSdkFromConfig(config, APP_ID);
+}
+function cachedFileMeetsMinSdk(filePath) {
+  const floor = minSdkFloor();
+  if (!floor) return true;
+  const { ok, sdk } = minSdkLib.checkFileMinSdk(filePath, floor, { isBundle: detectApkShape(filePath) === 'bundle' });
+  if (!ok) {
+    lastMinSdkRejection = { sdk, floor };
+    console.log(`::warning::Reused file ${path.basename(filePath)} rejected: built for an older Android (API ${sdk}+) than the patches need (API ${floor}+).`);
+  }
+  return ok;
+}
+
 // 1. Check for cached APK matching target version
-const cached = findCachedApk(APKS_DIR, TARGET_VERSION);
+// A fresh download skips the cache; the else branch below then clears APKS_DIR,
+// the stale original and any merged <appId>.apk with it.
+const cached = FRESH_DOWNLOAD ? null : findCachedApk(APKS_DIR, TARGET_VERSION);
 if (cached) {
   // Cached files survive across builds via actions/cache@v5 keyed by
   // apk-<appId>-<version>. Files written BEFORE the download-side ABI
@@ -306,11 +330,12 @@ if (cached) {
   // through this cache hit into the ABI guardrail at the end of this
   // script, hard-failing the build. Validate the cache contents the
   // same way the live downloader would.
-  if (cachedFileHasPreferredAbi(cached)) {
+  if (cachedFileHasPreferredAbi(cached) && cachedFileMeetsMinSdk(cached)) {
     console.log(`Using cached APK: ${cached} (v${TARGET_VERSION})`);
     downloadSuccess = true;
+    source = 'cache';
   } else {
-    console.log(`Discarding bad cached APK (missing ${loadPreferredArch() || 'preferred-arch'} libs) — will re-download.`);
+    console.log(`Discarding bad cached APK (missing ${loadPreferredArch() || 'preferred-arch'} libs, or built for too old an Android) — will re-download.`);
     try { fs.unlinkSync(cached); } catch { /* ignore */ }
   }
 } else {
@@ -329,7 +354,7 @@ if (!downloadSuccess) {
     process.exit(1);
   }
 
-  const preloaded = findCachedApk(path.join(TOOLS_DIR, 'apks', APP_ID), TARGET_VERSION);
+  const preloaded = FRESH_DOWNLOAD ? null : findCachedApk(path.join(TOOLS_DIR, 'apks', APP_ID), TARGET_VERSION);
   if (preloaded) {
     // Same ABI validation as the APKS_DIR cache above. The
     // pre-downloaded file was produced by pre_download_apks.sh, which
@@ -337,7 +362,7 @@ if (!downloadSuccess) {
     // 32-bit-only APK at download time) — but the artifact cache can
     // outlive a deploy by up to 1 day (see
     // actions/upload-artifact@v7 retention-days: 1 in morphe-build.yml).
-    if (cachedFileHasPreferredAbi(preloaded)) {
+    if (cachedFileHasPreferredAbi(preloaded) && cachedFileMeetsMinSdk(preloaded)) {
       console.log(`Using pre-downloaded APK from check-versions: ${preloaded} (matches v${TARGET_VERSION})`);
       fs.copyFileSync(preloaded, path.join(APKS_DIR, path.basename(preloaded)));
       // Mark success and skip the unified-downloader fallback below,
@@ -347,8 +372,10 @@ if (!downloadSuccess) {
       // output and patch_apk.sh fails with "Required env var APK is
       // empty." (see exp-3 report on run 31908351240).
       downloadSuccess = true;
+      source = 'preloaded';
     } else {
-      // Preloaded file exists but is missing the preferred arch's libs.
+      // Preloaded file exists but is missing the preferred arch's libs, or is
+      // built for an older Android than the patches support.
       // Discard it and fall through to the unified-downloader (which
       // has its own ABI validation + fallback chain).
       console.log(`Discarding bad pre-downloaded APK — will re-download via unified-downloader.`);
@@ -365,12 +392,23 @@ if (!downloadSuccess) {
     if (dl.ok) {
       console.log(`unified-downloader succeeded: ${JSON.stringify(dl.result)}`);
       downloadSuccess = true;
+      source = 'download';
     } else {
       console.log(`unified-downloader failed: ${dl.error}`);
+      lastDownloaderError = dl.error;
       if (MANUAL_URL) {
         console.log('Trying manual URL fallback...');
-        if (downloadWithCurl(MANUAL_URL, APKS_DIR, APP_ID)) {
+        const manualFile = downloadWithCurl(MANUAL_URL, APKS_DIR, APP_ID);
+        if (manualFile && cachedFileMeetsMinSdk(manualFile)) {
           downloadSuccess = true;
+          source = 'download';
+        } else if (manualFile) {
+          try { fs.unlinkSync(manualFile); } catch { /* ignore */ }
+          if (lastMinSdkRejection) {
+            lastDownloaderError = minSdkLib.wrongBuildMessage({
+              appId: APP_ID, version: TARGET_VERSION, rejectedSdks: [lastMinSdkRejection.sdk], floor: lastMinSdkRejection.floor, arch: loadPreferredArch() || 'arm64-v8a',
+            });
+          }
         }
       }
     }
@@ -378,6 +416,10 @@ if (!downloadSuccess) {
 }
 
 if (!downloadSuccess) {
+  // The downloader's own error, or, if it was killed before printing one, rebuilt from its [min-sdk] log lines.
+  const wrongBuild = wrongBuildAnnotation(lastDownloaderError)
+    || wrongBuildAnnotation(wrongBuildFromStderr(lastDownloaderStderr, { appId: APP_ID, version: TARGET_VERSION, arch: loadPreferredArch() }));
+  if (wrongBuild) console.error(wrongBuild);
   const reasons = require('./failure-reasons').downloadReasons(lastDownloaderStderr);
   console.error(`::error::Could not download requested version ${TARGET_VERSION} for ${APP_ID}`
     + (reasons.length ? `. ${reasons.join('; ')}.` : ''));
@@ -594,6 +636,7 @@ try {
   process.exit(1);
 }
 setOutput('apk', finalApk);
+setOutput('source', source);
 // Name the build by the version the patches asked for. An APK whose
 // versionName adds a label (Gboard's "...-release-arm64-v8a") would
 // otherwise get a release tag the up-to-date check never finds, so the app

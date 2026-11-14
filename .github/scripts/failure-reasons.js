@@ -45,9 +45,51 @@ function patchFailureAnnotation(log) {
   return `::error title=Patch failed${failed ? ` (${failed})` : ''}::${why.trim().replace(/%/g, '%25')}`;
 }
 
+/**
+ * Pure. What the unified-downloader printed on stdout, as { ok, result } or
+ * { ok: false, error }.
+ */
+function parseDownloaderOutput(stdout) {
+  const text = String(stdout || '').trim();
+  if (!text) return { ok: false, error: 'unified-downloader produced no output' };
+  try {
+    const parsed = JSON.parse(text);
+    return parsed.success ? { ok: true, result: parsed } : { ok: false, error: parsed.error || 'unknown' };
+  } catch (e) {
+    return { ok: false, error: `could not parse unified-downloader output: ${e.message}` };
+  }
+}
+
+/**
+ * Pure. The "Wrong build:" message rebuilt from the downloader's own
+ * `[min-sdk] <source>: build is for Android API X+, the patches need API N+`
+ * log lines, for when the downloader was killed before it could print its
+ * error. Null when no such line exists.
+ */
+function wrongBuildFromStderr(stderr, { appId, version, arch }) {
+  const rejected = [];
+  let floor = 0;
+  for (const m of String(stderr || '').matchAll(/\[min-sdk\] [^\n]*?build is for Android API (\d+)\+, the patches need API (\d+)\+/g)) {
+    rejected.push(Number(m[1]));
+    floor = Number(m[2]);
+  }
+  if (!rejected.length) return null;
+  return require('../../src/download/min-sdk').wrongBuildMessage({ appId, version, rejectedSdks: rejected, floor, arch: arch || 'arm64-v8a' });
+}
+
+/**
+ * Pure. The GitHub annotation for the downloader's "Wrong build:" error (every
+ * download was for an older Android than the patches need), else null.
+ */
+function wrongBuildAnnotation(error) {
+  const text = String(error || '');
+  if (!text.startsWith('Wrong build:')) return null;
+  return `::error title=Wrong build::${text.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`;
+}
+
 if (require.main === module) {
   const annotation = patchFailureAnnotation(require('node:fs').readFileSync(process.argv[2], 'utf8'));
   if (annotation) console.log(annotation);
 }
 
-module.exports = { downloadReasons, patchFailureAnnotation };
+module.exports = { downloadReasons, patchFailureAnnotation, parseDownloaderOutput, wrongBuildAnnotation, wrongBuildFromStderr };

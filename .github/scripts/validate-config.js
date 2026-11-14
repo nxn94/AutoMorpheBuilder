@@ -66,6 +66,7 @@ const KNOWN_APP_KEYS = new Set([
   'apkmirror_path',
   'pin_version',
   'pin_patch_tag',
+  'min_sdk',
   'display_name',
   'extra_patches',
   'patch_options',
@@ -370,6 +371,19 @@ function validateConfig(config) {
           message:
             `pin_version "${entry.pin_version}" must be a numeric ` +
             `version like "20.44.38" or "26.07.27" (digits + dots).`,
+        });
+      }
+    }
+
+    // min_sdk (optional): the lowest Android API level the patches support
+    if ('min_sdk' in entry) {
+      if (!Number.isSafeInteger(entry.min_sdk) || entry.min_sdk < 1 || entry.min_sdk > 99) {
+        issues.push({
+          level: 'error',
+          appId,
+          message:
+            `min_sdk ${JSON.stringify(entry.min_sdk)} must be a whole ` +
+            `Android API level from 1 to 99, such as 30 (Android 11).`,
         });
       }
     }

@@ -313,6 +313,14 @@ One app's upload failed; the others were published. Use **Re-run failed jobs**: 
 
 **Fix:** for the first, remove the settings, or turn the same-named patch on in `patches.json` if you want it. For the second, check the key and value against the patch's options (`morphe-desktop list-patches --with-options`) and correct them in `patch_options`.
 
+## A patch fails to match a fingerprint on an app version it supports
+
+`Failed to match the fingerprint` in the patch step, for a version the patches list as supported.
+
+**Cause:** an app can ship two different files under the same versionName and versionCode (say a Google Play copy and an APKPure copy, differing in obfuscation). If the cached original is the one the patches don't match, every run fails the same way.
+
+**What the builder does:** if the original came from the `apk-<appId>-<version>-*` cache, it downloads a fresh one and patches again. The retry skips the APK cache, the pre-downloaded files and the remembered or listed download URLs, but the sources tried first (Google Play by build, APKPure exact build) still run: if one of those served the bad file, the retry gets the same file and fails closed (the run fails with an error saying so; the patches, not the cache, are the likely cause). Pin another version or wait for a patch update. After a successful retry the run is green with a notice, though the first patch attempt shows an error. The fresh file is saved as a newer cache entry, so the next run starts from it (also when the retry fails). Cache keys changed to `apk-<appId>-<version>-<run_id>-<run_attempt>`, so each app downloads its original once after this upgrade.
+
 ## Reporting a new failure
 
 If you hit a failure not listed here:

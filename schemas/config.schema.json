@@ -94,6 +94,12 @@
           "pattern": "^v?\\d+(\\.\\d+)+([-.+][\\w.-]+)?$",
           "description": "Optional. Patch-tag pin (e.g. 'v1.18.3' or 'v1.24.0-dev.8')."
         },
+        "min_sdk": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 99,
+          "description": "Optional. Lowest Android API level (e.g. 30 for Android 11) the patches support. A downloaded APK whose own minSdkVersion is lower is discarded and the next source or APKPure variant is tried; if every download is too old the build fails with a \"Wrong build\" message. The patch list's own minSdk is not used (it may not describe the APK's minSdkVersion). Changing this rebuilds only this app."
+        },
         "extra_patches": {
           "type": "object",
           "propertyNames": { "pattern": "^[^/\\s:]+/[^/\\s]+$" },
