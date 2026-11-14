@@ -71,11 +71,19 @@ if (!preferredArch) return;
   const shape = detectApkShape(filePath, limits);
   if (shape === 'unknown') return; // Trust upstream; download-supported-apk.js's post-merge guardrail is the safety net.
   if (shape === 'apk') {
-    if (listApkAbis(filePath, limits).length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch, limits)) {
+    const abis = listApkAbis(filePath, limits);
+    if (abis.length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch, limits)) {
       throw new Error(
         `Downloaded APK ${path.basename(filePath)} is missing ` +
         `lib/${preferredArch}/*.so (upstream mislabelled it as universal/` +
         `noarch). Falling back to next download source.`,
+      );
+    }
+    if (abis.length === 0 && requiresAbiSplit(filePath, limits)) {
+      throw new Error(
+        `Downloaded APK ${path.basename(filePath)} is the base APK of a split app: ` +
+        'it has no native libraries and its manifest requires an ABI split. ' +
+        'Falling back to next download source.',
       );
     }
     return;
@@ -114,4 +122,27 @@ if (!preferredArch) return;
   }
 }
 
-module.exports = { validateDownloadedApkAbi, detectApkShape };
+/**
+ * True when the APK's manifest declares `requiredSplitTypes` with an ABI
+ * type (e.g. "base__abi"). Such an APK is the base of a split app whose
+ * native libraries live in the ABI split, so on its own it installs
+ * nowhere (Discord's base.apk, served by APKPure as a plain "APK").
+ *
+ * Scans the raw binary manifest as UTF-16 and as UTF-8 text (its string
+ * pool may use either), so no aapt is needed. Any read error counts as "not required".
+ */
+function requiresAbiSplit(filePath, limits = {}) {
+  let manifest;
+  try {
+    manifest = execFileSync('unzip', ['-p', filePath, 'AndroidManifest.xml'], {
+      timeout: limits.timeoutMs?.(), maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return false;
+  }
+  return [manifest.toString('utf16le'), manifest.toString('latin1')].some(
+    (text) => text.includes('requiredSplitTypes') && /\w__abi\b/.test(text),
+  );
+}
+
+module.exports = { validateDownloadedApkAbi, detectApkShape, requiresAbiSplit };

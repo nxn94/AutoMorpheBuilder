@@ -96,13 +96,36 @@ describe('validateDownloadedApkAbi', () => {
 
   test('does not throw for an APK with no native libs (pure-Java app)', () => {
     if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
-    const apk = makeApk(tmp, 'java.apk', ['classes.dex']);
-    // No lib/ entries — apkHasNativeLibsForArch returns false, but
-    // the function should still let it through (no libs to validate).
-    // Actually no — apkHasNativeLibsForArch returns false for missing,
-    // and we throw. The expected behavior here is debatable; this
-    // documents the actual behavior: missing libs => throw.
-    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(/missing/);
+    // No lib/ entries and no required ABI split: nothing to validate.
+    const apk = makeApk(tmp, 'java.apk', ['AndroidManifest.xml', 'classes.dex']);
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).not.toThrow();
+  });
+
+  // APKPure serves Discord's base.apk as a plain "APK": no lib/ at all,
+  // and its manifest requires the ABI split (requiredSplitTypes="base__abi").
+  function makeBaseApk(name, manifestText, encoding = 'utf16le') {
+    const apk = makeApk(tmp, name, ['classes.dex']);
+    fs.writeFileSync(path.join(tmp, 'AndroidManifest.xml'), Buffer.from(manifestText, encoding));
+    execFileSync('zip', [apk, 'AndroidManifest.xml'], { cwd: tmp, stdio: 'ignore' });
+    return apk;
+  }
+
+  test('throws for a base APK with no libs whose manifest requires an ABI split', () => {
+    if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
+    const apk = makeBaseApk('base.apk', 'manifest requiredSplitTypes splitTypes base__abi com.discord');
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(/base APK of a split app/);
+  });
+
+  test('also reads a UTF-8 string pool', () => {
+    if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
+    const apk = makeBaseApk('base_utf8.apk', 'manifest requiredSplitTypes base__abi com.discord', 'latin1');
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(/base APK of a split app/);
+  });
+
+  test('does not throw when the required splits are not ABI splits', () => {
+    if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
+    const apk = makeBaseApk('base_density.apk', 'manifest requiredSplitTypes base__density com.example');
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).not.toThrow();
   });
 
   // Regression guard: APKMirror's apkm-pw flow saves BUNDLE-shaped
