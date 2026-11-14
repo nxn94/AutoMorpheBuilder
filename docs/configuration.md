@@ -179,6 +179,8 @@ Lock the build to this exact APK version, bypassing `morphe-desktop list-version
 - A specific upstream version is known to have arm64-v8a libs (and a later universal bundle is mislabeled).
 - You want to verify a build reproducibly before letting CI follow latest.
 
+Without a pin, the newest version the patches support is built. Versions are ordered by their dotted numeric core first (`24.3.1` before `24.3`); on an equal core a plain version outranks one with a `-label`, so `1.2.3` is chosen over `1.2.3-beta`, and labels such as `12.39.0-prod.01` compare numerically among themselves (`compareVersionsDesc` in `build-plan.js`).
+
 When set:
 
 - `prepare_target_version.sh` outputs `pinned=1` and exports `PINNED_VERSION=<value>`.
