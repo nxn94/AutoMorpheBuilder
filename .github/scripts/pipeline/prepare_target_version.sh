@@ -22,12 +22,10 @@ set -Eeuo pipefail
 
 APP_ID="${APP_ID:-}"
 
-for var in APP_ID; do
-  if [ -z "${!var}" ]; then
-    log_error "Required env var $var is empty."
-    exit 1
-  fi
-done
+if [ -z "$APP_ID" ]; then
+  log_error "Required env var APP_ID is empty."
+  exit 1
+fi
 
 pin="$(pinned_version "$APP_ID" 2>/dev/null || true)"
 if [ -z "$pin" ] || [ "$pin" = "null" ]; then pin=""; fi
