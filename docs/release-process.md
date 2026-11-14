@@ -85,7 +85,14 @@ output and validation source (including runtime JSON policies), the build workfl
 the `morphe-desktop` and APKEditor pins, and `REBUILD_EPOCH` in
 `build-fingerprint.js`. Changing these inputs rebuilds an existing tag.
 CI/security-only workflows, tests, documentation helpers, and unrelated tool pins
-are excluded. The epoch remains a manual escape hatch for inputs not covered here.
+are excluded. So are files that cannot change a built APK: release pruning, cache and
+run-artifact cleanup, the patch-sync scripts, Playwright installation, `apk-signers.json`
+and `goopdl-version-codes.json` (a release was already validated when it was built), and
+the lockfile's `dev` packages. These are listed in `NON_OUTPUT_FILES` in
+`build-fingerprint.js`. The list is an exclusion list on purpose: any other `.js`, `.sh` or
+`.json` file under `src/`, `.github/scripts/` or `scripts/` is hashed, so a new file
+defaults to "affects output" and rebuilds every app until someone shows it does not.
+The epoch remains a manual escape hatch for inputs not covered here.
 Older releases without provenance are rebuilt once.
 
 `workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison unless its `force` box is unticked. Its `apps` box limits the run to the named apps, which build even if current.
