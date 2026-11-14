@@ -403,7 +403,6 @@ jobs:
         id: targetver_prep
         env:
           APP_ID: ${{ matrix.appId }}
-          PATCH_REPO: ${{ matrix.patchRepo }}
         run: bash .github/scripts/pipeline/prepare_target_version.sh
 
       - name: Resolve supported version for ${{ matrix.appId }}

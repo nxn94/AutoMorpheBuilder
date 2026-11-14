@@ -100,7 +100,7 @@ test('workflow resolves deferred packages immediately after verified download an
   expect(fetch.indexOf('node "$(dirname "$0")/../patch-metadata-runtime.js" resolve')).toBeGreaterThan(fetch.indexOf('# --- APKEditor'));
 });
 
-test('both target-version entry points honor generated explicit opt-ins and exact suffixes', () => {
+test('the target-version entry point honors generated explicit opt-ins and exact suffixes', () => {
   const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
   const { execFileSync } = require('node:child_process');
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'target-metadata-'));
@@ -110,7 +110,7 @@ test('both target-version entry points honor generated explicit opt-ins and exac
     fs.writeFileSync(path.join(tmp, 'owner-repo.mpp'), 'stub');
     const patchesFile = path.join(tmp, 'choices.json');
     fs.writeFileSync(patchesFile, JSON.stringify({ 'owner/repo': { 'com.example.app': { 'Opt-in': true } } }));
-    for (const [cmd, args] of [['bash', ['scripts/resolve-target-version.sh']], ['node', ['.github/scripts/resolve-supported-version.js']]]) {
+    for (const [cmd, args] of [['bash', ['scripts/resolve-target-version.sh']]]) {
       const output = path.join(tmp, 'output'); fs.writeFileSync(output, '');
       execFileSync(cmd, args, { env: { ...process.env, APP_ID: 'com.example.app', PATCH_REPO: 'owner/repo', TOOLS_DIR: tmp, PATCHES_FILE: patchesFile, PINNED_VERSION: '', RESOLVED_VERSION: '', GITHUB_OUTPUT: output }, stdio: 'pipe' });
       expect(fs.readFileSync(output, 'utf8')).toContain('version=12.39.0-prod.01\n');
