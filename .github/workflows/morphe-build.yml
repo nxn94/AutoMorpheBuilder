@@ -510,11 +510,9 @@ jobs:
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
           OUT_DIR: ${{ env.OUT_DIR }}
           APKEDITOR_JAR: ${{ steps.morphe.outputs.apkeditor_jar }}
-          PINNED_CHECK: ${{ steps.targetver_prep.outputs.pinned }}
           PATCH_REPO: ${{ matrix.patchRepo }}
           PATCH_TAG: ${{ matrix.patchTag }}
           PATCH_SLUG: ${{ matrix.patchSlug }}
-          MORPHE_CLI_JAR: ${{ steps.targetver_prep.outputs.jar }}
           MANUAL_URL: ${{ steps.targetver_prep.outputs.url }}
           RUNNER_TEMP: ${{ runner.temp }}
           ANDROID_HOME: /tmp/android-sdk
