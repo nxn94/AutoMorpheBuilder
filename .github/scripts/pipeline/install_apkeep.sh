@@ -4,8 +4,10 @@
 # downloading APKs from APKPure.
 #
 # Replaces the ~7-line `run:` block in the workflow's "Install apkeep"
-# step. Idempotent: if /usr/local/bin/apkeep already exists, the
-# version check is run and the script exits 0.
+# step. Idempotent: if /usr/local/bin/apkeep already exists AND matches the
+# pinned SHA-256 for APKEEP_VERSION, the version is printed and the script
+# exits 0. A binary that does not match (an older cached version, a corrupt
+# or modified file) is replaced by a fresh, verified download.
 #
 # Behaviour matches the original step:
 #   - Download apkeep 0.18.0 from EFForg/apkeep releases
@@ -34,8 +36,11 @@ APKEEP_URL="https://github.com/EFForg/apkeep/releases/download/${APKEEP_VERSION}
 APKEEP_SHA256="c1e89d5cad5852bdbec44617c56fcf0fbd12edfd4bfd9f399f8e852f0b3bee27"
 
 if [ -x "$APKEEP_PATH" ]; then
-  "$APKEEP_PATH" --version || true
-  exit 0
+  if echo "${APKEEP_SHA256}  ${APKEEP_PATH}" | sha256sum -c --strict >/dev/null 2>&1; then
+    "$APKEEP_PATH" --version || true
+    exit 0
+  fi
+  log_warn "apkeep at $APKEEP_PATH does not match the pinned ${APKEEP_VERSION} sha256; reinstalling."
 fi
 
 # Pick a writable target. If the default path isn't writable as the
