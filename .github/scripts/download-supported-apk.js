@@ -6,7 +6,7 @@
  * validate archives, merge bundles, then verify the exact final package,
  * version and architecture. Pins never silently change version.
  * Required env: APP_ID, TARGET_VERSION, APKS_DIR, TOOLS_DIR, GITHUB_OUTPUT.
- * Optional env: TARGET_VERSIONS, APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP,
+ * Optional env: APKEDITOR_JAR, MANUAL_URL, RUNNER_TEMP,
  * FRESH_DOWNLOAD (1 = ignore the APKS_DIR cache (and delete what it holds), the
  * pre-downloaded TOOLS_DIR/apks files and the downloader's URL caches; the retry after a patch fingerprint failure).
  * Outputs: apk, version, source (cache | preloaded | download): where the original came from.
@@ -35,7 +35,6 @@ const minSdkLib = require('../../src/download/min-sdk');
 
 const APP_ID = process.env.APP_ID;
 const TARGET_VERSION = process.env.TARGET_VERSION || '';
-const TARGET_VERSIONS = process.env.TARGET_VERSIONS || '';
 const APKS_DIR = process.env.APKS_DIR;
 const TOOLS_DIR = process.env.TOOLS_DIR;
 const APKEDITOR_JAR = process.env.APKEDITOR_JAR || '';
@@ -445,7 +444,6 @@ for (const file of fs.readdirSync(APKS_DIR)) {
 let apkCandidate = findPackageCandidate(APKS_DIR);
 if (!apkCandidate) {
   console.error(`::error::No package downloaded for latest Morphe-supported version ${effectiveTargetVersion} for ${APP_ID}.`);
-  console.error(`All compatible versions (for reference): ${TARGET_VERSIONS}`);
   process.exit(1);
 }
 if (!fs.existsSync(apkCandidate)) {

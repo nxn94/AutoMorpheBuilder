@@ -469,7 +469,6 @@ jobs:
           APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
           APKMIRROR_API_PASS: ${{ secrets.APKMIRROR_API_PASS }}
           TARGET_VERSION: ${{ steps.targetver.outputs.version }}
-          TARGET_VERSIONS: ${{ steps.targetver.outputs.versions }}
           APKS_DIR: ${{ env.APKS_DIR }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
           APKEDITOR_JAR: ${{ steps.morphe.outputs.apkeditor_jar }}
@@ -513,7 +512,6 @@ jobs:
           APKMIRROR_API_USER: ${{ secrets.APKMIRROR_API_USER }}
           APKMIRROR_API_PASS: ${{ secrets.APKMIRROR_API_PASS }}
           TARGET_VERSION: ${{ steps.targetver.outputs.version }}
-          TARGET_VERSIONS: ${{ steps.targetver.outputs.versions }}
           APKS_DIR: ${{ env.APKS_DIR }}
           TOOLS_DIR: ${{ env.TOOLS_DIR }}
           OUT_DIR: ${{ env.OUT_DIR }}
