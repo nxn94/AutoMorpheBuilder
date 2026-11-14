@@ -231,6 +231,8 @@ A missing APK filter (or one that lacks the `-v` infix) causes Obtainium to skip
 
 **Fix:** the downloader now skips the aapt check on bundles (`detectApkShape(outputPath) === 'bundle'`) and lets the post-merge step verify the inner `base.apk`'s `versionName`. Sofascore's arm64-v8a variant from APKPure is a `.xapk` URL — this path lets the 57 MB arm64-v8a variant win over the 93 MB universal.
 
+The message now reports the version aapt found and the validator's reason, for example `VERSION MISMATCH: expected 20.44.38, got 99.99.99 (version mismatch: got 99.99.99, wanted 20.44.38)`; `got unknown (aapt not available - cannot validate version)` means the check could not run, not that the APK is wrong. Older builds printed `got undefined` for every failure.
+
 If you see this error after upgrading, your saved file may not be the bundle shape expected — file an issue with the `download-resolver-failure.yml` template.
 
 ---

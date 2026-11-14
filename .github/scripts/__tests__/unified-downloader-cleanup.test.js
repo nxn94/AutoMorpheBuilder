@@ -157,7 +157,7 @@ describe('downloadWithUrl — cleanup-on-failure contract', () => {
         VER,
         downloadOptions(),
       ),
-    ).rejects.toThrow(/VERSION MISMATCH/);
+    ).rejects.toThrow(/VERSION MISMATCH: expected 20\.44\.38, got 99\.99\.99 \(version mismatch: got 99\.99\.99, wanted 20\.44\.38\)/);
 
     // The contract: a real curl process ran and its partial file was
     // removed after the rejection (cleanup ran before throw).
