@@ -88,7 +88,7 @@ CI/security-only workflows, tests, documentation helpers, and unrelated tool pin
 are excluded. The epoch remains a manual escape hatch for inputs not covered here.
 Older releases without provenance are rebuilt once.
 
-`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison unless its `force` box is unticked. Its `apps` box limits the run to the named apps, which build even if current.
+`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison only when its `force` box is ticked (it is unticked by default, so a manual run skips current releases like a scheduled one). Its `apps` box limits the run to the named apps, which build even if current.
 
 After a successful publish, `create-release` deletes the run's artifacts; the APKs live on the releases. After a failed publish they stay for **Re-run failed jobs**.
 Publication replaces the APK, checksum manifest, and provenance with `--clobber`.
@@ -118,7 +118,7 @@ The next workflow run will rebuild and republish it (or skip it, if you have not
 
 ## Manual workflow run
 
-`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to enabled. Untick it to skip current releases when `apps` is empty; explicitly selected apps build even if current. A run limited to named apps is titled `Build only <apps>` in the run list.
+`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to disabled, so a manual run with `apps` empty skips apps whose release is current, like a scheduled run. Tick it to rebuild every app even if current; explicitly selected apps build even if current. A run limited to named apps is titled `Build only <apps>` in the run list.
 
 To trigger only the patch-toggles refresh (no APK build), use `Actions → Update patches.json from upstream repos → Run workflow`.
 

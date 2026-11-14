@@ -243,7 +243,7 @@ If you see this error after upgrading, your saved file may not be the bundle sha
 
 **Fix:**
 
-1. Run **Build Morphe-patched apps** manually on the intended branch. `workflow_dispatch` forces rebuilding even when the release tag already exists; no release deletion is required.
+1. Run **Build Morphe-patched apps** manually on the intended branch. Tick **force** (or name the app in **apps**) to rebuild even when the release tag already exists; no release deletion is required.
 
 2. Check `build-inputs.json` and the completion marker in the release notes. Scheduled runs skip only complete releases with matching inputs; missing/stale provenance causes rebuilding.
 

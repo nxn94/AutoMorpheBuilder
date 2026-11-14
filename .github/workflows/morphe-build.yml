@@ -7,7 +7,7 @@ on:
       force:
         description: "Rebuild apps even if their release is current"
         type: boolean
-        default: true
+        default: false
       apps:
         description: "Build only these apps (names or package ids, comma-separated). Empty = all"
         type: string
