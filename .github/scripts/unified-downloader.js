@@ -691,7 +691,7 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
               // Cleanup-on-failure: same TOCTOU rationale as the
               // unlinkSync below.
               try { fs.unlinkSync(outputPath); } catch { /* best-effort */ }
-              reject(new Error(`VERSION MISMATCH: expected ${version}, got ${validation.version}`));
+              reject(new Error(`VERSION MISMATCH: expected ${version}, got ${validation.actualVersion}${validation.error ? ` (${validation.error})` : ''}`));
               return;
             }
           } else {
