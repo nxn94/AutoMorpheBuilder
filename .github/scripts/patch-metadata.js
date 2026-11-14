@@ -1,4 +1,5 @@
 'use strict';
+const { compareVersionsDesc } = require('./build-plan');
 
 // Text grammar from morphe-desktop 2.0.0 ListPatchesCommand, exercised
 // against captured upstream output. Never recover a partially parsed list.
@@ -326,7 +327,7 @@ function generatedVersions(list, appId, choices = {}, pin = '') {
   }
   if (!restricted.length) return []; // unrestricted never means implicit latest
   return [...new Set(restricted.reduce((a, b) => a.filter((v) => b.includes(v))))]
-    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    .sort(compareVersionsDesc);
 }
 function structuredPackages(patch) {
   const raw = patch.compatiblePackages ?? patch.compatible_packages ?? null;
