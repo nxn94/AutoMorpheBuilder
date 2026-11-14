@@ -24,3 +24,15 @@ test('a paused scheduled run cannot replace a manual run waiting in the queue', 
   expect(group).toContain("'morphe-build-skipped'");
   expect(group).toContain("|| 'morphe-build'");
 });
+
+test('workflow_dispatch force defaults to off so a manual run does not rebuild current releases', () => {
+  const force = workflow.on.workflow_dispatch.inputs.force;
+  expect(force.type).toBe('boolean');
+  expect(force.default).toBe(false);
+});
+
+test('FORCE_BUILD is driven by the force input only on workflow_dispatch', () => {
+  const steps = workflow.jobs['check-versions'].steps;
+  const filter = steps.find((s) => s.id === 'filter');
+  expect(filter.env.FORCE_BUILD).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.force }}");
+});

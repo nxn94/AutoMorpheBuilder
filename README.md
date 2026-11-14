@@ -45,7 +45,7 @@ Forking for personal use is encouraged. To add or remove an app, edit `config.js
 
 | Workflow | File | Trigger | Purpose |
 |----------|------|---------|---------|
-| **Build Morphe-patched apps** | `morphe-build.yml` | daily 05:15 UTC + manual | Resolves per-app tags and supported APK versions → scheduled runs skip complete releases with matching build inputs → matrix download, patch, sign and verify → publish per-app APK/checksum/provenance assets and keep 2 releases per app. Manual runs force rebuilding. |
+| **Build Morphe-patched apps** | `morphe-build.yml` | daily 05:15 UTC + manual | Resolves per-app tags and supported APK versions → scheduled runs skip complete releases with matching build inputs → matrix download, patch, sign and verify → publish per-app APK/checksum/provenance assets and keep 2 releases per app. Manual runs rebuild everything only when **force** is ticked. |
 | **Update patches.json from upstream repos** | `update-patches.yml` | manual + push to `config.json` | Refreshes `patches.json` from each upstream patch repo. New patches default to `true`; existing toggles are preserved. |
 | **CI** | `ci.yml` | PR + push to `main`/`dev` + successful metadata refresh on `main` | `npm ci` → `npm run check` (lint, tests, config, docs and README tables) → ShellCheck + actionlint. Config-only main pushes are validated after metadata refresh. |
 | **CodeQL** | `codeql.yml` | PR + push to `main` + daily 06:00 UTC | Static security analysis (JavaScript/TypeScript + Actions). |

@@ -155,7 +155,7 @@ Each entry under `patch_repos` is one app. Remove entries to skip an app; add en
 
 Actions → **Build Morphe-patched apps** → Run workflow.
 
-Select your intended branch (normally `main`). Scheduled runs use the default branch daily at 05:15 UTC and skip apps only when APK, checksum and provenance assets are complete and match the current build inputs. Manual runs force rebuilding, including existing tags. See [release identity](docs/release-process.md#build-identity-and-forced-rebuilds).
+Select your intended branch (normally `main`). Scheduled runs use the default branch daily at 05:15 UTC and skip apps only when APK, checksum and provenance assets are complete and match the current build inputs. Manual runs behave the same unless you tick **force**, which rebuilds everything, including existing tags. See [release identity](docs/release-process.md#build-identity-and-forced-rebuilds).
 
 The workflow installs optional goopdl and tries exact-version Google Play downloads before the existing cache/APKPure/APKMirror providers. No personal Google login is needed; all fallbacks remain available. Never upload or cache `tools/goopdl-home/` (the private anonymous-authentication pool).
 

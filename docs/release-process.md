@@ -6,7 +6,7 @@ This document describes how AutoMorpheBuilder produces, tags, publishes, and pru
 
 The `morphe-build.yml` workflow runs on a daily cron (`15 5 * * *` UTC) and on `workflow_dispatch`. The full pipeline is:
 
-1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding.
+1. **`check-versions`** resolves per-app patch tags and the CLI tag, then filters scheduled runs using complete assets and matching build-input provenance. Manual runs force rebuilding only when **force** is ticked.
 2. **`build`** (matrix per app, no signing secrets) downloads the APK and runs `morphe-desktop patch --unsigned`. `create-release` then signs each APK with `apksigner` before publishing.
 3. **`create-release`** (the only job gated by the `signing` environment) downloads unsigned APK artifacts via `pattern: '*-v*'` + `merge-multiple: true`, aligns when needed, signs and verifies every APK, publishes one GitHub Release per app, then prunes the oldest beyond `KEEP_COUNT`.
 
@@ -88,7 +88,7 @@ CI/security-only workflows, tests, documentation helpers, and unrelated tool pin
 are excluded. The epoch remains a manual escape hatch for inputs not covered here.
 Older releases without provenance are rebuilt once.
 
-`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison unless its `force` box is unticked. Its `apps` box limits the run to the named apps, which build even if current.
+`workflow_dispatch` sets `FORCE_BUILD=true` and bypasses this comparison only when its `force` box is ticked (it is unticked by default, so a manual run skips current releases like a scheduled one). Its `apps` box limits the run to the named apps, which build even if current.
 
 After a successful publish, `create-release` deletes the run's artifacts; the APKs live on the releases. After a failed publish they stay for **Re-run failed jobs**.
 Publication replaces the APK, checksum manifest, and provenance with `--clobber`.
@@ -118,7 +118,7 @@ The next workflow run will rebuild and republish it (or skip it, if you have not
 
 ## Manual workflow run
 
-`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to enabled. Untick it to skip current releases when `apps` is empty; explicitly selected apps build even if current. A run limited to named apps is titled `Build only <apps>` in the run list.
+`Actions → Build Morphe-patched apps → Run workflow` starts a pipeline run using `config.json` and `patches.json` from the selected ref (normally `main`). The optional `apps` input selects apps by package id or short name; leave it empty to include all configured apps. The `force` checkbox defaults to disabled, so a manual run with `apps` empty skips apps whose release is current, like a scheduled run. Tick it to rebuild every app even if current; explicitly selected apps build even if current. A run limited to named apps is titled `Build only <apps>` in the run list.
 
 To trigger only the patch-toggles refresh (no APK build), use `Actions → Update patches.json from upstream repos → Run workflow`.
 
