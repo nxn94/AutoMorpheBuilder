@@ -131,10 +131,10 @@ function resolveApkVersion(appId, jarPath, mppPath, config, selections = readSel
     );
     const m = supportedVersions(out);
     if (!m.length) return '';
-    // Sort descending (numeric-aware) so the head picks the recommended
-    // version, not whatever order the CLI happens to print — e.g. Twitch's
-    // RookieEnough/De-Vanced mpp prints 16.9.1 before 25.3.0.
-    return m.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
+    // supportedVersions() already sorts newest first (prereleases after their
+    // release), so the head is the recommended version whatever order the CLI
+    // prints — e.g. Twitch's RookieEnough/De-Vanced mpp prints 16.9.1 first.
+    return m[0];
   } catch (e) {
     console.log(`  ::warning::[${appId}] morphe-desktop list-versions failed: ${e.message}`);
     return '';
