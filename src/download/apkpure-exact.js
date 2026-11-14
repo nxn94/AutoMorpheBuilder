@@ -87,20 +87,27 @@ function createDeadline(budgetMs) {
   };
 }
 
-function readPackage(apk, exec, deadline) {
+function readBadging(apk, exec, deadline) {
   let output;
   try {
     output = exec('aapt', ['dump', 'badging', apk], { encoding: 'utf8', timeout: deadline?.timeoutMs() });
   } catch {
     output = exec('aapt2', ['dump', 'badging', apk], { encoding: 'utf8', timeout: deadline?.timeoutMs() });
   }
-  const line = String(output).split('\n').find((l) => l.startsWith('package:')) || '';
+  return String(output);
+}
+
+function packageAttrs(badging) {
+  const line = badging.split('\n').find((l) => l.startsWith('package:')) || '';
   return Object.fromEntries([...line.matchAll(/(\w+)='([^']*)'/g)].map((m) => [m[1], m[2]]));
 }
 
-/** The base APK's package details; a bundle's base is the APK that isn't a split. */
-function readBase(file, isBundle, exec, deadline) {
-  if (!isBundle) return readPackage(file, exec, deadline);
+/** The base APK's package details and its full badging text; a bundle's base is the APK that isn't a split. */
+function readBaseBadging(file, isBundle, exec, deadline) {
+  if (!isBundle) {
+    const badging = readBadging(file, exec, deadline);
+    return { attrs: packageAttrs(badging), badging };
+  }
   const entries = String(exec('unzip', ['-Z1', file], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: deadline?.timeoutMs() }))
     .split('\n').map((e) => e.trim()).filter((e) => /^[^/]+\.apk$/i.test(e));
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'apkpure-exact-'));
@@ -109,14 +116,20 @@ function readBase(file, isBundle, exec, deadline) {
       if (deadline?.expired()) break;
       try {
         exec('unzip', ['-o', '-j', '-q', file, entry, '-d', temp], { timeout: deadline?.timeoutMs() });
-        const attrs = readPackage(path.join(temp, entry), exec, deadline);
-        if (attrs.name && !attrs.split) return attrs;
+        const badging = readBadging(path.join(temp, entry), exec, deadline);
+        const attrs = packageAttrs(badging);
+        if (attrs.name && !attrs.split) return { attrs, badging };
       } catch { /* not readable; no base found from this entry */ }
     }
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
   throw new Error('bundle has no readable base APK');
+}
+
+/** The base APK's package details. */
+function readBase(file, isBundle, exec, deadline) {
+  return readBaseBadging(file, isBundle, exec, deadline).attrs;
 }
 
 /** Throws unless the file (or a bundle's base APK) is appId at exactly this build number. */
@@ -128,7 +141,7 @@ function assertExactBuild(file, appId, code, { isBundle = false, execFileSyncImp
 }
 
 /** The first candidate that passes every check as { result, url }, or null to move on. */
-async function downloadExactBuild({ appId, version, codes, partialPath, download, isBundle, execFileSyncImpl, budgetMs = BUDGET_MS }) {
+async function downloadExactBuild({ appId, version, codes, partialPath, download, isBundle, execFileSyncImpl, verify, budgetMs = BUDGET_MS }) {
   console.error(`[apkpure-exact] Build numbers for ${appId} v${version}: ${codes.join(', ')}`);
   const deadline = createDeadline(budgetMs);
   const { signal } = deadline;
@@ -138,6 +151,8 @@ async function downloadExactBuild({ appId, version, codes, partialPath, download
     try {
       const result = await download(url, { signal, userAgent: USER_AGENT, timeoutMs: deadline.timeoutMs, expired: deadline.expired });
       assertExactBuild(result.path, appId, code, { isBundle: isBundle(result.path, deadline.timeoutMs), execFileSyncImpl, deadline });
+      // Extra check from the caller (e.g. minimum Android), given this step's deadline; it throws to reject this candidate.
+      if (verify) await verify(result, deadline);
       // Some checks treat "couldn't run" as a pass, so a check cut off by the
       // limit proves nothing: past the end time, the file is not accepted.
       if (deadline.expired()) throw new Error('time limit reached during file checks');
@@ -152,4 +167,4 @@ async function downloadExactBuild({ appId, version, codes, partialPath, download
   return null;
 }
 
-module.exports = { USER_AGENT, targetsForApp, codesFromPatchList, patchListCodes, exactBuildUrls, assertExactBuild, downloadExactBuild };
+module.exports = { USER_AGENT, createDeadline, readBaseBadging, targetsForApp, codesFromPatchList, patchListCodes, exactBuildUrls, assertExactBuild, downloadExactBuild };

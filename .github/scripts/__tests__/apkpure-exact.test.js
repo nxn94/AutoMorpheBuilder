@@ -109,6 +109,15 @@ describe('downloadExactBuild', () => {
   const common = { appId: 'com.app', version: '1.2', partialPath: path.join(os.tmpdir(), 'exact-none.apk'), isBundle: () => false };
   const exec = (code) => () => `package: name='com.app' versionCode='${code}'\n`;
 
+  test('a verify hook that throws rejects the candidate and the next is tried', async () => {
+    const download = jest.fn(async (url) => ({ path: url.includes('=7') ? 'seven' : 'eight' }));
+    const verify = jest.fn((result) => { if (result.path === 'seven') throw new Error('too old'); });
+    const execFileSyncImpl = (_tool, args) => exec(args[2] === 'seven' ? 7 : 8)();
+    const found = await downloadExactBuild({ ...common, codes: [7, 8], download, execFileSyncImpl, verify });
+    expect(found.url).toBe('https://d.apkpure.com/b/XAPK/com.app?versionCode=8');
+    expect(verify).toHaveBeenCalledTimes(3); // XAPK and APK of build 7 both rejected, then XAPK of build 8
+  });
+
   test('a wrong build is rejected and the next candidate tried', async () => {
     const download = jest.fn(async (url) => ({ path: url.includes('=7') ? 'seven' : 'eight' }));
     const execFileSyncImpl = (_tool, args) => (args[2] === 'seven' ? exec(999)() : exec(8)());

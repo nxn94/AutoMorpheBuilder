@@ -143,6 +143,33 @@ function saveCachedUrl(packageId, version, url, source, cacheDir = DEFAULT_CACHE
 }
 
 /**
+ * Drop a cached URL that turned out to be unusable (e.g. a build for too old
+ * an Android), so the next run re-resolves. When `url` is given, only an entry
+ * holding that exact URL is removed.
+ *
+ * @param {string} packageId
+ * @param {string} version
+ * @param {string} [url] Remove only if the entry's url equals this.
+ * @param {string} [cacheDir]
+ * @returns {boolean} True if an entry was removed.
+ */
+function removeCachedUrl(packageId, version, url, cacheDir = DEFAULT_CACHE_DIR) {
+  const cacheFile = cacheFileFor(packageId, version, cacheDir);
+  try {
+    if (url) {
+      const entry = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+      if (entry.url !== url) return false;
+    }
+    fs.unlinkSync(cacheFile);
+    console.error(`[url-cache] Removed: ${packageId} v${version}`);
+    return true;
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error(`[url-cache] Could not remove entry: ${e.message}`);
+    return false;
+  }
+}
+
+/**
  * Prune URL cache entries for a package, keeping only the most-recently
  * updated `keep` entries.
  *
@@ -187,5 +214,6 @@ module.exports = {
   DEFAULT_CACHE_DIR,
   getCachedUrl,
   saveCachedUrl,
+  removeCachedUrl,
   cleanupOldUrls,
 };

@@ -76,6 +76,7 @@ The dynamic build matrix. Each key is an Android package id (`applicationId`), e
   "apkmirror_path": "vendor/example",          // required, APKMirror URL slug
   "pin_version":    "1.2.3",                   // optional, lock to this APK version
   "pin_patch_tag":  "v1.0.0",                  // optional, lock the patches release tag
+  "min_sdk":        30,                        // optional, lowest Android API level the patches support
   "display_name":   "Example",                 // optional, human-readable name for README/Obtainium
   "extra_patches":  { "owner/other-patches": ["Patch name"] }, // optional, named patches from other sources
   "patch_options":  { "Change app name": { "appName": "My Maps" } } // optional, patch settings
@@ -227,6 +228,22 @@ Sets values for patches that take settings, for patches in the app's own `repo`.
 - **Same-named patches:** morphe-desktop's `-e` acts on every patch of that name, ignoring case. If passing `-e` for a patch's settings would also switch on a same-named patch that is off by default (for example a universal one), the app's build fails instead.
 - **Rebuilds:** changing `patch_options` rebuilds that app only (it is part of the app entry).
 - Apps without the field behave exactly as before.
+
+#### `min_sdk` (optional)
+
+| | |
+|---|---|
+| Type | integer 1-99 (Android API level) |
+| Required | no |
+| Example | `30` (Android 11) |
+
+The lowest Android the patches support. A store can serve a build for an older Android than the patches handle (a store's arm64 build was made for Android 9 while the patches need Android 11), and the patcher then fails minutes after the download was accepted.
+
+- **Floor:** this value, and only this value. The check is opt-in per app: absent means no check. The patch list's own `minSdk` is deliberately not used, because it may describe the device or patched app rather than the APK's `minSdkVersion` (Morphe's YouTube targets carry 28/29) and would reject correct downloads.
+- **Check:** after each download (Google Play, exact APKPure build, URL cache, `patches.json` URL, resolvers) the file's `sdkVersion` is read with `aapt` (a bundle's base APK). A file below the floor is deleted, never cached (and removed from the URL cache if it came from there), and the next source is tried. A pre-downloaded APK in `apps/` and a `MANUAL_URL` download below the floor are discarded. A rejected URL is not downloaded again, and, best effort, the whole download stops starting new steps after about 540 s so the message below can survive the 600 s limit (if the downloader is killed anyway, the annotation is rebuilt from its `[min-sdk]` log lines). The error is also emitted as its own `::error title=Wrong build::` annotation.
+- **Unreadable:** if the minimum Android can't be read the file is kept and the patcher judges it.
+- **Failure:** if every source failed and at least one file was too old, the error reads `Wrong build: every download of <package> <version> was for older Android (API X+); the patches need API N+. Patch the <preferred_arch> (Android <name>+) build of <package> instead.`
+- **Rebuilds:** changing `min_sdk` rebuilds that app only (it is part of the app entry).
 
 #### `display_name` (optional)
 
