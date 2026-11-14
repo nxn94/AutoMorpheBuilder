@@ -12,7 +12,9 @@
  * This script identifies the *currently in use* version for each cache
  * pattern (from config.json) and deletes all other matching caches.
  * It always keeps:
- *   - the newest entry per pattern (to avoid breaking in-flight runs)
+ *   - the newest entry per pattern (to avoid breaking in-flight runs); for the
+ *     per-app apk- caches that means the newest entry of EACH app, and the
+ *     apk-urls- (downloader URL cache) entries are a pattern of their own
  *   - APK caches for currently-pinned apps (from config.json)
  *
  * Run modes:
@@ -56,10 +58,13 @@ const CACHE_PATTERNS = {
   'morphe-tools-desktop-': 'cli',
   'morphe-desktop-': 'cli',
   'morphe-patches-': 'patches',
+  'apk-urls-': 'apk-urls',
   'apk-': 'apk',
 };
 
 // `classifyCache` iterates Object.keys(CACHE_PATTERNS) in insertion order.
+// 'apk-' is likewise a prefix of 'apk-urls-', which is the downloader URL
+// cache, not an APK.
 // 'morphe-desktop-' is a prefix of 'morphe-tools-desktop-', so without this
 // ordering every morphe-tools-desktop-* cache would be misclassified as the
 // shorter morphe-desktop- group. We keep the longer prefix first so the
@@ -140,6 +145,53 @@ function classifyCache(cache) {
   return null;
 }
 
+/**
+ * The group within which only the newest cache is kept as a safety backup.
+ * Most patterns are one group; apk-<appId>-<version> caches are grouped per
+ * app (package ids contain no hyphen), so one app's newest cache is not
+ * counted as another app's backup.
+ */
+function cacheGroup(cache) {
+  const prefix = classifyCache(cache);
+  if (prefix !== 'apk-') return prefix;
+  const end = cache.key.indexOf('-', prefix.length);
+  return end === -1 ? cache.key : cache.key.slice(0, end);
+}
+
+/**
+ * Pure: which caches are stale. Keeps everything matching activeKeys and the
+ * newest cache of each group (see cacheGroup).
+ *
+ * @returns {{toDelete: object[], bytesToFree: number}}
+ */
+function planDeletions(caches, activeKeys) {
+  const byGroup = new Map();
+  for (const c of caches) {
+    const group = cacheGroup(c);
+    if (!group) continue; // not ours
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push(c);
+  }
+  for (const list of byGroup.values()) {
+    list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }
+  const safeToKeep = new Set(activeKeys);
+  for (const list of byGroup.values()) {
+    if (list[0]) safeToKeep.add(list[0].key);
+  }
+  const toDelete = [];
+  let bytesToFree = 0;
+  for (const list of byGroup.values()) {
+    for (const c of list) {
+      if (!isActive(c.key, [...safeToKeep])) {
+        toDelete.push(c);
+        bytesToFree += c.sizeInBytes || 0;
+      }
+    }
+  }
+  return { toDelete, bytesToFree };
+}
+
 function isActive(cacheKey, activeKeys) {
   for (const active of activeKeys) {
     if (active.endsWith('-') && cacheKey.startsWith(active)) return true;
@@ -190,36 +242,7 @@ function main() {
 
   console.log(`\nTotal project-related caches: ${caches.length}`);
 
-  // Group by pattern, sort each by createdAt desc (newest first).
-  const byPattern = new Map();
-  for (const c of caches) {
-    const pattern = classifyCache(c);
-    if (!pattern) continue; // not ours
-    if (!byPattern.has(pattern)) byPattern.set(pattern, []);
-    byPattern.get(pattern).push(c);
-  }
-  for (const group of byPattern.values()) {
-    group.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-  }
-
-  // Build a "safe-to-keep" set: anything matching the active keys, plus
-  // the single newest cache per pattern as a safety backup.
-  const safeToKeep = new Set(activeKeys);
-  for (const group of byPattern.values()) {
-    if (group[0]) safeToKeep.add(group[0].key);
-  }
-
-  // Now collect the deletion candidates: project caches that aren't safe.
-  const toDelete = [];
-  let bytesToFree = 0;
-  for (const group of byPattern.values()) {
-    for (const c of group) {
-      if (!isActive(c.key, [...safeToKeep])) {
-        toDelete.push(c);
-        bytesToFree += c.sizeInBytes || 0;
-      }
-    }
-  }
+  const { toDelete, bytesToFree } = planDeletions(caches, activeKeys);
 
   if (toDelete.length === 0) {
     console.log('\nNothing to clean up - all caches are either active or kept as backup.');
@@ -263,6 +286,8 @@ module.exports = {
   CACHE_PATTERNS,
   CACHE_PATTERNS_ORDERED,
   classifyCache,
+  cacheGroup,
+  planDeletions,
   isActive,
   computeActiveKeys,
   resolveRepo,
