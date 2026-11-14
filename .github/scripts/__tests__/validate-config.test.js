@@ -248,6 +248,24 @@ describe('validateConfig — per-app entry', () => {
     expect(hasError(issues, 'package id "mimo"')).toBe(true);
   });
 
+  test('missing apkmirror_path is allowed', () => {
+    const app = validApp();
+    delete app.apkmirror_path;
+    const issues = validateConfig({
+      patch_repos: { 'com.getmimo': app },
+      cli: { repo: 'a/b', branch: 'main' },
+    });
+    expect(issues.some((i) => i.message.includes('apkmirror_path'))).toBe(false);
+  });
+
+  test('empty apkmirror_path is an error', () => {
+    const issues = validateConfig({
+      patch_repos: { 'com.getmimo': validApp({ apkmirror_path: '' }) },
+      cli: { repo: 'a/b', branch: 'main' },
+    });
+    expect(hasError(issues, 'apkmirror_path must be a non-empty string')).toBe(true);
+  });
+
   test('typo in apkmirror_path (extra slash) is an error', () => {
     const issues = validateConfig({
       patch_repos: { 'com.getmimo': validApp({ apkmirror_path: 'pub/with/extra/slashes' }) },

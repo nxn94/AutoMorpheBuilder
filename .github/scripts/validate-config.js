@@ -23,7 +23,7 @@
  * What this validates:
  *   - Top-level shape: patch_repos (object, non-empty), cli.repo /
  *     cli.branch, preferred_arch (optional, known ABI).
- *   - Each per-app entry has name / repo / branch / apkmirror_path
+ *   - Each per-app entry has name / repo / branch (apkmirror_path optional)
  *     with the right shape.
  *   - pin_version / pin_patch_tag, when present, look like real
  *     version strings and tag strings (catches typos like "v1,18.3").
@@ -342,14 +342,16 @@ function validateConfig(config) {
       });
     }
 
-    // apkmirror_path
-    if (typeof entry.apkmirror_path !== 'string' || entry.apkmirror_path.length === 0) {
+    // apkmirror_path (optional: without it the APKMirror sources are skipped)
+    if (!('apkmirror_path' in entry)) {
+      // fine
+    } else if (typeof entry.apkmirror_path !== 'string' || entry.apkmirror_path.length === 0) {
       issues.push({
         level: 'error',
         appId,
         message:
-          `apkmirror_path is required (the APKMirror URL slug for this ` +
-          `package, e.g. "google-inc/youtube").`,
+          `apkmirror_path must be a non-empty string (the APKMirror URL slug ` +
+          `for this package, e.g. "google-inc/youtube"), or be left out.`,
       });
     } else if (!APK_PATH_RE.test(entry.apkmirror_path)) {
       issues.push({

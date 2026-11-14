@@ -138,6 +138,19 @@ describe('parallelResolveSources', () => {
     expect(execFile).not.toHaveBeenCalled();
   });
 
+  test('skips every APKMirror source when the package has no apkmirror_path', async () => {
+    // A package missing from config.json has no apkmirror_path, so only
+    // apkeep should run: no APKMirror API or scraper request at all.
+    global.fetch = jest.fn(() => Promise.reject(new Error('fetch should not be called')));
+    await expect(parallelResolveSources('com.example.nopath', VER, {
+      execFileImpl: execFile,
+      sourceResolvers: {
+        apkeep: () => Promise.reject(new Error('apkeep: not found')),
+      },
+    })).rejects.toThrow();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
   test('returns the first fulfilled source by index (apkeep wins when it succeeds)', async () => {
     // Apkeep at index 0 succeeds, so the loop returns it before
     // considering the later API/HTML sources. apkmirror-api and
