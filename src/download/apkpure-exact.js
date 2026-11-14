@@ -22,21 +22,38 @@ const USER_AGENT = 'AutoMorpheBuilder/1.0';
 const BUDGET_MS = 150000;
 const ARCH_KEYS = { 'arm64-v8a': 'ARM64_V8A', 'armeabi-v7a': 'ARMEABI_V7A', x86_64: 'X86_64', x86: 'X86' };
 
+/**
+ * Pure. Every target the patch list names for appId. Most lists have
+ * `compatiblePackages: [{ packageName, targets }]`; Hushfacebook's has
+ * `compatiblePackages: { pkg: [versions] }` with the targets in
+ * `compatibility: [{ packageName, targets }]`.
+ */
+function targetsForApp(list, appId) {
+  const patches = Array.isArray(list) ? list : (list && Array.isArray(list.patches) ? list.patches : []);
+  const targets = [];
+  for (const patch of patches) {
+    if (!patch) continue;
+    const groups = [
+      ...(Array.isArray(patch.compatiblePackages) ? patch.compatiblePackages : []),
+      ...(Array.isArray(patch.compatibility) ? patch.compatibility : []),
+    ];
+    for (const pkg of groups) {
+      if (!pkg || pkg.packageName !== appId || !Array.isArray(pkg.targets)) continue;
+      for (const target of pkg.targets) if (target && typeof target === 'object') targets.push(target);
+    }
+  }
+  return targets;
+}
+
 /** Pure. Build numbers for appId@version, the preferred CPU's first. */
 function codesFromPatchList(list, appId, version, arch) {
-  const patches = Array.isArray(list) ? list : (list && Array.isArray(list.patches) ? list.patches : []);
   const preferred = [];
   const others = [];
-  for (const patch of patches) {
-    for (const pkg of Array.isArray(patch && patch.compatiblePackages) ? patch.compatiblePackages : []) {
-      if (!pkg || pkg.packageName !== appId) continue;
-      for (const target of pkg.targets || []) {
-        if (!target || !target.versionCodes || !versionMatches(String(target.version || ''), version)) continue;
-        for (const [cpu, value] of Object.entries(target.versionCodes)) {
-          const code = Number(value);
-          if (Number.isSafeInteger(code) && code > 0) (cpu === ARCH_KEYS[arch] ? preferred : others).push(code);
-        }
-      }
+  for (const target of targetsForApp(list, appId)) {
+    if (!target.versionCodes || !versionMatches(String(target.version || ''), version)) continue;
+    for (const [cpu, value] of Object.entries(target.versionCodes)) {
+      const code = Number(value);
+      if (Number.isSafeInteger(code) && code > 0) (cpu === ARCH_KEYS[arch] ? preferred : others).push(code);
     }
   }
   return [...new Set([...preferred, ...others])];
@@ -135,4 +152,4 @@ async function downloadExactBuild({ appId, version, codes, partialPath, download
   return null;
 }
 
-module.exports = { USER_AGENT, codesFromPatchList, patchListCodes, exactBuildUrls, assertExactBuild, downloadExactBuild };
+module.exports = { USER_AGENT, targetsForApp, codesFromPatchList, patchListCodes, exactBuildUrls, assertExactBuild, downloadExactBuild };
