@@ -4,7 +4,7 @@ AutoMorpheBuilder is a **GitHub Actions pipeline** that produces signed, patched
 
 ## High-level flow
 
-1. **`check-versions`** resolves per-app patch tags and the CLI tag, then skips only complete releases with matching build-input provenance. Manual runs force rebuilding.
+1. **`check-versions`** resolves per-app patch tags and the CLI tag, then skips only complete releases with matching build-input provenance. Manual runs force rebuilding only when **force** is ticked.
 2. **`build`** (matrix per app, no signing secrets) downloads the APK, runs `morphe-desktop patch --unsigned`, and uploads an unsigned APK artifact.
 3. **`create-release`** (gated by the `signing` GitHub environment) downloads the unsigned APKs, signs and verifies them with `apksigner`, publishes one GitHub Release per app, and prunes the oldest beyond `KEEP_COUNT`.
 4. **`report-compat-failures`** runs only when the compat probe dropped an app. It fails the run and names the dropped apps, while the remaining apps still build.
@@ -72,7 +72,7 @@ Runs first. Failures here short-circuit the rest of the workflow.
 | Download morphe-desktop + patches `.mpp` | `pipeline/download_morphe_tools.sh` | Provides the jar + per-repository/tag `.mpp` files the filter step needs. Runs **unconditionally** so the filter step runs before the expensive Playwright / apkeep / aapt installs. |
 | Validate deferred patch metadata | `scripts/preflight-apps.js` with `CLI_TAG` | Immediately after verified tool download, derives missing metadata from the exact MPP and configured CLI, validates packages, and writes per-tag metadata atomically. Errors stop before APK downloads and filtering. |
 | Compat probe | `scripts/compat-probe.js` | Actually invokes `morphe-desktop list-versions` per app to catch runtime API mismatches the static preflight can't see (e.g. hoo-dles/morphe-patches using `BytecodePatchBuilder.extendWithAll(Supplier)` added to morphe-patcher 2026-07-27, which only morphe-desktop v1.13.2+ carries). |
-| Filter matrix by existing releases | `pipeline/check_existing_releases.sh` | For each app, resolves the APK version (pinned or via `morphe-desktop list-versions`) and drops entries whose release has matching build-input provenance and all required assets. **Fail-open**: if version resolution or `gh release view` errors, the app is kept in the matrix. `FORCE_BUILD=1` on `workflow_dispatch` skips the check. |
+| Filter matrix by existing releases | `pipeline/check_existing_releases.sh` | For each app, resolves the APK version (pinned or via `morphe-desktop list-versions`) and drops entries whose release has matching build-input provenance and all required assets. **Fail-open**: if version resolution or `gh release view` errors, the app is kept in the matrix. `FORCE_BUILD=1` (the `force` box on `workflow_dispatch`, unticked by default) skips the check. |
 | Node dependencies | `actions/setup-node` + `npm ci` | Installed once before configuration validation; matrix jobs use the npm cache with `npm ci --omit=dev`. |
 | Cache + install Playwright | `actions/cache@v5` + `pipeline/install_playwright.sh` | The custom installer bypasses a yauzl extraction bug in Playwright 1.58. |
 | Install apkeep + aapt | `pipeline/install_apkeep.sh` + `pipeline/install_aapt.sh` | apkeep is pinned to SHA-256 against `APKEEP_VERSION`. |

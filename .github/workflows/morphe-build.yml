@@ -7,7 +7,7 @@ on:
       force:
         description: "Rebuild apps even if their release is current"
         type: boolean
-        default: true
+        default: false
       apps:
         description: "Build only these apps (names or package ids, comma-separated). Empty = all"
         type: string
@@ -163,9 +163,9 @@ jobs:
         # those entries from the matrix and emits a skip-list for
         # pre_download_apks.sh. When every entry is already current,
         # should-build flips to false → build + create-release skip.
-        # FORCE_BUILD bypasses that check so manual `Run workflow` runs
-        # always patch + release, regardless of whether a release for
-        # the current tag already exists.
+        # FORCE_BUILD (the dispatch `force` box, unticked by default)
+        # bypasses that check so the run patches + releases even when a
+        # release for the current tag already exists.
         id: filter
         env:
           REPO_VERSIONS: ${{ steps.check.outputs.repo-versions }}
