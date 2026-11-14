@@ -146,11 +146,18 @@ if [ "$SKIP_LIST" != "[]" ] && [ -n "$SKIP_LIST" ]; then
     SKIPPED["$pkg"]=1
   done < <(jq -r '.[]' <<<"$SKIP_LIST")
 fi
+# Apps the compat probe dropped are not in the build matrix either.
+if [ -s "$TOOLS_DIR/compat-failed.json" ]; then
+  while IFS= read -r pkg; do
+    [ -n "$pkg" ] || continue
+    SKIPPED["$pkg"]=1
+  done < <(jq -r '.[]?' "$TOOLS_DIR/compat-failed.json")
+fi
 
 buildable=()
 while IFS= read -r pkg; do
   if [ -n "${SKIPPED[$pkg]:-}" ]; then
-    log "  [$pkg] in skip-list; not pre-downloading."
+    log "  [$pkg] in skip-list or dropped by the compat probe; not pre-downloading."
     continue
   fi
   buildable+=("$pkg")
