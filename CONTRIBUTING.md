@@ -16,7 +16,7 @@ For **security problems**, follow `SECURITY.md` — do **not** open a public iss
 
 This is a config-only change:
 
-1. Add an entry to `config.json` `patch_repos` with `name`, `repo`, `branch`, and `apkmirror_path` (URL slug).
+1. Add an entry to `config.json` `patch_repos` with `name`, `repo`, `branch`, and (recommended) `apkmirror_path` (APKMirror URL slug).
 2. (Optional) Set `pin_version` to lock the build to a specific APK version, or `pin_patch_tag` to lock the patches release.
 3. Trigger `.github/workflows/update-patches.yml` manually to populate `patches.json` from the upstream repo.
 4. Edit `patches.json` to enable/disable specific patches.

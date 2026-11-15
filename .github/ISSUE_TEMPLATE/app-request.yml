@@ -41,8 +41,8 @@ body:
   - type: input
     id: apkmirror_path
     attributes:
-      label: APKMirror URL slug
-      description: Path segment after `https://www.apkmirror.com/apk/`. Open the app's APKMirror page and copy the slug from the URL.
+      label: APKMirror URL slug (optional)
+      description: Path segment after `https://www.apkmirror.com/apk/`. Open the app's APKMirror page and copy the slug from the URL. Leave blank if the app isn't on APKMirror; the APKMirror sources are then skipped.
       placeholder: vendor/example-app
 
   - type: textarea

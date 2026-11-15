@@ -102,9 +102,8 @@ afterEach(() => {
 describe('parallelResolveSources', () => {
   // The package id must match an entry in this repo's config.json
   // (real config.json has com.google.android.youtube etc.) so that
-  // getApkmirrorPath() returns a non-null path for the apkmirror
-  // sources — otherwise they bail with "No APKMirror path for <pkg>"
-  // before any of our fixture-backed sources have a chance to run.
+  // getApkmirrorPath() returns a path. Without one, the APKMirror
+  // sources are left out of the race unless a resolver is injected.
   const PKG = 'com.google.android.youtube';
   const VER = '20.44.38';
 
@@ -136,6 +135,28 @@ describe('parallelResolveSources', () => {
     });
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(execFile).not.toHaveBeenCalled();
+  });
+
+  test('skips every APKMirror source when the package has no apkmirror_path', async () => {
+    // A package missing from config.json has no apkmirror_path, so only
+    // apkeep should run: no APKMirror API or scraper request at all.
+    global.fetch = jest.fn(() => Promise.reject(new Error('fetch should not be called')));
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(parallelResolveSources('com.example.nopath', VER, {
+        execFileImpl: execFile,
+        sourceResolvers: {
+          apkeep: () => Promise.reject(new Error('apkeep: not found')),
+        },
+      })).rejects.toThrow();
+      const lines = errSpy.mock.calls.map((c) => c.join(' '));
+      expect(lines.some((l) => l.includes('[parallel-resolve] Skipped APKMirror'))).toBe(true);
+      // The old code still raced the APKMirror sources and logged them failing.
+      expect(lines.some((l) => /\[parallel-resolve\] apkmirror(-api)? failed/.test(l))).toBe(false);
+      expect(global.fetch).not.toHaveBeenCalled();
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
   test('returns the first fulfilled source by index (apkeep wins when it succeeds)', async () => {
