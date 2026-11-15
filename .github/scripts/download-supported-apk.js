@@ -475,6 +475,7 @@ const bundleInDir = findBundleInDir(APKS_DIR);
 if (
   apkCandidate.endsWith('.apk') &&
   bundleInDir &&
+  bundleInDir !== apkCandidate &&
   preferredArchEarly &&
   !apkHasNativeLibsForArch(apkCandidate, preferredArchEarly)
 ) {
