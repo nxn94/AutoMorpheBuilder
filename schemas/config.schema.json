@@ -62,7 +62,7 @@
     "app": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "repo", "branch", "apkmirror_path"],
+      "required": ["name", "repo", "branch"],
       "properties": {
         "name": {
           "type": "string",
@@ -82,7 +82,7 @@
         "apkmirror_path": {
           "type": "string",
           "pattern": "^[^/\\s]+/[^/\\s]+$",
-          "description": "APKMirror publisher/package slug (single slash, no whitespace)."
+          "description": "Optional. APKMirror publisher/package slug (single slash, no whitespace). Without it the APKMirror sources are skipped."
         },
         "pin_version": {
           "type": "string",

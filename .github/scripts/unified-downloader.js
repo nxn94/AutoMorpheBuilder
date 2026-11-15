@@ -733,10 +733,17 @@ async function parallelResolveSources(packageId, version, opts = {}) {
   // apkmirror). This order is the single source of truth for which
   // resolver wins when several succeed — see the "Fixed priority
   // order" comment below.
-  const apiConfigured = Boolean(sourceResolvers.apkmirrorApi) || hasApkmirrorApiCreds();
-  if (!apiConfigured) {
+  // APKMirror sources need an apkmirror_path; the API also needs creds.
+  // Injected test resolvers always run.
+  const hasPath = Boolean(getApkmirrorPath(packageId));
+  if (!hasPath) {
+    console.error(`[parallel-resolve] Skipped APKMirror: no apkmirror_path for ${packageId}`);
+  }
+  const apiConfigured = Boolean(sourceResolvers.apkmirrorApi) || (hasPath && hasApkmirrorApiCreds());
+  if (hasPath && !apiConfigured) {
     console.error('[apkmirror-api-resolve] Skipped: APKMIRROR_API_USER/PASS not set');
   }
+  const scraperConfigured = Boolean(sourceResolvers.apkmirror) || hasPath;
   const sources = [
     {
       name: 'apkeep',
@@ -750,12 +757,12 @@ async function parallelResolveSources(packageId, version, opts = {}) {
         ? sourceResolvers.apkmirrorApi(packageId, version)
         : resolveApkmirrorApi(packageId, version),
     }] : []),
-    {
+    ...(scraperConfigured ? [{
       name: 'apkmirror',
       fn: () => sourceResolvers.apkmirror
         ? sourceResolvers.apkmirror(packageId, version)
         : resolveApkmirror(packageId, version),
-    },
+    }] : []),
   ];
 
   const SOURCE_TIMEOUT = TIMEOUTS.sourceResolve;
@@ -1751,9 +1758,17 @@ async function download(packageId, version, outputDir, opts = {}) {
     }
   }
 
+  // APKMirror needs an apkmirror_path; without one, skip both steps.
+  const hasPath = Boolean(getApkmirrorPath(packageId));
+  if (!hasPath) {
+    console.error(`[apkmirror] Skipped: no apkmirror_path for ${packageId}`);
+  }
+
   // Try APKMirror API (only when credentials are configured)
   checkBudget();
-  if (!hasApkmirrorApiCreds()) {
+  if (!hasPath) {
+    // already logged above
+  } else if (!hasApkmirrorApiCreds()) {
     console.error('[apkmirror-api] Skipped: APKMIRROR_API_USER/PASS not set');
   } else {
     try {
@@ -1769,19 +1784,21 @@ async function download(packageId, version, outputDir, opts = {}) {
 
   // Try APKMirror Playwright - last resort
   checkBudget();
-  console.error(`[apkmirror] Starting APKMirror Playwright fallback...`);
   let lastError;
-  try {
-    const result = await downloadWithApkmirror(packageId, version, outputDir);
-    if (acceptMinSdk(result, 'apkmirror')) {
-      remember(result.url, 'apkmirror');
-      return result;
+  if (hasPath) {
+    console.error(`[apkmirror] Starting APKMirror Playwright fallback...`);
+    try {
+      const result = await downloadWithApkmirror(packageId, version, outputDir);
+      if (acceptMinSdk(result, 'apkmirror')) {
+        remember(result.url, 'apkmirror');
+        return result;
+      }
+    } catch (e) {
+      console.error(`[apkmirror] Failed: ${e.message}`);
+      lastError = e;
     }
-  } catch (e) {
-    console.error(`[apkmirror] Failed: ${e.message}`);
-    lastError = e;
   }
-  throw finalError(lastError || new Error(`No source produced a usable ${packageId} ${version}`));
+  throw finalError(lastError || new Error(`No source produced a usable ${packageId} ${version}${hasPath ? '' : ' (APKMirror skipped: no apkmirror_path)'}`));
 }
 
 /**

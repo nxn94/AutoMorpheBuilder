@@ -64,7 +64,7 @@ Apps with `pin_version` set **also** skip URL updates — the cached URL would n
 
 The dynamic build matrix. Each key is an Android package id (`applicationId`), each value is an `AppConfig` (below). The order is preserved in the matrix for stable log output.
 
-**Validation:** the `check-versions` job fails immediately if `patch_repos` is empty, and emits a per-app table of failures if a key is malformed (missing `name` / `repo` / `branch` / `apkmirror_path`).
+**Validation:** the `check-versions` job fails immediately if `patch_repos` is empty, and emits a per-app table of failures if a key is malformed (missing `name` / `repo` / `branch`, or an empty `apkmirror_path`).
 
 ### `AppConfig`
 
@@ -73,7 +73,7 @@ The dynamic build matrix. Each key is an Android package id (`applicationId`), e
   "name":           "example",                 // required, used for release tag + artifact filename
   "repo":           "owner/morphe-patches",    // required, the upstream patches repo
   "branch":         "main",                    // required, the patches repo branch to track tags from
-  "apkmirror_path": "vendor/example",          // required, APKMirror URL slug
+  "apkmirror_path": "vendor/example",          // optional, APKMirror URL slug (recommended)
   "pin_version":    "1.2.3",                   // optional, lock to this APK version
   "pin_patch_tag":  "v1.0.0",                  // optional, lock the patches release tag
   "min_sdk":        30,                        // optional, lowest Android API level the patches support
@@ -153,17 +153,19 @@ Manual backstop: `workflow_dispatch` on `update-patches.yml` re-runs sync uncond
 
 The patches repo branch used to resolve the latest release tag. Almost always `"main"`. Set to a non-`main` branch only if the patches repo deliberately tags releases from a non-default branch.
 
-#### `apkmirror_path`
+#### `apkmirror_path` (optional, recommended)
 
 | | |
 |---|---|
 | Type | `string` |
-| Required | yes |
+| Required | no |
 | Example | `"google-inc/youtube"` |
 
 APKMirror URL slug (the path segment after `https://www.apkmirror.com/apk/`). The downloader navigates to `https://www.apkmirror.com/apk/<apkmirror_path>/all-versions/` to enumerate releases. That page lists only the newest releases; for an older version that is no longer listed, the release-page name is inferred from the listed releases (e.g. LinkedIn's `linkedin-community-network-<version>-release`, which differs from the path's last part).
 
 When Cloudflare blocks the `/all-versions/` page (403), the downloader falls back to a Chromium session that resolves the slug via the live page HTML. For Sofascore, the historical slug `soccer-scores-and-sports-livescore-sofascore` was deprecated and is now `sofascore-live-sports-scores`; keep `apkmirror_path` current with APKMirror's current URL.
+
+Without `apkmirror_path`, the APKMirror API, scraper and Playwright sources are skipped and the downloader uses only package-name sources (goopdl, APKPure, `download_urls`, and the URL cache). The slug can't be derived from the package name, so set it whenever the app is on APKMirror.
 
 #### `pin_version` (optional)
 
