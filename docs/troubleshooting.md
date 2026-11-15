@@ -223,6 +223,16 @@ A missing APK filter (or one that lacks the `-v` infix) causes Obtainium to skip
 
 ---
 
+## `is the base APK of a split app` during download
+
+**Symptom:** a download attempt fails with `Downloaded APK <file> is the base APK of a split app: it has no native libraries and its manifest requires an ABI split`, and the downloader moves on to the next source.
+
+**Cause:** the source served only `base.apk` of a split app as a plain APK. Its native libraries live in the ABI split it left out, so the APK installs on no device. APKPure does this for Discord: its XAPK has no arm64-v8a split, and its "APK" is the bare base.
+
+**Fix:** none needed if a later source succeeds. If none does, supply a full bundle (APKMirror `.apkm`) for that version. The check reads the manifest's `requiredSplitTypes`; a plain APK with no libraries and no required ABI split (a pure-Java app) is still accepted.
+
+---
+
 ## `VERSION MISMATCH: expected <ver>, got undefined` from `downloadWithUrl`
 
 **Symptom:** the post-download version check fails with `expected <ver>, got undefined` even though the download itself succeeded.

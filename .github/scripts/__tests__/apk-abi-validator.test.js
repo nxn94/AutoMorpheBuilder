@@ -12,12 +12,15 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { validateDownloadedApkAbi } = require('../apk-abi-validator');
+const { validateDownloadedApkAbi, manifestRootAttribute } = require('../apk-abi-validator');
 
+const MANIFESTS = path.join(__dirname, 'fixtures', 'manifests');
+
+// execFileSync returns null with stdio 'ignore', so success is "didn't throw".
 function zipAvailable() {
   try {
-    const r = execFileSync('zip', ['--version'], { stdio: 'ignore' });
-    return r !== null;
+    execFileSync('zip', ['--version'], { stdio: 'ignore' });
+    return true;
   } catch {
     return false;
   }
@@ -25,17 +28,21 @@ function zipAvailable() {
 
 function makeApk(tmp, name, entries) {
   const apkPath = path.join(tmp, name);
-  execFileSync('zip', [apkPath, '/dev/null'], { stdio: 'ignore' });
   for (const e of entries) {
     const full = path.join(tmp, e);
     fs.mkdirSync(path.dirname(full), { recursive: true });
     fs.writeFileSync(full, 'fake');
-    execFileSync('zip', [apkPath, e], { cwd: tmp, stdio: 'ignore' });
   }
+  execFileSync('zip', ['-q', apkPath, ...entries], { cwd: tmp, stdio: 'ignore' });
   return apkPath;
 }
 
 describe('validateDownloadedApkAbi', () => {
+  // The zip-based cases skip themselves without zip; CI must not skip them.
+  test('zip is available on CI', () => {
+    if (process.env.CI) expect(zipAvailable()).toBe(true);
+  });
+
   let tmp;
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'abi-validator-'));
@@ -96,13 +103,45 @@ describe('validateDownloadedApkAbi', () => {
 
   test('does not throw for an APK with no native libs (pure-Java app)', () => {
     if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
-    const apk = makeApk(tmp, 'java.apk', ['classes.dex']);
-    // No lib/ entries — apkHasNativeLibsForArch returns false, but
-    // the function should still let it through (no libs to validate).
-    // Actually no — apkHasNativeLibsForArch returns false for missing,
-    // and we throw. The expected behavior here is debatable; this
-    // documents the actual behavior: missing libs => throw.
-    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(/missing/);
+    // No lib/ entries and no required ABI split: nothing to validate.
+    const apk = makeApk(tmp, 'java.apk', ['AndroidManifest.xml', 'classes.dex']);
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).not.toThrow();
+  });
+
+  // APKPure serves Discord's base.apk as a plain "APK": no lib/ at all,
+  // and its manifest requires the ABI split (requiredSplitTypes="base__abi").
+  // The manifests are real AAPT2-compiled files (see fixtures/manifests/README.md).
+  function makeBaseApk(name, fixture) {
+    const dir = fs.mkdtempSync(path.join(tmp, 'base-'));
+    fs.copyFileSync(path.join(MANIFESTS, `${fixture}.axml`), path.join(dir, 'AndroidManifest.xml'));
+    fs.writeFileSync(path.join(dir, 'classes.dex'), 'fake');
+    const apk = path.join(tmp, name);
+    execFileSync('zip', ['-q', apk, 'AndroidManifest.xml', 'classes.dex'], { cwd: dir, stdio: 'ignore' });
+    return apk;
+  }
+
+  test.each([
+    ['abi-required', true],
+    ['abi-and-density', true],
+    ['density-only', false],
+    // base__abi only as the application label, not in requiredSplitTypes
+    ['density-label-abi', false],
+    // no requiredSplitTypes at all; "requiredSplitTypes" and "base__abi" only as other values
+    ['unrelated-strings', false],
+    ['no-split', false],
+  ])('base APK with no libs, manifest %s: rejected = %s', (fixture, rejected) => {
+    if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
+    const apk = makeBaseApk(`${fixture}.apk`, fixture);
+    if (rejected) expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(/base APK of a split app/);
+    else expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).not.toThrow();
+  });
+
+  test('a manifest that is not binary XML is not rejected', () => {
+    if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
+    const apk = makeApk(tmp, 'text_manifest.apk', ['classes.dex']);
+    fs.writeFileSync(path.join(tmp, 'AndroidManifest.xml'), 'requiredSplitTypes="base__abi"');
+    execFileSync('zip', ['-q', apk, 'AndroidManifest.xml'], { cwd: tmp, stdio: 'ignore' });
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).not.toThrow();
   });
 
   // Regression guard: APKMirror's apkm-pw flow saves BUNDLE-shaped
@@ -123,14 +162,12 @@ describe('validateDownloadedApkAbi', () => {
     fs.mkdirSync(path.join(bundleDir, 'lib', 'arm64-v8a'), { recursive: true });
     fs.writeFileSync(path.join(bundleDir, 'lib', 'arm64-v8a', 'libfoo.so'), 'fake');
     fs.writeFileSync(path.join(bundleDir, 'classes.dex'), 'fake');
-    execFileSync('zip', [path.join(bundleDir, 'base.apk')], { stdio: 'ignore' });
-    execFileSync('zip', [path.join(bundleDir, 'base.apk'), 'lib/arm64-v8a/libfoo.so'], { cwd: bundleDir, stdio: 'ignore' });
-    execFileSync('zip', [path.join(bundleDir, 'base.apk'), 'classes.dex'], { cwd: bundleDir, stdio: 'ignore' });
+    execFileSync('zip', ['-q', path.join(bundleDir, 'base.apk'), 'lib/arm64-v8a/libfoo.so'], { cwd: bundleDir, stdio: 'ignore' });
+    execFileSync('zip', ['-q', path.join(bundleDir, 'base.apk'), 'classes.dex'], { cwd: bundleDir, stdio: 'ignore' });
 
     // Wrap base.apk in an outer .apk (mimicking APKMirror's mislabel).
     const bundlePath = path.join(tmp, 'fake_bundle_named_apk.apk');
-    execFileSync('zip', [bundlePath], { stdio: 'ignore' });
-    execFileSync('zip', [bundlePath, path.join('inner', 'base.apk')], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('zip', ['-q', bundlePath, 'base.apk'], { cwd: bundleDir, stdio: 'ignore' });
 
     // This must NOT throw — content-based detection sees the inner
     // .apk and routes through the bundle branch, which extracts and
@@ -153,15 +190,13 @@ describe('validateDownloadedApkAbi', () => {
 
     const v7aInner = path.join(tmp, 'inner', 'config.armeabi_v7a.apk');
     fs.mkdirSync(path.dirname(v7aInner), { recursive: true });
-    execFileSync('zip', [v7aInner], { stdio: 'ignore' });
     const v7aLib = path.join('lib', 'armeabi-v7a', 'libfoo.so');
     fs.mkdirSync(path.join(tmp, 'lib', 'armeabi-v7a'), { recursive: true });
     fs.writeFileSync(path.join(tmp, v7aLib), 'fake');
-    execFileSync('zip', [v7aInner, v7aLib], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('zip', ['-q', v7aInner, v7aLib], { cwd: tmp, stdio: 'ignore' });
 
     const xapk = path.join(tmp, 'v7a_only.xapk');
-    execFileSync('zip', [xapk], { stdio: 'ignore' });
-    execFileSync('zip', [xapk, path.join('inner', 'config.armeabi_v7a.apk')], { cwd: tmp, stdio: 'ignore' });
+    execFileSync('zip', ['-q', xapk, 'config.armeabi_v7a.apk'], { cwd: path.dirname(v7aInner), stdio: 'ignore' });
 
     // Sanity: the file really does start with the real PK signature.
     const head = fs.readFileSync(xapk).slice(0, 4);
@@ -169,5 +204,20 @@ describe('validateDownloadedApkAbi', () => {
     expect(head[1]).toBe(0x4b);
 
     expect(() => validateDownloadedApkAbi(xapk, 'arm64-v8a')).toThrow(/no split containing.*arm64-v8a/);
+  });
+});
+
+describe('manifestRootAttribute', () => {
+  const read = (f) => manifestRootAttribute(fs.readFileSync(path.join(MANIFESTS, `${f}.axml`)), 0x0101064e, 'requiredSplitTypes');
+  test('reads android:requiredSplitTypes from the root element only', () => {
+    expect(read('abi-required')).toBe('base__abi');
+    expect(read('abi-and-density')).toBe('base__density,base__abi');
+    expect(read('density-label-abi')).toBe('base__density');
+    expect(read('unrelated-strings')).toBeUndefined();
+  });
+  test('throws on a file that is not binary XML, or is cut short', () => {
+    expect(() => manifestRootAttribute(Buffer.from('<manifest/>'), 0x0101064e, 'requiredSplitTypes')).toThrow();
+    const cut = fs.readFileSync(path.join(MANIFESTS, 'abi-required.axml')).subarray(0, 200);
+    expect(() => manifestRootAttribute(cut, 0x0101064e, 'requiredSplitTypes')).toThrow();
   });
 });

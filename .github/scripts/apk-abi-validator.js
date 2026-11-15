@@ -71,11 +71,19 @@ if (!preferredArch) return;
   const shape = detectApkShape(filePath, limits);
   if (shape === 'unknown') return; // Trust upstream; download-supported-apk.js's post-merge guardrail is the safety net.
   if (shape === 'apk') {
-    if (listApkAbis(filePath, limits).length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch, limits)) {
+    const abis = listApkAbis(filePath, limits);
+    if (abis.length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch, limits)) {
       throw new Error(
         `Downloaded APK ${path.basename(filePath)} is missing ` +
         `lib/${preferredArch}/*.so (upstream mislabelled it as universal/` +
         `noarch). Falling back to next download source.`,
+      );
+    }
+    if (abis.length === 0 && requiresAbiSplit(filePath, limits)) {
+      throw new Error(
+        `Downloaded APK ${path.basename(filePath)} is the base APK of a split app: ` +
+        'it has no native libraries and its manifest requires an ABI split. ' +
+        'Falling back to next download source.',
       );
     }
     return;
@@ -114,4 +122,114 @@ if (!preferredArch) return;
   }
 }
 
-module.exports = { validateDownloadedApkAbi, detectApkShape };
+/**
+ * True when the APK's manifest declares android:requiredSplitTypes with an
+ * ABI type (e.g. "base__abi"). Such an APK is the base of a split app whose
+ * native libraries live in the ABI split, so on its own it installs
+ * nowhere (Discord's base.apk, served by APKPure as a plain "APK").
+ *
+ * Reads that one attribute of the root <manifest> element from the binary
+ * manifest, so no aapt is needed. Any read or parse error counts as "not required".
+ */
+function requiresAbiSplit(filePath, limits = {}) {
+  let manifest;
+  try {
+    manifest = execFileSync('unzip', ['-p', filePath, 'AndroidManifest.xml'], {
+      timeout: limits.timeoutMs?.(), maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return false;
+  }
+  let value;
+  try {
+    value = manifestRootAttribute(manifest, REQUIRED_SPLIT_TYPES_ID, 'requiredSplitTypes');
+  } catch {
+    return false;
+  }
+  return typeof value === 'string' && value.split(',').some((t) => /__abi$/.test(t.trim()));
+}
+
+const ANDROID_NS = 'http://schemas.android.com/apk/res/android';
+const REQUIRED_SPLIT_TYPES_ID = 0x0101064e; // android:requiredSplitTypes
+
+/**
+ * String value of one android: attribute on the root element of a binary
+ * XML file (AndroidManifest.xml as stored in an APK), matched by resource
+ * id, or by name and namespace when the file maps no resource id to it.
+ * Returns undefined when the root element doesn't have it or the value
+ * isn't a string. Throws on a malformed file.
+ */
+function manifestRootAttribute(buf, resId, attrName) {
+  if (buf.length < 8 || buf.readUInt16LE(0) !== 0x0003) throw new Error('not binary XML');
+  let pos = buf.readUInt16LE(2);
+  let strings = null;
+  let resIds = [];
+  while (pos + 8 <= buf.length) {
+    const type = buf.readUInt16LE(pos);
+    const headerSize = buf.readUInt16LE(pos + 2);
+    const size = buf.readUInt32LE(pos + 4);
+    if (size < 8 || pos + size > buf.length) throw new Error('bad chunk');
+    if (type === 0x0001) {
+      strings = readStringPool(buf, pos, size);
+    } else if (type === 0x0180) {
+      resIds = [];
+      for (let p = pos + headerSize; p + 4 <= pos + size; p += 4) resIds.push(buf.readUInt32LE(p));
+    } else if (type === 0x0102) {
+      if (!strings) throw new Error('no string pool');
+      const ext = pos + headerSize;
+      const attrStart = buf.readUInt16LE(ext + 8);
+      const attrSize = buf.readUInt16LE(ext + 10);
+      const attrCount = buf.readUInt16LE(ext + 12);
+      for (let i = 0; i < attrCount; i++) {
+        const a = ext + attrStart + i * attrSize;
+        if (a + 20 > pos + size) throw new Error('bad attribute');
+        const ns = buf.readUInt32LE(a);
+        const name = buf.readUInt32LE(a + 4);
+        const matches = resIds[name]
+          ? resIds[name] === resId
+          : strings[name] === attrName && strings[ns] === ANDROID_NS;
+        if (!matches) continue;
+        const raw = buf.readUInt32LE(a + 8);
+        if (raw !== 0xffffffff) return strings[raw];
+        return buf[a + 15] === 0x03 ? strings[buf.readUInt32LE(a + 16)] : undefined; // TYPE_STRING
+      }
+      return undefined; // only the root element counts
+    }
+    pos += size;
+  }
+  return undefined;
+}
+
+function readStringPool(buf, start, size) {
+  const headerSize = buf.readUInt16LE(start + 2);
+  const count = buf.readUInt32LE(start + 8);
+  const utf8 = (buf.readUInt32LE(start + 16) & 0x100) !== 0;
+  const base = start + buf.readUInt32LE(start + 20);
+  const end = start + size;
+  if (start + headerSize + 4 * count > end) throw new Error('bad string pool');
+  const strings = [];
+  for (let i = 0; i < count; i++) {
+    let p = base + buf.readUInt32LE(start + headerSize + 4 * i);
+    let len;
+    if (utf8) {
+      p += buf[p] & 0x80 ? 2 : 1; // length in characters, then in bytes
+      len = buf[p] & 0x80 ? ((buf[p] & 0x7f) << 8) | buf[p + 1] : buf[p];
+      p += buf[p] & 0x80 ? 2 : 1;
+      if (p + len > end) throw new Error('bad string');
+      strings.push(buf.toString('utf8', p, p + len));
+    } else {
+      len = buf.readUInt16LE(p);
+      if (len & 0x8000) {
+        len = ((len & 0x7fff) << 16) | buf.readUInt16LE(p + 2);
+        p += 4;
+      } else {
+        p += 2;
+      }
+      if (p + 2 * len > end) throw new Error('bad string');
+      strings.push(buf.toString('utf16le', p, p + 2 * len));
+    }
+  }
+  return strings;
+}
+
+module.exports = { validateDownloadedApkAbi, detectApkShape, requiresAbiSplit, manifestRootAttribute };
