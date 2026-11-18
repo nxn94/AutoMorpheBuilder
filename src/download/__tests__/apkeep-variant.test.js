@@ -9,6 +9,9 @@ const {
   exactBuildOf,
   pickSmallestMatchingVariant,
   versionCodeOf,
+  zipCentralDirNames,
+  hasArchSplit,
+  rankVariantsByArch,
 } = require('../apkeep-variant');
 
 // Same fixture URLs used in
@@ -216,5 +219,116 @@ describe('download/apkeep-variant: a rejected build is skipped by build number a
     expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'build:260727002')).toEqual([]);
     expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'https://d.apkpure.com/b/XAPK/x?versionCode=260727002')).toEqual([]);
     expect(remainingMatchingVariants(FAKE_BODY, '26.07.27', 'build:1')).toEqual([FAKE_URL_ARM64, FAKE_URL_UNIV]);
+  });
+});
+
+// A zip tail: only the central directory and end record, placed so that
+// they end at totalSize (the earlier file bytes are not needed).
+function zipTail(names, { totalSize = 5_000_000, comment = '', mutate } = {}) {
+  const headers = names.map((n) => {
+    const h = Buffer.alloc(46 + Buffer.byteLength(n));
+    h.writeUInt32LE(0x02014b50, 0);
+    h.writeUInt16LE(Buffer.byteLength(n), 28);
+    h.write(n, 46);
+    return h;
+  });
+  const cd = Buffer.concat(headers);
+  const eocd = Buffer.alloc(22 + comment.length);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(names.length, 8);
+  eocd.writeUInt16LE(names.length, 10);
+  eocd.writeUInt32LE(cd.length, 12);
+  eocd.writeUInt32LE(totalSize - eocd.length - cd.length, 16);
+  eocd.writeUInt16LE(comment.length, 20);
+  eocd.write(comment, 22);
+  if (mutate) mutate(eocd);
+  const buf = Buffer.concat([cd, eocd]);
+  return { buf, totalSize };
+}
+
+describe('zipCentralDirNames', () => {
+  test('returns the entry names', () => {
+    const { buf, totalSize } = zipTail(['base.apk', 'config.arm64_v8a.apk', 'icon.png']);
+    expect(zipCentralDirNames(buf, totalSize)).toEqual(['base.apk', 'config.arm64_v8a.apk', 'icon.png']);
+  });
+
+  test('finds the end record after a comment', () => {
+    const { buf, totalSize } = zipTail(['a.apk'], { comment: 'hello' });
+    expect(zipCentralDirNames(buf, totalSize)).toEqual(['a.apk']);
+  });
+
+  test('null when the central directory starts before the tail', () => {
+    const { buf, totalSize } = zipTail(['a.apk', 'b.apk']);
+    expect(zipCentralDirNames(buf.subarray(30), totalSize)).toBeNull();
+  });
+
+  test('null for ZIP64 markers', () => {
+    expect(zipCentralDirNames(...Object.values(zipTail(['a.apk'], { mutate: (e) => e.writeUInt16LE(0xffff, 10) })))).toBeNull();
+    expect(zipCentralDirNames(...Object.values(zipTail(['a.apk'], { mutate: (e) => e.writeUInt32LE(0xffffffff, 12) })))).toBeNull();
+    expect(zipCentralDirNames(...Object.values(zipTail(['a.apk'], { mutate: (e) => e.writeUInt32LE(0xffffffff, 16) })))).toBeNull();
+    const { buf, totalSize } = zipTail(['a.apk']);
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    const at = buf.length - 22;
+    expect(zipCentralDirNames(Buffer.concat([buf.subarray(0, at), locator, buf.subarray(at)]), totalSize + 20)).toBeNull();
+  });
+
+  test('null for garbage, short or wrong input, never throws', () => {
+    expect(zipCentralDirNames(Buffer.alloc(0), 0)).toBeNull();
+    expect(zipCentralDirNames(Buffer.from('not a zip at all, just text'), 1000)).toBeNull();
+    expect(zipCentralDirNames(Buffer.alloc(100, 0xff), 100)).toBeNull();
+    expect(zipCentralDirNames('x', 1)).toBeNull();
+    expect(zipCentralDirNames(Buffer.alloc(30), NaN)).toBeNull();
+  });
+
+  test('null when an entry is cut short or the count disagrees', () => {
+    const { buf, totalSize } = zipTail(['a.apk'], { mutate: (e) => e.writeUInt16LE(2, 10) });
+    expect(zipCentralDirNames(buf, totalSize)).toBeNull();
+    const bad = zipTail(['a.apk']);
+    bad.buf.writeUInt16LE(60000, 28); // name longer than the directory
+    expect(zipCentralDirNames(bad.buf, bad.totalSize)).toBeNull();
+  });
+});
+
+describe('hasArchSplit', () => {
+  test('matches - and _ either way, with or without split_, any case', () => {
+    expect(hasArchSplit(['config.arm64_v8a.apk'], 'arm64-v8a')).toBe(true);
+    expect(hasArchSplit(['split_config.arm64_v8a.apk'], 'arm64-v8a')).toBe(true);
+    expect(hasArchSplit(['Config.ARM64-V8A.apk'], 'arm64_v8a')).toBe(true);
+    expect(hasArchSplit(['config.armeabi_v7a.apk'], 'armeabi-v7a')).toBe(true);
+  });
+
+  test('does not match other ABIs, nested paths or unknown names', () => {
+    expect(hasArchSplit(['config.armeabi_v7a.apk'], 'arm64-v8a')).toBe(false);
+    expect(hasArchSplit(['foo/config.arm64_v8a.apk'], 'arm64-v8a')).toBe(false);
+    expect(hasArchSplit(['config.arm64_v8a.apk.bak'], 'arm64-v8a')).toBe(false);
+    expect(hasArchSplit(null, 'arm64-v8a')).toBe(false);
+    expect(hasArchSplit(['config.arm64_v8a.apk'], '')).toBe(false);
+  });
+});
+
+describe('rankVariantsByArch', () => {
+  const urls = ['small', 'mid', 'big', 'huge'];
+
+  test('wanted-arch variants first, both groups in original order', () => {
+    const names = new Map([
+      ['small', ['config.armeabi_v7a.apk']],
+      ['mid', ['config.arm64_v8a.apk']],
+      ['big', ['split_config.arm64_v8a.apk']],
+      ['huge', ['base.apk']],
+    ]);
+    expect(rankVariantsByArch(urls, names, 'arm64-v8a')).toEqual(['mid', 'big', 'small', 'huge']);
+  });
+
+  test('unknown or missing names keep the order and nothing is dropped', () => {
+    expect(rankVariantsByArch(urls, new Map([['small', null]]), 'arm64-v8a')).toEqual(urls);
+    expect(rankVariantsByArch(urls, {}, 'arm64-v8a')).toEqual(urls);
+    expect(rankVariantsByArch(urls, { huge: ['config.arm64_v8a.apk'] }, 'arm64-v8a')).toEqual(['huge', 'small', 'mid', 'big']);
+  });
+
+  test('returns a new array', () => {
+    const out = rankVariantsByArch(urls, new Map(), 'arm64-v8a');
+    expect(out).toEqual(urls);
+    expect(out).not.toBe(urls);
   });
 });

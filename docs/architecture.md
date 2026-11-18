@@ -106,7 +106,7 @@ On GitHub-hosted runners the installer is skipped unless the repository variable
 
 APKMirror browser paths share a full Chromium session (`channel: chromium`), a Chrome user-agent matching the installed browser, and an initial homepage visit before release/variant/download navigation. This avoids the previous Firefox-UA/Chromium mismatch and headless-shell fingerprint. Navigation checks HTTP status and challenge titles, waits briefly and retries once before reporting a persistent Cloudflare block. The same browser context carries cookies through the download; no third-party challenge-solving service or credentials are added. Cloudflare can still block an IP: such failures must preserve the other providers rather than weaken exact-version or ABI validation.
 
-The apkeep resolver in `unified-downloader.js` returns a URL only from APKPure's variant endpoint. When that request fails it rejects, so `parallelResolveSources` moves on to APKMirror-API and APKMirror; the apkeep binary runs only in the download-based sequential tail (`downloadWithApkeep`), never to build a URL.
+The apkeep resolver in `unified-downloader.js` returns a URL only from APKPure's variant endpoint. With several variants it first range-reads each file's zip directory and prefers one that holds the `preferred_arch` split (smallest first otherwise). When that request fails it rejects, so `parallelResolveSources` moves on to APKMirror-API and APKMirror; the apkeep binary runs only in the download-based sequential tail (`downloadWithApkeep`), never to build a URL.
 
 ### `build`
 

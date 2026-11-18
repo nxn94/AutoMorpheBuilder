@@ -14,9 +14,11 @@ const { versionMatches } = require('./version-match');
  *   c=<counter>|<category>|<base64(rest)>
  *   rest → "dev=<name>&t=<type>&s=<size>&vn=<version>&vc=<version_code>"
  *
- * The arm64-v8a variant is consistently the smallest of the three
- * per-app variants APKPure serves, so picking the smallest
- * matching URL gives us the arm64-only build we want.
+ * Nothing in the URL or listing says which ABI a variant holds, and
+ * size does not tell either (the arm64 one is often, not always, the
+ * smallest). So variants are listed smallest first, and the downloader
+ * can reorder them after reading each file's zip entry names
+ * (zipCentralDirNames + rankVariantsByArch).
  *
  * Two pure functions:
  *   - parseApkeepXapkUrls(body, version)  → array of matching URLs
@@ -91,8 +93,8 @@ function listMatchingVariants(body, version) {
       /* not a parsable URL: not a candidate */
     }
   }
-  // Stable sort: the arm64-v8a variant is usually the smallest of the
-  // per-app variants APKPure serves.
+  // Stable sort: smallest first is only the default order; the downloader
+  // may move variants that hold the wanted ABI ahead of it.
   withSize.sort((a, b) => a.size - b.size);
   return withSize.map((v) => v.url);
 }
@@ -213,7 +215,84 @@ function versionCodeOf(url) {
   }
 }
 
+/**
+ * File names in a zip's central directory, read from the tail of the file
+ * alone (what a ranged request for the last bytes returns).
+ *
+ * @param {Buffer} tailBuf The last bytes of the zip (up to 65558).
+ * @param {number} totalSize The size of the whole zip file.
+ * @returns {string[]|null} The entry names, or null when they cannot be
+ *   read: the directory is not fully inside the tail, ZIP64 is used, or the
+ *   data is malformed. Never throws.
+ */
+function zipCentralDirNames(tailBuf, totalSize) {
+  try {
+    if (!Buffer.isBuffer(tailBuf) || !Number.isSafeInteger(totalSize) || totalSize < tailBuf.length) return null;
+    // The end record is 22 bytes plus a comment of at most 65535.
+    const lowest = Math.max(0, tailBuf.length - 22 - 0xffff);
+    let eocd = -1;
+    for (let i = tailBuf.length - 22; i >= lowest; i--) {
+      if (tailBuf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) return null;
+    const count = tailBuf.readUInt16LE(eocd + 10);
+    const cdSize = tailBuf.readUInt32LE(eocd + 12);
+    const cdOffset = tailBuf.readUInt32LE(eocd + 16);
+    if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) return null;
+    if (eocd >= 20 && tailBuf.readUInt32LE(eocd - 20) === 0x07064b50) return null;
+    const start = cdOffset - (totalSize - tailBuf.length);
+    if (start < 0 || start + cdSize > eocd) return null;
+    const end = start + cdSize;
+    const names = [];
+    let pos = start;
+    while (pos < end) {
+      if (pos + 46 > end || tailBuf.readUInt32LE(pos) !== 0x02014b50) return null;
+      const nameLen = tailBuf.readUInt16LE(pos + 28);
+      const next = pos + 46 + nameLen + tailBuf.readUInt16LE(pos + 30) + tailBuf.readUInt16LE(pos + 32);
+      if (next > end) return null;
+      names.push(tailBuf.toString('utf8', pos + 46, pos + 46 + nameLen));
+      pos = next;
+    }
+    return names.length === count ? names : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The variants whose zip holds a top-level split for the wanted ABI first,
+ * the rest after, each group in its original order. A variant with unknown
+ * names is not preferred, but never dropped.
+ *
+ * @param {string[]} urls
+ * @param {Map<string, string[]|null>|Record<string, string[]|null>} namesByUrl
+ * @param {string} arch e.g. 'arm64-v8a' (`-` and `_` are interchangeable)
+ * @returns {string[]} A new array.
+ */
+function rankVariantsByArch(urls, namesByUrl, arch) {
+  const has = (u) => hasArchSplit(namesByUrl instanceof Map ? namesByUrl.get(u) : namesByUrl?.[u], arch);
+  return [...urls.filter(has), ...urls.filter((u) => !has(u))];
+}
+
+/**
+ * Whether zip entry names include a top-level split for the ABI
+ * (`config.<arch>.apk` or `split_config.<arch>.apk`; `-` and `_` match either).
+ *
+ * @param {string[]|null|undefined} names
+ * @param {string} arch
+ * @returns {boolean}
+ */
+function hasArchSplit(names, arch) {
+  const wanted = String(arch || '').replace(/[^A-Za-z0-9_-]/g, '').replace(/[-_]/g, '[-_]');
+  if (!wanted || !Array.isArray(names)) return false;
+  const re = new RegExp(`^(split_)?config\\.${wanted}\\.apk$`, 'i');
+  return names.some((n) => re.test(n));
+}
+
 module.exports = {
+  zipCentralDirNames,
+  hasArchSplit,
+  rankVariantsByArch,
   decodeApkeepCParam,
   listMatchingVariants,
   remainingMatchingVariants,
