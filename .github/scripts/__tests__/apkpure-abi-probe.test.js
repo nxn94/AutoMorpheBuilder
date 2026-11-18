@@ -1,5 +1,7 @@
 'use strict';
 
+/* global Response, ReadableStream */
+
 // APKPure variants are ranked by what their zip holds (a ranged read of the
 // file tail), not by size alone. curl, aapt and the network are faked; the
 // package is not in config.json so the APKMirror sources fail fast.
@@ -55,33 +57,51 @@ let outDir;
 let cacheDir;
 let fetched;
 let probed;
-let probeMode; // 'zip' | 'full' | 'throw'
+let probeMode; // 'zip' | 'full' | 'throw' | 'chunked' | 'wrongRange' | 'short'
+let pulled; // bytes a fake server handed over
 let errors;
+
+// A body served in 16 KiB chunks, counting what is actually read.
+function stream(bytes) {
+  let at = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (at >= bytes.length) return controller.close();
+      const chunk = bytes.subarray(at, at + 16384);
+      at += chunk.length;
+      pulled += chunk.length;
+      controller.enqueue(chunk);
+    },
+  });
+}
 
 // One fake network: the listing, and range probes of the variant files.
 async function fakeFetch(url, init = {}) {
   if (new URL(url).hostname === 'api.pureapk.com') return { ok: true, status: 200, text: async () => listing };
   probed.push(url);
   if (probeMode === 'throw') throw new Error('network down');
-  if (probeMode === 'full') return { ok: true, status: 200, body: { cancel: jest.fn() } };
-  if (probeMode === 'oversized') {
-    return {
-      ok: true,
-      status: 206,
-      headers: { get: (h) => (h.toLowerCase() === 'content-length' ? '300000' : null) },
-      body: { cancel: jest.fn() },
-      arrayBuffer: async () => { throw new Error('an oversized range must not be read'); },
-    };
-  }
   expect(init.headers.Range).toBe('bytes=-65558');
   const code = new URL(url).pathname.split('/').pop();
-  const { body, totalSize } = zipTail(namesByBuild[code]);
-  return {
-    ok: true,
-    status: 206,
-    headers: { get: (h) => (h.toLowerCase() === 'content-range' ? `bytes ${totalSize - body.length}-${totalSize - 1}/${totalSize}` : null) },
-    arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.length),
-  };
+  const zip = zipTail(namesByBuild[code]);
+  const { totalSize } = zip;
+  // A server sends the full 65558-byte suffix; the zip records are at its end.
+  const body = Buffer.concat([Buffer.alloc(65558 - zip.body.length), zip.body]);
+  const suffix = `bytes ${totalSize - body.length}-${totalSize - 1}/${totalSize}`;
+  // The whole file: the zip tail after 1 MiB of other bytes.
+  const whole = Buffer.concat([Buffer.alloc(1_048_576), body]);
+  switch (probeMode) {
+    case 'full':
+      return new Response(stream(whole), { status: 200 });
+    case 'chunked':
+      // Claims the suffix, sends no Content-Length, then streams far more.
+      return new Response(stream(whole), { status: 206, headers: { 'content-range': suffix } });
+    case 'wrongRange':
+      return new Response(stream(whole), { status: 206, headers: { 'content-range': `bytes 0-${whole.length - 1}/${whole.length}` } });
+    case 'short':
+      return new Response(stream(body.subarray(0, body.length - 1)), { status: 206, headers: { 'content-range': suffix } });
+    default:
+      return new Response(stream(body), { status: 206, headers: { 'content-range': suffix } });
+  }
 }
 
 function spawnImpl(_cmd, args) {
@@ -114,6 +134,7 @@ beforeEach(() => {
   fetched = [];
   probed = [];
   probeMode = 'zip';
+  pulled = 0;
   sdk = {};
   downloadWithGoopdl.mockRejectedValue(new Error('Google Play unavailable'));
   global.fetch = jest.fn(fakeFetch);
@@ -153,8 +174,24 @@ describe('resolveApkeepVariant', () => {
     expect(await resolveApkeepVariant(PKG, VER)).toBe(SMALL);
   });
 
-  test('a 206 larger than the requested tail is not read', async () => {
-    probeMode = 'oversized';
+  test('a chunked 206 longer than the requested tail is cut off, not buffered', async () => {
+    probeMode = 'chunked';
+    expect(await resolveApkeepVariant(PKG, VER)).toBe(SMALL);
+    expect(logged()).toContain('0 of 3 variants');
+    // Each probe stops within a chunk of the limit (plus the one the stream
+    // queues ahead), not at the 1 MiB body.
+    expect(pulled).toBeLessThanOrEqual(3 * (65558 + 2 * 16384));
+  });
+
+  test('a 206 for a range other than the file tail is not read', async () => {
+    probeMode = 'wrongRange';
+    expect(await resolveApkeepVariant(PKG, VER)).toBe(SMALL);
+    expect(logged()).toContain('0 of 3 variants');
+    expect(pulled).toBeLessThanOrEqual(3 * 16384);
+  });
+
+  test('a body shorter than its Content-Range is not used', async () => {
+    probeMode = 'short';
     expect(await resolveApkeepVariant(PKG, VER)).toBe(SMALL);
     expect(logged()).toContain('0 of 3 variants');
   });
@@ -190,4 +227,3 @@ describe('other variants after a rejected one', () => {
     expect(fetched).toEqual([SMALL, MID, BIG]);
   });
 });
-

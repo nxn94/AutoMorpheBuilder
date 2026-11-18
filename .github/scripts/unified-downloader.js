@@ -407,10 +407,13 @@ function wantedArch() {
   try { return loadConfig().preferred_arch || 'arm64-v8a'; } catch { return 'arm64-v8a'; }
 }
 
+const ZIP_TAIL_BYTES = 65558; // a zip's end record plus the largest comment
+
 /**
  * The zip entry names of a remote file, read from a ranged request for its
- * last bytes. Null (never an error) when the server does not answer 206, or
- * the names cannot be read.
+ * last bytes. Null (never an error) unless the server answers 206 with that
+ * exact suffix: Content-Range must name the last bytes of the file, and the
+ * body is read up to that length and no further, whatever the headers say.
  *
  * @param {string} url
  * @param {AbortSignal} signal
@@ -418,17 +421,46 @@ function wantedArch() {
  * @returns {Promise<string[]|null>}
  */
 async function probeZipTail(url, signal, fetchImpl = fetch) {
+  let res;
   try {
-    const res = await fetchImpl(url, { headers: { Range: 'bytes=-65558', 'User-Agent': 'Mozilla/5.0' }, signal });
-    // Anything but the requested tail (a full body, a wrong range) isn't read.
-    if (res.status !== 206 || Number(res.headers.get('content-length')) > 65558) {
-      await res.body?.cancel();
+    res = await fetchImpl(url, { headers: { Range: `bytes=-${ZIP_TAIL_BYTES}`, 'User-Agent': 'Mozilla/5.0' }, signal });
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec((res.headers.get('content-range') || '').trim());
+    const [start, end, total] = range ? range.slice(1).map(Number) : [];
+    const length = end - start + 1;
+    if (res.status !== 206 || !range || end !== total - 1 || start !== Math.max(0, total - ZIP_TAIL_BYTES) || !res.body) {
       return null;
     }
-    const total = Number(/\/(\d+)\s*$/.exec(res.headers.get('content-range') || '')?.[1]);
-    return zipCentralDirNames(Buffer.from(await res.arrayBuffer()), total);
+    const body = await readAtMost(res.body, length);
+    return body && body.length === length ? zipCentralDirNames(body, total) : null;
   } catch {
     return null;
+  } finally {
+    // Whatever was not read is not downloaded.
+    try { await res?.body?.cancel(); } catch { /* already closed */ }
+  }
+}
+
+/**
+ * Up to `limit` bytes of a stream, or null if it holds more.
+ *
+ * @param {ReadableStream<Uint8Array>} stream
+ * @param {number} limit
+ * @returns {Promise<Buffer|null>}
+ */
+async function readAtMost(stream, limit) {
+  const reader = stream.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, size);
+      size += value.length;
+      if (size > limit) return null;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 
