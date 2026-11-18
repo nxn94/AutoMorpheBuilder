@@ -60,7 +60,7 @@ let errors;
 
 // One fake network: the listing, and range probes of the variant files.
 async function fakeFetch(url, init = {}) {
-  if (String(url).includes('api.pureapk.com')) return { ok: true, status: 200, text: async () => listing };
+  if (new URL(url).hostname === 'api.pureapk.com') return { ok: true, status: 200, text: async () => listing };
   probed.push(url);
   if (probeMode === 'throw') throw new Error('network down');
   if (probeMode === 'full') return { ok: true, status: 200, body: { cancel: jest.fn() } };
@@ -165,7 +165,7 @@ describe('resolveApkeepVariant', () => {
   });
 
   test('a single candidate is not probed', async () => {
-    global.fetch = jest.fn(async (url, init) => (String(url).includes('api.pureapk.com')
+    global.fetch = jest.fn(async (url, init) => (new URL(url).hostname === 'api.pureapk.com'
       ? { ok: true, status: 200, text: async () => MID }
       : fakeFetch(url, init)));
     expect(await resolveApkeepVariant(PKG, VER)).toBe(MID);
