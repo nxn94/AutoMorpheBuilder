@@ -164,11 +164,29 @@ function findCachedApk(apksDir, targetVersion) {
       continue;
     }
     for (const entry of entries) {
-      const ver = extractVersionFromString(entry);
-      if (ver === targetVersion) return path.join(apksDir, entry);
+      if (namesVersion(entry.slice(0, -(ext.length + 1)), targetVersion)) return path.join(apksDir, entry);
     }
   }
   return null;
+}
+
+/**
+ * True if a file name (without extension) is for targetVersion. A version
+ * with a label such as `12.19.1-release.0` matches when it appears whole in
+ * the name: `12.19.1-release.0.apk`, `<package>_12.19.1-release.0_goopdl.apkm`,
+ * or an APKMirror name with more after it. extractVersionFromString keeps
+ * only `12.19.1`, so such a file was never found. Other versions compare by
+ * their X.Y.Z as before.
+ */
+function namesVersion(stem, targetVersion) {
+  if (!targetVersion) return false;
+  const part = /[0-9A-Za-z.]/;
+  for (let at = stem.indexOf(targetVersion); at !== -1; at = stem.indexOf(targetVersion, at + 1)) {
+    const before = stem.charAt(at - 1);
+    const after = stem.charAt(at + targetVersion.length);
+    if (!part.test(before) && !part.test(after)) return true;
+  }
+  return extractVersionFromString(stem) === targetVersion;
 }
 
 /**
