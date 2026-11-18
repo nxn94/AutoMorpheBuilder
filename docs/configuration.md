@@ -29,6 +29,7 @@ For browser-based editing, use [AutoMorpheBuilder UI](https://nxn94.github.io/Au
 Selects the preferred native architecture when APKMirror / APKPure lists multiple ABIs in the same release. The downloader (`unified-downloader.js`) reads this to:
 
 - Prefer an explicitly matching architecture over a compatible universal variant. APKPure API results use size to prioritize candidates, but actual native libraries are checked before acceptance.
+- Download a file for another architecture only once: a retry would fetch the same file. If APKPure's pick is for another architecture, its other variants of the same version are tried next (APKPure doesn't say which variant is which, and the smallest is often a 32-bit build).
 - Reject a downloaded bundle whose only `lib/` ABI does not match this preference (post-merge validation in `download-supported-apk.js`).
 
 Validation: `schemas/config.schema.json` enforces the four-value ABI enum. `universal` is a possible upstream variant, not an accepted `preferred_arch` value. Actual delivered libraries must still pass ABI validation.
