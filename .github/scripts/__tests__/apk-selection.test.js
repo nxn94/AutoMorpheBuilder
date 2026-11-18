@@ -132,6 +132,40 @@ describe('findCachedApk', () => {
     fs.writeFileSync(path.join(tmp, 'com.x_v1.0.0.xapk'), 'fake');
     expect(findCachedApk(tmp, '1.0.0')).toBe(path.join(tmp, 'com.x_v1.0.0.xapk'));
   });
+
+  test('finds a file named by a labelled version', () => {
+    fs.writeFileSync(path.join(tmp, '12.19.1-release.0.apk'), 'fake');
+    expect(findCachedApk(tmp, '12.19.1-release.0')).toBe(path.join(tmp, '12.19.1-release.0.apk'));
+  });
+
+  test('finds a downloaded file named <package>_<labelled version>', () => {
+    fs.writeFileSync(path.join(tmp, 'com.twitter.android_12.19.1-release.0.xapk'), 'fake');
+    expect(findCachedApk(tmp, '12.19.1-release.0')).toBe(path.join(tmp, 'com.twitter.android_12.19.1-release.0.xapk'));
+  });
+
+  test('finds a Google Play download of a labelled version', () => {
+    fs.writeFileSync(path.join(tmp, 'com.twitter.android_12.19.1-release.0_goopdl.apkm'), 'fake');
+    expect(findCachedApk(tmp, '12.19.1-release.0')).toBe(path.join(tmp, 'com.twitter.android_12.19.1-release.0_goopdl.apkm'));
+  });
+
+  test('finds an APKMirror-named file of a labelled version', () => {
+    const name = 'com.twitter.android_12.19.1-release.0-312019100_minAPI28(arm64-v8a)(nodpi)_apkmirror.com.apkm';
+    fs.writeFileSync(path.join(tmp, name), 'fake');
+    expect(findCachedApk(tmp, '12.19.1-release.0')).toBe(path.join(tmp, name));
+  });
+
+  test('a labelled version does not match a longer version that contains it', () => {
+    fs.writeFileSync(path.join(tmp, '112.19.1-release.0.apk'), 'fake');
+    fs.writeFileSync(path.join(tmp, 'v2.12.19.1-release.0.apk'), 'fake');
+    fs.writeFileSync(path.join(tmp, 'x_12.19.1-release.01.apk'), 'fake');
+    expect(findCachedApk(tmp, '12.19.1-release.0')).toBeNull();
+  });
+
+  test('an empty target matches nothing', () => {
+    fs.writeFileSync(path.join(tmp, 'com.x.apk'), 'fake');
+    fs.writeFileSync(path.join(tmp, 'com.x_v1.0.0.apk'), 'fake');
+    expect(findCachedApk(tmp, '')).toBeNull();
+  });
 });
 
 describe('findPackageCandidate', () => {
