@@ -20,7 +20,7 @@ const { chromium } = require("playwright");
 const cheerio = require('cheerio');
 const { downloadWithGoopdl } = require('./goopdl-downloader');
 const { openApkmirror, navigateApkmirror, extractVersionCode } = require('./apkmirror-browser');
-const { validateDownloadedApkAbi } = require('./apk-abi-validator');
+const { ABI_MISMATCH, validateDownloadedApkAbi } = require('./apk-abi-validator');
 const { detectApkShape } = require('./apk-selection');
 // Network-independent URL/auth helpers extracted to a pure module so
 // they can be unit-tested without standing up the downloader. The
@@ -708,8 +708,8 @@ async function downloadWithUrl(url, outputDir, packageId, version, opts = {}) {
 
       return result;
     } catch (err) {
-      if (err.message && err.message.includes('VERSION MISMATCH')) {
-        // Version mismatch won't fix itself — break early
+      if ((err.message && err.message.includes('VERSION MISMATCH')) || err.code === ABI_MISMATCH) {
+        // A wrong version or architecture won't fix itself — break early
         throw err;
       }
       if (attempt === MAX_RETRIES || opts.signal?.aborted || opts.expired?.()) {
@@ -1676,6 +1676,10 @@ async function download(packageId, version, outputDir, opts = {}) {
       }
     } catch (e) {
       console.error(`[download] Cache URL invalid: ${e.message}`);
+      if (e.code === ABI_MISMATCH) {
+        rejectedUrls.add(variantKey(cachedUrl.url));
+        removeCachedUrl(packageId, version, cachedUrl.url, cacheDir);
+      }
     }
   }
 
@@ -1696,6 +1700,7 @@ async function download(packageId, version, outputDir, opts = {}) {
       }
     } catch (e) {
       console.error(`[download] patches.json URL invalid: ${e.message}`);
+      if (e.code === ABI_MISMATCH) rejectedUrls.add(variantKey(existingUrl));
     }
   }
 
@@ -1706,8 +1711,17 @@ async function download(packageId, version, outputDir, opts = {}) {
   try {
     const resolved = await parallelResolveSources(packageId, version, opts);
     if (!wasRejected(resolved.url)) {
-      const result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
-      if (acceptMinSdk(result, resolved.source, { url: resolved.url })) {
+      let result = null;
+      try {
+        result = await downloadWithUrl(resolved.url, outputDir, packageId, version, opts);
+      } catch (e) {
+        // APKPure's pick was for another architecture: another of its
+        // variants may be the right one, so try those below.
+        if (e.code !== ABI_MISMATCH || resolved.source !== 'apkeep') throw e;
+        console.error(`[download] ${e.message}`);
+        rejectedUrls.add(variantKey(resolved.url));
+      }
+      if (result && acceptMinSdk(result, resolved.source, { url: resolved.url })) {
         // Save to URL cache
         remember(resolved.url, resolved.source);
         return result;

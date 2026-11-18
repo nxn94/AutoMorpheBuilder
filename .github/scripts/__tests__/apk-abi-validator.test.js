@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-const { validateDownloadedApkAbi, manifestRootAttribute } = require('../apk-abi-validator');
+const { ABI_MISMATCH, validateDownloadedApkAbi, manifestRootAttribute } = require('../apk-abi-validator');
 
 const MANIFESTS = path.join(__dirname, 'fixtures', 'manifests');
 
@@ -75,6 +75,8 @@ describe('validateDownloadedApkAbi', () => {
     if (!zipAvailable()) { console.warn('skipping: no zip'); return; }
     const apk = makeApk(tmp, 'v7a_only.apk', ['lib/armeabi-v7a/libfoo.so', 'classes.dex']);
     expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(/missing.*lib\/arm64-v8a/);
+    // The code tells the downloader not to retry the file.
+    expect(() => validateDownloadedApkAbi(apk, 'arm64-v8a')).toThrow(expect.objectContaining({ code: ABI_MISMATCH }));
   });
 
   test('does not throw when APK has the preferred arch', () => {

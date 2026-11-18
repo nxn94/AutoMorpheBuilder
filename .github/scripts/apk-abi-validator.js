@@ -24,6 +24,16 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { apkHasNativeLibsForArch, detectApkShape, listApkAbis } = require('./apk-selection');
 
+// Set as `code` on every error this file throws for a wrong architecture.
+// The file can't change on a retry, so callers stop retrying it and move
+// on to another source or variant.
+const ABI_MISMATCH = 'ABI_MISMATCH';
+function abiError(message) {
+  const error = new Error(message);
+  error.code = ABI_MISMATCH;
+  return error;
+}
+
 /**
  * Reject a freshly-downloaded APK/bundle that lacks libs for the
  * preferred architecture. Throws on failure; no-op otherwise.
@@ -73,14 +83,14 @@ if (!preferredArch) return;
   if (shape === 'apk') {
     const abis = listApkAbis(filePath, limits);
     if (abis.length > 0 && !apkHasNativeLibsForArch(filePath, preferredArch, limits)) {
-      throw new Error(
+      throw abiError(
         `Downloaded APK ${path.basename(filePath)} is missing ` +
         `lib/${preferredArch}/*.so (upstream mislabelled it as universal/` +
         `noarch). Falling back to next download source.`,
       );
     }
     if (abis.length === 0 && requiresAbiSplit(filePath, limits)) {
-      throw new Error(
+      throw abiError(
         `Downloaded APK ${path.basename(filePath)} is the base APK of a split app: ` +
         'it has no native libraries and its manifest requires an ABI split. ' +
         'Falling back to next download source.',
@@ -113,7 +123,7 @@ if (!preferredArch) return;
       if (limits.expired?.()) return; // the caller rejects anything past its end time
       if (apkHasNativeLibsForArch(path.join(tmpDir, apk), preferredArch, limits)) return;
     }
-    throw new Error(
+    throw abiError(
       `Downloaded bundle ${path.basename(filePath)} has no split containing ` +
       `lib/${preferredArch}/*.so. Falling back to next download source.`,
     );
@@ -232,4 +242,4 @@ function readStringPool(buf, start, size) {
   return strings;
 }
 
-module.exports = { validateDownloadedApkAbi, detectApkShape, requiresAbiSplit, manifestRootAttribute };
+module.exports = { ABI_MISMATCH, validateDownloadedApkAbi, detectApkShape, requiresAbiSplit, manifestRootAttribute };
