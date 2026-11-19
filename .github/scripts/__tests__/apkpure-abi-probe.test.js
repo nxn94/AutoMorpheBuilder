@@ -57,7 +57,7 @@ let outDir;
 let cacheDir;
 let fetched;
 let probed;
-let probeMode; // 'zip' | 'full' | 'throw' | 'chunked' | 'wrongRange' | 'short'
+let probeMode; // 'zip' | 'full' | 'throw' | 'chunked' | 'wrongRange' | 'short' | 'hugeRange'
 let pulled; // bytes a fake server handed over
 let errors;
 
@@ -97,6 +97,11 @@ async function fakeFetch(url, init = {}) {
       return new Response(stream(whole), { status: 206, headers: { 'content-range': suffix } });
     case 'wrongRange':
       return new Response(stream(whole), { status: 206, headers: { 'content-range': `bytes 0-${whole.length - 1}/${whole.length}` } });
+    case 'hugeRange': {
+      // Numbers too large for a double: each becomes Infinity.
+      const n = '9'.repeat(400);
+      return new Response(stream(whole), { status: 206, headers: { 'content-range': `bytes ${n}-${n}/${n}` } });
+    }
     case 'short':
       return new Response(stream(body.subarray(0, body.length - 1)), { status: 206, headers: { 'content-range': suffix } });
     default:
@@ -185,6 +190,13 @@ describe('resolveApkeepVariant', () => {
 
   test('a 206 for a range other than the file tail is not read', async () => {
     probeMode = 'wrongRange';
+    expect(await resolveApkeepVariant(PKG, VER)).toBe(SMALL);
+    expect(logged()).toContain('0 of 3 variants');
+    expect(pulled).toBeLessThanOrEqual(3 * 16384);
+  });
+
+  test('a Content-Range with numbers too large to hold is not read', async () => {
+    probeMode = 'hugeRange';
     expect(await resolveApkeepVariant(PKG, VER)).toBe(SMALL);
     expect(logged()).toContain('0 of 3 variants');
     expect(pulled).toBeLessThanOrEqual(3 * 16384);

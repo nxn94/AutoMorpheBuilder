@@ -426,10 +426,13 @@ async function probeZipTail(url, signal, fetchImpl = fetch) {
     res = await fetchImpl(url, { headers: { Range: `bytes=-${ZIP_TAIL_BYTES}`, 'User-Agent': 'Mozilla/5.0' }, signal });
     const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec((res.headers.get('content-range') || '').trim());
     const [start, end, total] = range ? range.slice(1).map(Number) : [];
-    const length = end - start + 1;
-    if (res.status !== 206 || !range || end !== total - 1 || start !== Math.max(0, total - ZIP_TAIL_BYTES) || !res.body) {
+    // A huge number in the header becomes Infinity, which would pass the
+    // comparisons below and leave no limit on the read.
+    if (res.status !== 206 || !range || !res.body || ![start, end, total].every(Number.isSafeInteger)
+      || total <= 0 || start < 0 || start > end || end !== total - 1 || start !== Math.max(0, total - ZIP_TAIL_BYTES)) {
       return null;
     }
+    const length = end - start + 1;
     const body = await readAtMost(res.body, length);
     return body && body.length === length ? zipCentralDirNames(body, total) : null;
   } catch {
@@ -441,13 +444,17 @@ async function probeZipTail(url, signal, fetchImpl = fetch) {
 }
 
 /**
- * Up to `limit` bytes of a stream, or null if it holds more.
+ * Up to `limit` bytes (at most ZIP_TAIL_BYTES) of a stream, or null if it
+ * holds more or the limit is not a usable number.
  *
  * @param {ReadableStream<Uint8Array>} stream
  * @param {number} limit
  * @returns {Promise<Buffer|null>}
  */
 async function readAtMost(stream, limit) {
+  // Never more than a zip tail, whatever the caller worked out.
+  if (!Number.isSafeInteger(limit) || limit < 0) return null;
+  const cap = Math.min(limit, ZIP_TAIL_BYTES);
   const reader = stream.getReader();
   const chunks = [];
   let size = 0;
@@ -456,7 +463,7 @@ async function readAtMost(stream, limit) {
       const { done, value } = await reader.read();
       if (done) return Buffer.concat(chunks, size);
       size += value.length;
-      if (size > limit) return null;
+      if (size > cap) return null;
       chunks.push(value);
     }
   } finally {
