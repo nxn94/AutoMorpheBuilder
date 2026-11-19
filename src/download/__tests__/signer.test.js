@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  certDigests, judge, baseEntry, bundleApks, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE,
+  certDigests, certSubject, judge, baseEntry, bundleApks, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE,
 } = require('../signer');
 const { execFileSync } = require('node:child_process');
 
@@ -30,6 +30,12 @@ describe('certDigests', () => {
   test('reads plain and colon-separated digests, once each', () => {
     const out = `${printCerts(GOOD)}${printCerts(GOOD)}Signer #2 certificate SHA-256 digest: ${OTHER.match(/../g).join(':')}\n`;
     expect(certDigests(out)).toEqual([GOOD, OTHER]);
+  });
+
+  test('ignores the store\'s source-stamp certificate', () => {
+    const stamp = `Source Stamp Signer certificate DN: CN=Play\nSource Stamp Signer certificate SHA-256 digest: ${OTHER}\n`;
+    expect(certDigests(`${printCerts(GOOD)}${stamp}`)).toEqual([GOOD]);
+    expect(certSubject(`${stamp}${printCerts(GOOD)}`)).toBe('CN=Example');
   });
 
   test('ignores anything that is not a full SHA-256', () => {
@@ -149,6 +155,18 @@ describe('checkSigner', () => {
       expect(messages[0]).toMatch(/^::notice::No signer listed for com\.unlisted/);
       expect(messages[0]).toMatch(why);
       expect(fs.existsSync(summary)).toBe(false);
+    });
+
+    test('a subject from the APK can\'t close the fence or start a workflow command', () => {
+      const subject = 'CN=x```` %0A::error::pwned';
+      const { run } = fakeRun({ verify: () => `Signer #1 certificate DN: ${subject}\n${printCerts(OTHER)}` });
+      const messages = [];
+      const summary = tmpSummary();
+      checkSigner('x.apk', 'com.unlisted', { signers: SIGNERS, run, log: (m) => messages.push(m), summary });
+      expect(messages[0]).toContain('CN=x```` %250A::error::pwned');
+      const md = fs.readFileSync(summary, 'utf8');
+      const pasted = md.match(/^`````json\n([^\n]*)\n`````$/m)[1];
+      expect(JSON.parse(`{${pasted.replace(/,$/, '')}}`)['com.unlisted'].subject).toBe(subject);
     });
 
     test('a summary that can\'t be written is a warning, not a failure', () => {

@@ -35,10 +35,14 @@ const APK_BUFFER = 2 * 1024 * 1024 * 1024;
 /** apksigner found no valid signature (e.g. our own APKEditor merge), as opposed to a wrong one. */
 class UnsignedApkError extends Error {}
 
-/** Certificate SHA-256 digests from `apksigner verify --print-certs` output. */
+/**
+ * Certificate SHA-256 digests from `apksigner verify --print-certs` output.
+ * A "Source Stamp Signer" line is the store's stamp key (shared by every
+ * app it distributes), not the developer's, so it never counts.
+ */
 function certDigests(stdout) {
   const out = new Set();
-  for (const m of String(stdout || '').matchAll(/certificate SHA-256 digest:\s*([0-9a-fA-F:]{64,95})/g)) {
+  for (const m of String(stdout || '').matchAll(/^(?!Source Stamp)[^\r\n]*certificate SHA-256 digest:[ \t]*([0-9a-fA-F:]{64,95})/gm)) {
     const digest = m[1].replace(/:/g, '').toLowerCase();
     if (/^[0-9a-f]{64}$/.test(digest)) out.add(digest);
   }
@@ -47,7 +51,7 @@ function certDigests(stdout) {
 
 /** The first signer's certificate DN from `apksigner verify --print-certs` output, or ''. */
 function certSubject(stdout) {
-  const m = String(stdout || '').match(/certificate DN:[ \t]*([^\r\n]+)/);
+  const m = String(stdout || '').match(/^(?!Source Stamp)[^\r\n]*certificate DN:[ \t]*([^\r\n]+)/m);
   return m ? m[1].trim() : '';
 }
 
@@ -147,10 +151,13 @@ function reportUnlisted(file, appId, { apksigner, run, log, version, summary }) 
     return { skipped: true, entry: null };
   }
   const line = `${JSON.stringify(appId)}: ${JSON.stringify(entry)}`;
+  // The subject comes from the APK. Escape it as workflow-command data, so
+  // the annotation shows what the log shows.
   log(`${notice} This APK is signed by ${entry.sha256.join(', ')}. If that matches APKMirror's `
-    + `"APK certificate fingerprints" for the app, add it to apk-signers.json: ${line}`);
+    + `"APK certificate fingerprints" for the app, add it to apk-signers.json: ${commandData(line)}`);
   if (summary) {
-    const fence = '```';
+    // A fence longer than any backtick run in the entry, which it can't close.
+    const fence = '`'.repeat(Math.max(3, ...(line.match(/`+/g) || []).map((r) => r.length + 1)));
     const md = `### No signer listed for ${appId}\n\n`
       + 'Signature not checked. If the digest matches APKMirror\'s "APK certificate fingerprints" for the app, '
       + `add this to \`.github/scripts/apk-signers.json\`:\n\n${fence}json\n${line},\n${fence}\n\n`;
@@ -161,6 +168,11 @@ function reportUnlisted(file, appId, { apksigner, run, log, version, summary }) 
     }
   }
   return { skipped: true, entry };
+}
+
+/** Text made safe as workflow-command data (the toolkit's escapeData). */
+function commandData(text) {
+  return String(text).replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
 }
 
 /** { sha256, subject?, seen? } for the base APK of `file`; throws when it can't be read. */
