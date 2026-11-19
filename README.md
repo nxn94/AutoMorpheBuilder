@@ -33,7 +33,7 @@ Forking for personal use is encouraged. To add or remove an app, edit `config.js
 | YouTube | `com.google.android.youtube` | `MorpheApp/morphe-patches` |
 | YouTube Music | `com.google.android.apps.youtube.music` | `MorpheApp/morphe-patches` |
 | Reddit | `com.reddit.frontpage` | `MorpheApp/morphe-patches` |
-| Sofascore | `com.sofascore.results` | `hoo-dles/morphe-patches` |
+| Sofascore | `com.sofascore.results` | `heval99/Heval-Morphe-Patches` |
 | Twitch | `tv.twitch.android.app` | `ryykitty/twitch-patched` |
 | NZB360 | `com.kevinforeman.nzb360` | `rushiranpise/morphe-patches` |
 | Flightradar24 | `com.flightradar24free` | `rushiranpise/morphe-patches` |
