@@ -46,7 +46,7 @@ const { loadConfig, loadExistingUrl } = require('../../src/download/config');
 const { parseArgs } = require('../../src/download/cli-args');
 const { validateApkVersion } = require('../../src/download/aapt');
 const { findApkFile } = require('../../src/download/scan');
-const { pickSmallestMatchingVariant, remainingMatchingVariants, variantKey, buildCodeOf, exactBuildOf, versionCodeOf } = require('../../src/download/apkeep-variant');
+const { listMatchingVariants, pickSmallestMatchingVariant, remainingMatchingVariants, zipCentralDirNames, hasArchSplit, rankVariantsByArch, variantKey, buildCodeOf, exactBuildOf, versionCodeOf } = require('../../src/download/apkeep-variant');
 const { inferReleaseUrl } = require('../../src/download/release-slug');
 const apkpureExact = require('../../src/download/apkpure-exact');
 const minSdkLib = require('../../src/download/min-sdk');
@@ -403,6 +403,93 @@ async function fetchApkpureVersionListing(packageId, fetchImpl = fetch, signal) 
   return response.text();
 }
 
+function wantedArch() {
+  try { return loadConfig().preferred_arch || 'arm64-v8a'; } catch { return 'arm64-v8a'; }
+}
+
+const ZIP_TAIL_BYTES = 65558; // a zip's end record plus the largest comment
+
+/**
+ * The zip entry names of a remote file, read from a ranged request for its
+ * last bytes. Null (never an error) unless the server answers 206 with that
+ * exact suffix: Content-Range must name the last bytes of the file, and the
+ * body is read up to that length and no further, whatever the headers say.
+ *
+ * @param {string} url
+ * @param {AbortSignal} signal
+ * @param {typeof fetch} [fetchImpl]
+ * @returns {Promise<string[]|null>}
+ */
+async function probeZipTail(url, signal, fetchImpl = fetch) {
+  let res;
+  try {
+    res = await fetchImpl(url, { headers: { Range: `bytes=-${ZIP_TAIL_BYTES}`, 'User-Agent': 'Mozilla/5.0' }, signal });
+    const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec((res.headers.get('content-range') || '').trim());
+    const [start, end, total] = range ? range.slice(1).map(Number) : [];
+    // A huge number in the header becomes Infinity, which would pass the
+    // comparisons below and leave no limit on the read.
+    if (res.status !== 206 || !range || !res.body || ![start, end, total].every(Number.isSafeInteger)
+      || total <= 0 || start < 0 || start > end || end !== total - 1 || start !== Math.max(0, total - ZIP_TAIL_BYTES)) {
+      return null;
+    }
+    const length = end - start + 1;
+    const body = await readAtMost(res.body, length);
+    return body && body.length === length ? zipCentralDirNames(body, total) : null;
+  } catch {
+    return null;
+  } finally {
+    // Whatever was not read is not downloaded.
+    try { await res?.body?.cancel(); } catch { /* already closed */ }
+  }
+}
+
+/**
+ * Up to `limit` bytes (at most ZIP_TAIL_BYTES) of a stream, or null if it
+ * holds more or the limit is not a usable number.
+ *
+ * @param {ReadableStream<Uint8Array>} stream
+ * @param {number} limit
+ * @returns {Promise<Buffer|null>}
+ */
+async function readAtMost(stream, limit) {
+  // Never more than a zip tail, whatever the caller worked out.
+  if (!Number.isSafeInteger(limit) || limit < 0) return null;
+  const cap = Math.min(limit, ZIP_TAIL_BYTES);
+  const reader = stream.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return Buffer.concat(chunks, size);
+      size += value.length;
+      if (size > cap) return null;
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/**
+ * Put the APKPure variants that hold a split for the wanted ABI first.
+ * Size cannot tell the ABI, so each variant's zip entry names are read first
+ * (probes run together; a failed one just leaves that variant in size order).
+ *
+ * @param {string[]} urls Candidates, smallest first.
+ * @param {string} arch
+ * @param {AbortSignal} [deadline] Ends the probes early.
+ * @param {typeof fetch} [fetchImpl]
+ * @returns {Promise<string[]>}
+ */
+async function rankApkpureVariants(urls, arch, deadline, fetchImpl) {
+  if (urls.length < 2) return urls;
+  const probeSignal = () => (deadline ? AbortSignal.any([AbortSignal.timeout(10_000), deadline]) : AbortSignal.timeout(10_000));
+  const names = await Promise.all(urls.map((u) => probeZipTail(u, probeSignal(), fetchImpl)));
+  console.error(`[apkpure-variants] ${names.filter((n) => hasArchSplit(n, arch)).length} of ${urls.length} variants have config.${String(arch).replace(/-/g, '_')}.apk`);
+  return rankVariantsByArch(urls, new Map(urls.map((u, i) => [u, names[i]])), arch);
+}
+
 /**
  * Query APKPure's backend protobuf for every XAPK variant URL of a
  * given package, returning the arm64-v8a variant URL specifically.
@@ -411,23 +498,16 @@ async function fetchApkpureVersionListing(packageId, fetchImpl = fetch, signal) 
  * the FIRST XAPKJ URL — always the universal variant. For apps that
  * ship arm64-v8a-only xapks (Sofascore, Reddit, etc.), the universal
  * bundle's splits may only contain armeabi-v7a libs, leading to
- * post-merge ABI guardrail failures. Quoting the analysis outlined in
- * the header comment: APKPure's protobuf contains three XAPK URLs per
- * version (universal, arm64-v8a, armeabi-v7a), ordered by descending
- * size. The smallest variant is the arm64-v8a-only build.
+ * post-merge ABI guardrail failures. APKPure's protobuf contains
+ * several XAPK URLs per version (e.g. universal, arm64-v8a,
+ * armeabi-v7a).
  *
- * The download URL itself isn't parsable for arch — we have only the
- * size signal. We pick the smallest of the three matching URLs and
- * trust the size ordering. For Sofascore 26.07.27:
- *   universal     93_044_062 bytes
- *   arm64-v8a      57_302_642 bytes  ← smallest
- *   armeabi-v7a    89_218_647 bytes
- *
- * If the size heuristic ever fails (e.g. a future arm64-v8a bundle
- * bigger than armeabi-v7a), the fallback path through `apkeep` still
- * returns the universal variant — the build will fail at the ABI
- * guardrail with a clear "arm64-v8a libs missing" error rather than
- * silently shipping a wrong-arch APK.
+ * The download URL itself isn't parsable for arch and size is only a
+ * hint (the arm64 variant is not always the smallest). So the zip
+ * tail of each candidate is range-probed (rankApkpureVariants) and a
+ * variant holding config.<arch>.apk goes first; if no probe works the
+ * smallest is picked. A wrong-arch file still fails the ABI guardrail
+ * rather than silently shipping.
  *
  * @param {string} packageId - Package ID (e.g. "com.sofascore.results")
  * @param {string} version - Version to resolve (e.g. "26.07.27")
@@ -441,7 +521,7 @@ async function resolveApkeepVariant(packageId, version) {
   // src/download/apkeep-variant.js so it can be unit-tested
   // without standing up the protobuf endpoint. The downloader
   // keeps only the network call and the size logging here.
-  const chosenUrl = pickSmallestMatchingVariant(body, version);
+  const chosenUrl = (await rankApkpureVariants(listMatchingVariants(body, version), wantedArch()))[0];
   if (!chosenUrl) {
     throw new Error(`No APKPure XAPK URLs found for ${packageId}@${version}`);
   }
@@ -457,7 +537,7 @@ async function resolveApkeepVariant(packageId, version) {
         const decoded = Buffer.from(parts[2], 'base64').toString('utf8');
         const inner = new URLSearchParams(decoded);
         const size = inner.get('s') || '0';
-        console.error(`[apkeep-resolve] APKPure arm64-v8a variant for ${packageId}@${version}: ${size} bytes`);
+        console.error(`[apkeep-resolve] APKPure variant for ${packageId}@${version}: ${size} bytes`);
       }
     }
   } catch {
@@ -1296,8 +1376,9 @@ async function resolveGooglePlayVersionCode(packageId, version, arch, opts = {})
 
 /** The arm64-v8a build number APKPure lists for an exact version. */
 async function resolveGooglePlayVersionCodeViaApkpure(packageId, version, arch, { fetchImpl = fetch } = {}) {
-  // APKPure's URLs don't say which CPU they're for; the arm64-v8a choice
-  // rests on the size order resolveApkeepVariant relies on.
+  // APKPure's URLs don't say which CPU they're for, and this is only a hint,
+  // so it takes the smallest variant's number without probing the files;
+  // if Play can't deliver it, goopdl retries by version name.
   if (arch !== 'arm64-v8a') throw new Error(`no ${arch} build numbers`);
   const code = versionCodeOf(pickSmallestMatchingVariant(await fetchApkpureVersionListing(packageId, fetchImpl), version));
   if (!code) throw new Error(`no build number listed for ${packageId}@${version}`);
@@ -1488,6 +1569,7 @@ async function tryOtherApkpureVariants(packageId, version, outputDir, tried, opt
   let urls;
   try {
     urls = remainingMatchingVariants(await fetchApkpureVersionListing(packageId, opts.fetchImpl, deadline.signal), version, tried);
+    urls = await rankApkpureVariants(urls, wantedArch(), deadline.signal, opts.fetchImpl);
   } catch (e) {
     console.error(`[apkpure-variants] Could not list other variants: ${e.message}`);
     return null;
