@@ -37,6 +37,20 @@ manual builds or metadata updates, not a high-throughput build farm.
    contents-write explicitly to the updater job. Its existing token requirements
    and commit/push behavior are unchanged.
 
+6. **Android build-tools were installed in every job** (`morphe-build.yml`).
+   `check-versions` and every build leg each downloaded the cmdline-tools ZIP
+   and ran `sdkmanager` for the same `build-tools;35.0.0` (about 10–17 s per
+   job). `check-versions` now caches `/tmp/android-sdk/build-tools` with
+   `actions/cache`; the build legs restore it with `actions/cache/restore`, so
+   parallel legs never race to save. The key is `runner.os` + `runner.arch` +
+   the hash of `install-aapt.js` (which pins the version) and
+   `checksums/tools.sha256`, so a version, URL or digest-pin change misses.
+   `install-aapt.js` already skips the download when `aapt` runs, so a miss
+   falls back to the old install. Only `build-tools` is cached: cmdline-tools
+   and licenses are needed only to install, not to run `aapt`. `create-release`
+   still installs fresh: build legs run third-party patch code and can write
+   caches, and the signing job must not run binaries they could have replaced.
+
 ## Reviewed and retained
 
 - `codeql.yml`: two distinct language scans, matching pinned init/analyze,

@@ -215,6 +215,17 @@ jobs:
           path: /usr/local/bin/apkeep
           retention-days: 1
 
+      - name: Cache Android build-tools
+        # install-aapt.js skips the SDK download when build-tools are present. This
+        # job saves them on a miss; build legs only restore them.
+        # The key changes with install-aapt.js (which pins the version) and with
+        # checksums/tools.sha256, so a new digest pin is never bypassed by a hit.
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: /tmp/android-sdk/build-tools
+          key: android-build-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/install-aapt.js', 'checksums/tools.sha256') }}
+
       - name: Install aapt for APK version validation
         id: aapt
         if: steps.filter.outputs.should-build == 'true'
@@ -426,6 +437,13 @@ jobs:
           key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-none-${{ github.run_id }}
           restore-keys: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-
 
+      - name: Restore Android build-tools
+        # Saved by check-versions; on a miss install-aapt.js downloads them as before.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: /tmp/android-sdk/build-tools
+          key: android-build-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/install-aapt.js', 'checksums/tools.sha256') }}
+
       - name: Install aapt for APK version validation
         id: aapt
         env:
@@ -605,6 +623,9 @@ jobs:
           java-version: "21"
 
       - name: Install Android build-tools for signing
+        # Deliberately not restored from the build-tools cache: build legs run
+        # third-party patch code and can write caches, and this job holds the
+        # keystore, so apksigner is always installed fresh here.
         id: aapt
         env:
           ANDROID_HOME: /tmp/android-sdk
