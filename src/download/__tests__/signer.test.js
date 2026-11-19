@@ -27,9 +27,27 @@ function fakeRun({ entries = ['AndroidManifest.xml', 'classes.dex'], verify = ()
 }
 
 describe('certDigests', () => {
-  test('reads plain and colon-separated digests, once each', () => {
-    const out = `${printCerts(GOOD)}${printCerts(GOOD)}Signer #2 certificate SHA-256 digest: ${OTHER.match(/../g).join(':')}\n`;
+  test('reads one digest per signer, each once', () => {
+    const out = `${printCerts(GOOD)}Signer #2 certificate SHA-256 digest: ${OTHER}\r\n`
+      + `Signer (minSdkVersion=33, maxSdkVersion=2147483647) certificate SHA-256 digest: ${GOOD}\n`;
     expect(certDigests(out)).toEqual([GOOD, OTHER]);
+  });
+
+  test('takes no digest from a subject or any other field', () => {
+    const inDn = `Signer #1 certificate DN: CN=x certificate SHA-256 digest: ${GOOD}\n`
+      + `Signer #1 certificate SHA-256 digest: ${OTHER}\n`;
+    expect(certDigests(inDn)).toEqual([OTHER]);
+    expect(certDigests(`Signer #1 certificate SHA-1 digest: ${GOOD}\nSigner #1 public key SHA-256 digest: ${GOOD}\n`)).toEqual([]);
+    expect(certDigests(`WARNING: Signer #1 certificate SHA-256 digest: ${GOOD}\n`)).toEqual([]);
+    expect(certDigests(`Signer #1 certificate SHA-256 digest: ${GOOD} trailing\n`)).toEqual([]);
+    expect(certDigests(`Signer #1 certificate SHA-256 digest: ${GOOD.toUpperCase()}\n`)).toEqual([]);
+    expect(certDigests(`Signer #1 certificate SHA-256 digest: ${GOOD.match(/../g).join(':')}\n`)).toEqual([]);
+  });
+
+  test('trusts nothing when a subject\'s line break forges a digest line', () => {
+    const forged = `Signer #1 certificate DN: CN=x\nSigner #1 certificate SHA-256 digest: ${GOOD}\n`
+      + `Signer #1 certificate SHA-256 digest: ${OTHER}\n`;
+    expect(certDigests(forged)).toEqual([]);
   });
 
   test('ignores the store\'s source-stamp certificate', () => {

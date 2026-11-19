@@ -36,23 +36,38 @@ const APK_BUFFER = 2 * 1024 * 1024 * 1024;
 class UnsignedApkError extends Error {}
 
 /**
+ * A whole digest line as apksigner prints it: the signer's label, then 64
+ * lower-case hex digits and nothing else. "Source Stamp Signer" lines (the
+ * store's stamp key, shared by every app it distributes) and every other
+ * field, such as a subject, never match.
+ */
+const DIGEST_LINE = /^(Signer (?:#\d+|\(minSdkVersion=\d+, maxSdkVersion=\d+\))) certificate SHA-256 digest: ([0-9a-f]{64})$/;
+const SUBJECT_LINE = /^Signer #1 certificate DN: (.+)$/;
+
+/**
  * Certificate SHA-256 digests from `apksigner verify --print-certs` output.
- * A "Source Stamp Signer" line is the store's stamp key (shared by every
- * app it distributes), not the developer's, so it never counts.
+ * apksigner prints one digest per signer, so a signer with two means a field
+ * (a subject with a line break, say) printed a line of its own. Then nothing
+ * is trusted and [] is returned.
  */
 function certDigests(stdout) {
-  const out = new Set();
-  for (const m of String(stdout || '').matchAll(/^(?!Source Stamp)[^\r\n]*certificate SHA-256 digest:[ \t]*([0-9a-fA-F:]{64,95})/gm)) {
-    const digest = m[1].replace(/:/g, '').toLowerCase();
-    if (/^[0-9a-f]{64}$/.test(digest)) out.add(digest);
+  const bySigner = new Map();
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const m = DIGEST_LINE.exec(line);
+    if (!m) continue;
+    if (bySigner.has(m[1])) return [];
+    bySigner.set(m[1], m[2]);
   }
-  return [...out];
+  return [...new Set(bySigner.values())];
 }
 
 /** The first signer's certificate DN from `apksigner verify --print-certs` output, or ''. */
 function certSubject(stdout) {
-  const m = String(stdout || '').match(/^(?!Source Stamp)[^\r\n]*certificate DN:[ \t]*([^\r\n]+)/m);
-  return m ? m[1].trim() : '';
+  for (const line of String(stdout || '').split(/\r?\n/)) {
+    const m = SUBJECT_LINE.exec(line);
+    if (m) return m[1].trim();
+  }
+  return '';
 }
 
 /** The fingerprints listed for an app, lower-cased. */
