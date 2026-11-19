@@ -51,6 +51,7 @@ jobs:
       cli-version: ${{ steps.check.outputs.cli-version }}
       cli-repo: ${{ steps.check.outputs.cli-repo }}
       skip-list: ${{ steps.filter.outputs.skip-list }}
+      build-tools-sha256: ${{ steps.share-build-tools.outputs.sha256 }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -215,23 +216,30 @@ jobs:
           path: /usr/local/bin/apkeep
           retention-days: 1
 
-      - name: Cache Android build-tools
-        # install-aapt.js skips the SDK download when build-tools are present. This
-        # job saves them on a miss; build legs only restore them.
-        # The key changes with install-aapt.js (which pins the version) and with
-        # checksums/tools.sha256, so a new digest pin is never bypassed by a hit.
-        if: steps.filter.outputs.should-build == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
-        with:
-          path: /tmp/android-sdk/build-tools
-          key: android-build-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/install-aapt.js', 'checksums/tools.sha256') }}
-
       - name: Install aapt for APK version validation
         id: aapt
         if: steps.filter.outputs.should-build == 'true'
         env:
           ANDROID_HOME: /tmp/android-sdk
         run: bash .github/scripts/pipeline/install_aapt.sh
+
+      - name: Pack build-tools for build jobs
+        id: share-build-tools
+        # Installed fresh above, never from a cache. Shared with this run's build
+        # legs only; the SHA-256 goes out as a job output, which a leg cannot
+        # change, so a leg replacing the artifact is caught before extraction.
+        if: steps.filter.outputs.should-build == 'true'
+        run: |
+          tar -C /tmp/android-sdk -cf "$RUNNER_TEMP/android-build-tools.tar" build-tools
+          echo "sha256=$(sha256sum "$RUNNER_TEMP/android-build-tools.tar" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build-tools for build jobs
+        if: steps.filter.outputs.should-build == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7
+        with:
+          name: android-build-tools
+          path: ${{ runner.temp }}/android-build-tools.tar
+          retention-days: 1
 
       - name: Cache resolved APK URLs
         if: steps.filter.outputs.should-build == 'true'
@@ -437,12 +445,29 @@ jobs:
           key: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-none-${{ github.run_id }}
           restore-keys: apk-${{ matrix.appId }}-${{ steps.targetver.outputs.version }}-
 
-      - name: Restore Android build-tools
-        # Saved by check-versions; on a miss install-aapt.js downloads them as before.
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+      - name: Download build-tools from check-versions
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8
         with:
-          path: /tmp/android-sdk/build-tools
-          key: android-build-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.github/scripts/install-aapt.js', 'checksums/tools.sha256') }}
+          name: android-build-tools
+          path: ${{ runner.temp }}/android-build-tools
+        continue-on-error: true
+
+      - name: Unpack build-tools from check-versions
+        # Extracted only when the archive matches the digest check-versions
+        # recorded; otherwise install_aapt.sh downloads the tools as before.
+        env:
+          EXPECTED_SHA256: ${{ needs.check-versions.outputs.build-tools-sha256 }}
+        run: |
+          archive="$RUNNER_TEMP/android-build-tools/android-build-tools.tar"
+          if [ -z "$EXPECTED_SHA256" ] || [ ! -f "$archive" ]; then
+            echo "No build-tools from check-versions; installing them here"
+          elif echo "$EXPECTED_SHA256  $archive" | sha256sum -c --status; then
+            mkdir -p /tmp/android-sdk
+            tar -C /tmp/android-sdk -xf "$archive"
+          else
+            echo "::warning::build-tools archive does not match check-versions; installing them here"
+          fi
+          rm -rf "$RUNNER_TEMP/android-build-tools"
 
       - name: Install aapt for APK version validation
         id: aapt
@@ -623,9 +648,9 @@ jobs:
           java-version: "21"
 
       - name: Install Android build-tools for signing
-        # Deliberately not restored from the build-tools cache: build legs run
-        # third-party patch code and can write caches, and this job holds the
-        # keystore, so apksigner is always installed fresh here.
+        # Deliberately not taken from check-versions' build-tools artifact: build
+        # legs run third-party patch code, and this job holds the keystore, so
+        # apksigner is always installed fresh here.
         id: aapt
         env:
           ANDROID_HOME: /tmp/android-sdk

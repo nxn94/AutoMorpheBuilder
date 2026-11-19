@@ -40,16 +40,17 @@ manual builds or metadata updates, not a high-throughput build farm.
 6. **Android build-tools were installed in every job** (`morphe-build.yml`).
    `check-versions` and every build leg each downloaded the cmdline-tools ZIP
    and ran `sdkmanager` for the same `build-tools;35.0.0` (about 10–17 s per
-   job). `check-versions` now caches `/tmp/android-sdk/build-tools` with
-   `actions/cache`; the build legs restore it with `actions/cache/restore`, so
-   parallel legs never race to save. The key is `runner.os` + `runner.arch` +
-   the hash of `install-aapt.js` (which pins the version) and
-   `checksums/tools.sha256`, so a version, URL or digest-pin change misses.
-   `install-aapt.js` already skips the download when `aapt` runs, so a miss
-   falls back to the old install. Only `build-tools` is cached: cmdline-tools
-   and licenses are needed only to install, not to run `aapt`. `create-release`
-   still installs fresh: build legs run third-party patch code and can write
-   caches, and the signing job must not run binaries they could have replaced.
+   job). `check-versions` still installs them fresh, then tars
+   `/tmp/android-sdk/build-tools` into the same-run `android-build-tools`
+   artifact and records its SHA-256 as a job output. Each build leg extracts
+   the archive only if it matches that digest; otherwise, or if the artifact is
+   missing, `install-aapt.js` downloads the tools as before. A cross-run
+   `actions/cache` is not used: build legs run third-party patch code and can
+   write caches, so a cached `aapt` could not be trusted in `check-versions`.
+   A job output cannot be changed by a later job, so a leg that replaced the
+   artifact is caught by the other legs. Only `build-tools` is shared:
+   cmdline-tools and licenses are needed only to install, not to run `aapt`.
+   `create-release` (keystore) still installs its own.
 
 ## Reviewed and retained
 
