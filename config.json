@@ -25,7 +25,7 @@
     },
     "com.sofascore.results": {
       "name": "sofascore",
-      "repo": "hoo-dles/morphe-patches",
+      "repo": "heval99/Heval-Morphe-Patches",
       "branch": "main",
       "apkmirror_path": "sofascore/soccer-scores-and-sports-livescore-sofascore",
       "display_name": "Sofascore"
