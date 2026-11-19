@@ -367,8 +367,11 @@ not receive them.
 
 Before patching, the original APK's signing certificate is compared with the
 SHA-256 fingerprints listed for the app in `.github/scripts/apk-signers.json`
-(`src/download/signer.js`). In a bundle, every APK is checked (the base and every
-split), before the merge; the message names the one that failed. Apps that aren't
+(`src/download/signer.js`). The digest is the SHA-256 of the certificate that
+apksig verified (`src/download/SignerDigests.java`, run with Java and build-tools'
+`apksigner.jar`), never text from apksigner's output. In a bundle, every APK is
+checked (the base and every split), before the merge; the message names the one
+that failed. Apps that aren't
 listed aren't checked. Their notice, and the job summary, give the APK's signer as
 an entry ready to paste into `apk-signers.json`; compare the digest with APKMirror's
 "APK certificate fingerprints" first, because it comes from the same download.
@@ -378,12 +381,15 @@ an entry ready to paste into `apk-signers.json`; compare the digest with APKMirr
   the app's APK cache and let another source supply it. If the developer really did
   add a new key (check the "APK certificate fingerprints" on APKMirror), add the new
   fingerprint to the app's `sha256` list.
-- **`apksigner could not verify`:** the APK has no valid signature. A cached
+- **`apksig could not verify`:** the APK has no valid signature. A cached
   `<appId>.apk` left by an earlier merge is expected to be unsigned; when its bundle
   is still in the cache, that bundle is checked and merged again instead. Any other
   unsigned original fails.
-- **`apksigner not found`:** Android build-tools aren't on `PATH`. `install_aapt.sh`
+- **`apksigner.jar not found`:** Android build-tools aren't on `PATH`. `install_aapt.sh`
   adds them; check that step ran.
+- **`java not found`, `SignerDigests failed` or `unexpected output from SignerDigests`:**
+  the runner can't run the helper. It needs Java 21 (`setup-java`) before the
+  download step. These fail the app as a runner fault, not as an unsigned APK.
 
 ## Runner setup and URL caches
 

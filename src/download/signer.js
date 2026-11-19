@@ -9,12 +9,18 @@
  * fallback source serves a repackaged APK, the build fails instead of
  * patching and publishing it.
  *
+ * The digests come from apksig's verification result (SignerDigests.java,
+ * run against apksigner.jar from build-tools): the SHA-256 of each verified
+ * certificate's DER bytes. apksigner's text output isn't parsed, because it
+ * also prints the certificate subject, which whoever signed the APK chooses
+ * and which can hold a line break.
+ *
  * In a bundle (.apkm/.xapk/.apks, or a bundle saved as .apk) every APK
  * is checked, base and splits, before APKEditor merges them (the merged
  * APK is unsigned): the merge takes all of them, so a genuine base with a
  * swapped split must fail too. A wrong signer fails. So does an APK that
- * apksigner can't verify, because an unsigned or broken original can't be
- * trusted either.
+ * doesn't verify, because an unsigned or broken original can't be trusted
+ * either.
  *
  * Apps not in the list aren't checked. Their base APK's signer is still
  * read and printed with an apk-signers.json entry ready to paste, so
@@ -29,45 +35,54 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const SIGNERS_FILE = path.join(__dirname, '..', '..', '.github', 'scripts', 'apk-signers.json');
+const HELPER = path.join(__dirname, 'SignerDigests.java');
 const LIST_BUFFER = 64 * 1024 * 1024;
 const APK_BUFFER = 2 * 1024 * 1024 * 1024;
 
-/** apksigner found no valid signature (e.g. our own APKEditor merge), as opposed to a wrong one. */
+/** The APK doesn't verify (e.g. our own APKEditor merge), as opposed to a wrong signer. */
 class UnsignedApkError extends Error {}
 
 /**
- * A whole digest line as apksigner prints it: the signer's label, then 64
- * lower-case hex digits and nothing else. "Source Stamp Signer" lines (the
- * store's stamp key, shared by every app it distributes) and every other
- * field, such as a subject, never match.
+ * Parses SignerDigests.java's output for `count` APKs into
+ * [{ sha256: [...], subject, error }]. The format is ours and nothing in it
+ * comes from an APK unencoded, so any other line means the helper broke.
  */
-const DIGEST_LINE = /^(Signer (?:#\d+|\(minSdkVersion=\d+, maxSdkVersion=\d+\))) certificate SHA-256 digest: ([0-9a-f]{64})$/;
-const SUBJECT_LINE = /^Signer #1 certificate DN: (.+)$/;
-
-/**
- * Certificate SHA-256 digests from `apksigner verify --print-certs` output.
- * apksigner prints one digest per signer, so a signer with two means a field
- * (a subject with a line break, say) printed a line of its own. Then nothing
- * is trusted and [] is returned.
- */
-function certDigests(stdout) {
-  const bySigner = new Map();
+function parseSignerOutput(stdout, count) {
+  const out = [];
+  let cur = null;
+  const decode = (b64) => Buffer.from(b64, 'base64').toString('utf8');
   for (const line of String(stdout || '').split(/\r?\n/)) {
-    const m = DIGEST_LINE.exec(line);
-    if (!m) continue;
-    if (bySigner.has(m[1])) return [];
-    bySigner.set(m[1], m[2]);
+    if (!line) continue;
+    let m;
+    if ((m = /^apk (\d+)$/.exec(line)) && Number(m[1]) === out.length) {
+      cur = { sha256: [], subject: '', error: null };
+      out.push(cur);
+    } else if (cur && (m = /^sha256 ([0-9a-f]{64})$/.exec(line))) {
+      if (!cur.sha256.includes(m[1])) cur.sha256.push(m[1]);
+    } else if (cur && (m = /^subject ([A-Za-z0-9+/]*={0,2})$/.exec(line))) {
+      cur.subject = decode(m[1]);
+    } else if (cur && (m = /^error ([A-Za-z0-9+/]*={0,2})$/.exec(line))) {
+      cur.error = decode(m[1]) || 'unknown error';
+    } else {
+      throw new Error(`unexpected output from SignerDigests: ${JSON.stringify(line.slice(0, 80))}`);
+    }
   }
-  return [...new Set(bySigner.values())];
+  if (out.length !== count) throw new Error(`SignerDigests reported ${out.length} of ${count} APKs`);
+  return out;
 }
 
-/** The first signer's certificate DN from `apksigner verify --print-certs` output, or ''. */
-function certSubject(stdout) {
-  for (const line of String(stdout || '').split(/\r?\n/)) {
-    const m = SUBJECT_LINE.exec(line);
-    if (m) return m[1].trim();
+/** apksigner.jar of the installed build-tools (install_aapt.sh puts their folder on PATH). */
+function findApksignerJar(env = process.env) {
+  const dirs = [];
+  if (env.ANDROID_HOME && env.ANDROID_BUILD_TOOLS_VERSION) {
+    dirs.push(path.join(env.ANDROID_HOME, 'build-tools', env.ANDROID_BUILD_TOOLS_VERSION));
   }
-  return '';
+  dirs.push(...String(env.PATH || '').split(path.delimiter).filter(Boolean));
+  for (const dir of dirs) {
+    const jar = path.join(dir, 'lib', 'apksigner.jar');
+    if (fs.existsSync(jar)) return jar;
+  }
+  return null;
 }
 
 /** The fingerprints listed for an app, lower-cased. */
@@ -76,7 +91,7 @@ function knownDigests(signers, appId) {
   return Array.isArray(entry && entry.sha256) ? entry.sha256.map((s) => String(s).toLowerCase()) : [];
 }
 
-/** { ok, known, got, skipped } for the digests apksigner found. */
+/** { ok, known, got, skipped } for the digests found. */
 function judge(signers, appId, digests) {
   const known = knownDigests(signers, appId);
   if (!known.length) return { ok: true, known, got: digests, skipped: true };
@@ -105,22 +120,25 @@ function readSigners(file = SIGNERS_FILE) {
  * @param {string} appId
  * @param {object} [opts]
  * @param {object} [opts.signers] parsed apk-signers.json
- * @param {string} [opts.apksigner] apksigner binary (on PATH after install_aapt.sh)
+ * @param {string} [opts.apksignerJar] apksigner.jar (found next to apksigner on PATH after install_aapt.sh)
+ * @param {string} [opts.java] java binary
  * @param {Function} [opts.run] execFileSync stand-in, for tests
  * @param {Function} [opts.log]
  * @param {string} [opts.version] version being built, for the suggested entry's "seen"
  * @param {string} [opts.summary] file the suggested entry is appended to ($GITHUB_STEP_SUMMARY)
  */
 function checkSigner(file, appId, {
-  signers = readSigners(), apksigner = 'apksigner', run = execFileSync, log = console.log,
+  signers = readSigners(), apksignerJar, java = 'java', run = execFileSync, log = console.log,
   version = '', summary = process.env.GITHUB_STEP_SUMMARY || '',
 } = {}) {
+  const tool = { apksignerJar, java, run };
   const known = knownDigests(signers, appId);
-  if (!known.length) return reportUnlisted(file, appId, { apksigner, run, log, version, summary });
+  if (!known.length) return reportUnlisted(file, appId, { tool, log, version, summary });
   const names = listEntries(file, run);
   const isBundle = !names.includes('AndroidManifest.xml');
   if (!isBundle) {
-    const verdict = expectSigner(signers, appId, path.basename(file), verifyCerts(file, path.basename(file), apksigner, run));
+    const [certs] = readCerts([file], tool);
+    const verdict = expectSigner(signers, appId, path.basename(file), certs);
     log(`Signer of ${path.basename(file)} matches apk-signers.json (${verdict.matched}).`);
     return verdict;
   }
@@ -131,12 +149,13 @@ function checkSigner(file, appId, {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'signer-'));
   let verdict;
   try {
-    entries.forEach((entry, i) => {
-      const label = `${path.basename(file)} (${entry})`;
+    const targets = entries.map((entry, i) => {
       const target = path.join(tmp, `${i}.apk`);
       fs.writeFileSync(target, run('unzip', ['-p', file, entry], { maxBuffer: APK_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] }));
-      verdict = expectSigner(signers, appId, label, verifyCerts(target, label, apksigner, run));
-      fs.rmSync(target, { force: true });
+      return target;
+    });
+    readCerts(targets, tool).forEach((certs, i) => {
+      verdict = expectSigner(signers, appId, `${path.basename(file)} (${entries[i]})`, certs);
     });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -156,13 +175,13 @@ function listEntries(file, run) {
  * ready for apk-signers.json. Never throws: unlisted apps built without
  * the check before this, and still do.
  */
-function reportUnlisted(file, appId, { apksigner, run, log, version, summary }) {
+function reportUnlisted(file, appId, { tool, log, version, summary }) {
   const notice = `::notice::No signer listed for ${appId} in .github/scripts/apk-signers.json; signature not checked.`;
   let entry;
   try {
-    entry = unlistedEntry(file, apksigner, run, version);
+    entry = unlistedEntry(file, tool, version);
   } catch (e) {
-    log(`${notice} Its signer couldn't be read either: ${String((e && e.message) || e).split('\n')[0]}`);
+    log(`${notice} Its signer couldn't be read either: ${commandData(String((e && e.message) || e).split('\n')[0])}`);
     return { skipped: true, entry: null };
   }
   const line = `${JSON.stringify(appId)}: ${JSON.stringify(entry)}`;
@@ -191,28 +210,26 @@ function commandData(text) {
 }
 
 /** { sha256, subject?, seen? } for the base APK of `file`; throws when it can't be read. */
-function unlistedEntry(file, apksigner, run, version) {
-  const names = listEntries(file, run);
-  let out;
+function unlistedEntry(file, tool, version) {
+  const names = listEntries(file, tool.run);
+  let certs;
   if (names.includes('AndroidManifest.xml')) {
-    out = printCerts(file, path.basename(file), apksigner, run);
+    certs = expectVerified(readCerts([file], tool)[0], path.basename(file));
   } else {
     const base = baseEntry(names);
     if (!base) throw new Error(`no base APK inside ${path.basename(file)}`);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'signer-'));
     try {
       const target = path.join(tmp, 'base.apk');
-      fs.writeFileSync(target, run('unzip', ['-p', file, base], { maxBuffer: APK_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] }));
-      out = printCerts(target, `${path.basename(file)} (${base})`, apksigner, run);
+      fs.writeFileSync(target, tool.run('unzip', ['-p', file, base], { maxBuffer: APK_BUFFER, stdio: ['ignore', 'pipe', 'pipe'] }));
+      certs = expectVerified(readCerts([target], tool)[0], `${path.basename(file)} (${base})`);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
-  const sha256 = certDigests(out);
-  if (!sha256.length) throw new Error('apksigner printed no certificate digest');
-  const entry = { sha256 };
-  const subject = certSubject(out);
-  if (subject) entry.subject = subject;
+  if (!certs.sha256.length) throw new Error('apksig reported no signer certificate');
+  const entry = { sha256: certs.sha256 };
+  if (certs.subject) entry.subject = certs.subject;
   if (version) entry.seen = String(version);
   return entry;
 }
@@ -222,30 +239,38 @@ function bundleApks(names) {
   return names.filter((n) => /\.apk$/i.test(n) && !n.endsWith('/'));
 }
 
-/** The certificate digests apksigner reports for one APK. */
-function verifyCerts(target, label, apksigner, run) {
-  return certDigests(printCerts(target, label, apksigner, run));
-}
-
-/** `apksigner verify --print-certs` output for one APK. */
-function printCerts(target, label, apksigner, run) {
+/** SignerDigests.java's result for each of `targets`, in one JVM. */
+function readCerts(targets, { apksignerJar, java, run }) {
+  const jar = apksignerJar || findApksignerJar();
+  if (!jar) throw new Error('apksigner.jar not found; is Android build-tools on PATH?');
+  let out;
   try {
-    return String(run(apksigner, ['verify', '--print-certs', target], {
+    out = run(java, ['-cp', jar, HELPER, ...targets], {
       encoding: 'utf8', maxBuffer: LIST_BUFFER, stdio: ['ignore', 'pipe', 'pipe'],
-    }));
+    });
   } catch (e) {
-    // A missing apksigner is a broken runner, not an unsigned APK.
-    if (e && e.code === 'ENOENT') throw new Error(`${apksigner} not found; is Android build-tools on PATH?`, { cause: e });
+    // The helper reports an APK that doesn't verify in its output, so a
+    // failed run is a broken runner, never an unsigned APK.
+    if (e && e.code === 'ENOENT') throw new Error(`${java} not found; is Java on PATH?`, { cause: e });
     const why = String((e && (e.stderr || e.message)) || '').split('\n').find(Boolean) || 'unknown error';
-    throw new UnsignedApkError(`apksigner could not verify ${label}: ${why}`, { cause: e });
+    throw new Error(`SignerDigests failed: ${why}`, { cause: e });
   }
+  return parseSignerOutput(out, targets.length);
 }
 
-/** The verdict for one APK, or the "wrong signer" error. */
-function expectSigner(signers, appId, label, digests) {
-  const verdict = judge(signers, appId, digests);
+/** The certs of an APK that verified, or the "unsigned" error. */
+function expectVerified(certs, label) {
+  if (certs.error) {
+    throw new UnsignedApkError(`apksig could not verify ${label}: ${certs.error.split('\n').find(Boolean) || 'unknown error'}`);
+  }
+  return certs;
+}
+
+/** The verdict for one APK, or the "wrong signer" / "unsigned" error. */
+function expectSigner(signers, appId, label, certs) {
+  const verdict = judge(signers, appId, expectVerified(certs, label).sha256);
   if (!verdict.ok) {
-    throw new Error(`${label} is signed by ${verdict.got.join(', ') || 'nothing apksigner recognised'}, `
+    throw new Error(`${label} is signed by ${verdict.got.join(', ') || 'no certificate apksig recognised'}, `
       + `not by ${appId}'s developer (${verdict.known.join(', ')} in .github/scripts/apk-signers.json). `
       + 'The source may be serving a modified APK. If the developer really changed their key, add the new '
       + 'fingerprint from APKMirror to .github/scripts/apk-signers.json.');
@@ -254,5 +279,6 @@ function expectSigner(signers, appId, label, digests) {
 }
 
 module.exports = {
-  certDigests, certSubject, judge, baseEntry, bundleApks, readSigners, checkSigner, UnsignedApkError, SIGNERS_FILE,
+  parseSignerOutput, findApksignerJar, judge, baseEntry, bundleApks, readSigners, checkSigner,
+  UnsignedApkError, SIGNERS_FILE, HELPER,
 };
