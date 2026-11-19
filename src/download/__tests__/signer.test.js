@@ -103,12 +103,62 @@ describe('readSigners', () => {
 describe('checkSigner', () => {
   const log = () => {};
 
-  test('skips an unlisted app without running anything', () => {
-    const { run, calls } = fakeRun();
-    const messages = [];
-    expect(checkSigner('x.apk', 'com.unlisted', { signers: SIGNERS, run, log: (m) => messages.push(m) })).toEqual({ skipped: true });
-    expect(calls).toEqual([]);
-    expect(messages[0]).toMatch(/^::notice::No signer listed for com\.unlisted/);
+  describe('an unlisted app', () => {
+    const SIGNED = `Signer #1 certificate DN: CN=Someone, O=Example\n${printCerts(OTHER)}`;
+    const tmpSummary = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'summary-')), 'summary.md');
+
+    test('is not checked, but its signer is printed as a ready entry', () => {
+      const { run, calls } = fakeRun({ verify: () => SIGNED });
+      const messages = [];
+      const summary = tmpSummary();
+      const result = checkSigner('x.apk', 'com.unlisted', {
+        signers: SIGNERS, run, log: (m) => messages.push(m), version: '1.2.3', summary,
+      });
+      const entry = { sha256: [OTHER], subject: 'CN=Someone, O=Example', seen: '1.2.3' };
+      expect(result).toEqual({ skipped: true, entry });
+      expect(calls).toEqual([['unzip', '-Z1', 'x.apk'], ['apksigner', 'verify', '--print-certs', 'x.apk']]);
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatch(/^::notice::No signer listed for com\.unlisted in .*; signature not checked\. This APK is signed by b{64}\./);
+      expect(messages[0]).toContain(`"com.unlisted": ${JSON.stringify(entry)}`);
+      const md = fs.readFileSync(summary, 'utf8');
+      expect(md).toContain('### No signer listed for com.unlisted');
+      const pasted = md.match(/```json\n([\s\S]*?)\n```/)[1];
+      expect(JSON.parse(`{${pasted.replace(/,$/, '')}}`)).toEqual({ 'com.unlisted': entry });
+    });
+
+    test('in a bundle, only the base APK is read, and the copy is removed', () => {
+      const { run, calls } = fakeRun({ entries: ['base.apk', 'split_config.arm64_v8a.apk'], verify: () => printCerts(OTHER) });
+      const result = checkSigner('app.apkm', 'com.unlisted', { signers: SIGNERS, run, log, summary: '' });
+      expect(result).toEqual({ skipped: true, entry: { sha256: [OTHER], subject: 'CN=Example' } });
+      expect(calls.filter(([cmd]) => cmd === 'apksigner')).toHaveLength(1);
+      expect(calls).toContainEqual(['unzip', '-p', 'app.apkm', 'base.apk']);
+      const copy = calls.find(([cmd]) => cmd === 'apksigner')[3];
+      expect(fs.existsSync(path.dirname(copy))).toBe(false);
+    });
+
+    test.each([
+      ['an unsigned APK', { verify: () => { throw new Error('DOES NOT VERIFY'); } }, /apksigner could not verify x\.apk: DOES NOT VERIFY/],
+      ['no certificate in the output', { verify: () => 'Verifies\n' }, /apksigner printed no certificate digest/],
+      ['a bundle with no base APK', { entries: ['split_config.en.apk'] }, /no base APK inside x\.apk/],
+    ])('still builds when its signer can\'t be read (%s)', (_, opts, why) => {
+      const { run } = fakeRun(opts);
+      const messages = [];
+      const summary = tmpSummary();
+      expect(checkSigner('x.apk', 'com.unlisted', { signers: SIGNERS, run, log: (m) => messages.push(m), summary }))
+        .toEqual({ skipped: true, entry: null });
+      expect(messages[0]).toMatch(/^::notice::No signer listed for com\.unlisted/);
+      expect(messages[0]).toMatch(why);
+      expect(fs.existsSync(summary)).toBe(false);
+    });
+
+    test('a summary that can\'t be written is a warning, not a failure', () => {
+      const { run } = fakeRun({ verify: () => printCerts(OTHER) });
+      const messages = [];
+      const summary = path.join(os.tmpdir(), 'no-such-dir-for-signer-test', 'summary.md');
+      expect(checkSigner('x.apk', 'com.unlisted', { signers: SIGNERS, run, log: (m) => messages.push(m), summary }).entry)
+        .toEqual({ sha256: [OTHER], subject: 'CN=Example' });
+      expect(messages[1]).toMatch(/^::warning::could not write \$GITHUB_STEP_SUMMARY/);
+    });
   });
 
   test('passes an APK signed by the listed key', () => {
@@ -211,7 +261,8 @@ describe('checkSigner', () => {
   test('uses the shipped list and console.log by default', () => {
     const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      expect(checkSigner('x.apk', 'com.unlisted')).toEqual({ skipped: true });
+      // x.apk doesn't exist, so its signer can't be read and no summary is written.
+      expect(checkSigner('x.apk', 'com.unlisted')).toEqual({ skipped: true, entry: null });
       expect(spy).toHaveBeenCalledWith(expect.stringMatching(/^::notice::No signer listed for com\.unlisted/));
     } finally {
       spy.mockRestore();

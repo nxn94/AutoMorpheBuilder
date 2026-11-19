@@ -369,7 +369,9 @@ Before patching, the original APK's signing certificate is compared with the
 SHA-256 fingerprints listed for the app in `.github/scripts/apk-signers.json`
 (`src/download/signer.js`). In a bundle, every APK is checked (the base and every
 split), before the merge; the message names the one that failed. Apps that aren't
-listed are skipped with a notice.
+listed aren't checked. Their notice, and the job summary, give the APK's signer as
+an entry ready to paste into `apk-signers.json`; compare the digest with APKMirror's
+"APK certificate fingerprints" first, because it comes from the same download.
 
 - **`is signed by <digest>, not by <app>'s developer`:** the source served an APK
   signed by someone else, which usually means a modified APK. Don't patch it: delete

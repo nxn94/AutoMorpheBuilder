@@ -497,12 +497,12 @@ if (
 //     file gets that second chance; a wrong signer always fails.
 try {
   try {
-    checkSigner(apkCandidate, APP_ID);
+    checkSigner(apkCandidate, APP_ID, { version: effectiveTargetVersion });
   } catch (error) {
     const bundle = findBundleInDir(APKS_DIR);
     if (!(error instanceof UnsignedApkError) || path.basename(apkCandidate) !== `${APP_ID}.apk` || !bundle) throw error;
     console.log(`${path.basename(apkCandidate)} is an earlier merge (unsigned); checking the bundle and merging it again.`);
-    checkSigner(bundle, APP_ID);
+    checkSigner(bundle, APP_ID, { version: effectiveTargetVersion });
     // Patch only what was checked: drop the cached merge and merge the bundle again below.
     fs.unlinkSync(apkCandidate);
     apkCandidate = bundle;
