@@ -392,3 +392,61 @@ const javaOk = (() => { try { execFileSync('java', ['-version'], { stdio: 'ignor
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }, 60000);
+
+// A rotated key, as Instagram and Gboard ship. The pin is usually the
+// original key, so the helper must report it as well as the new one:
+// - no minSdk: v3.1 has the new key for Android 13+, v1-v3 the original key.
+// - minSdk 28: apksig checks only v3, so the original key is only in the
+//   lineage.
+// Manifests are aapt2 output for <manifest package="com.example.rot"/>,
+// the second with <uses-sdk android:minSdkVersion="28"/>. Needs the JDK's
+// keytool and jar too.
+const MANIFEST_NO_MIN_SDK =
+    'AwAIAHQBAAABABwA5AAAAAUAAAAAAAAAAAAAADAAAAAAAAAAAAAAABIAAAA0AAAAjAAAAKAAAAAHAGEAbgBkAHIAbwBpAGQAAAAPAGMAbwBtAC4A'
+    + 'ZQB4AGEAbQBwAGwAZQAuAHIAbwB0AAAAKgBoAHQAdABwADoALwAvAHMAYwBoAGUAbQBhAHMALgBhAG4AZAByAG8AaQBkAC4AYwBvAG0ALwBhAHAA'
+    + 'awAvAHIAZQBzAC8AYQBuAGQAcgBvAGkAZAAAAAgAbQBhAG4AaQBmAGUAcwB0AAAABwBwAGEAYwBrAGEAZwBlAAAAAACAAQgACAAAAAABEAAYAAAA'
+    + 'AQAAAP////8AAAAAAgAAAAIBEAA4AAAAAQAAAP//////////AwAAABQAFAABAAAAAAAAAP////8EAAAAAQAAAAgAAAMBAAAAAwEQABgAAAABAAAA'
+    + '//////////8DAAAAAQEQABgAAAABAAAA/////wAAAAACAAAA';
+const MANIFEST_MIN_SDK_28 =
+    'AwAIADgDAAABABwA/AEAAAwAAAAAAAAAAAAAAEwAAAAAAAAAAAAAAB4AAABEAAAAegAAAIIAAACUAAAAtgAAAA4BAAAiAQAANAEAAGgBAACcAQAA'
+    + 'DQBtAGkAbgBTAGQAawBWAGUAcgBzAGkAbwBuAAAAEQBjAG8AbQBwAGkAbABlAFMAZABrAFYAZQByAHMAaQBvAG4AAAAZAGMAbwBtAHAAaQBsAGUA'
+    + 'UwBkAGsAVgBlAHIAcwBpAG8AbgBDAG8AZABlAG4AYQBtAGUAAAACADEANAAAAAcAYQBuAGQAcgBvAGkAZAAAAA8AYwBvAG0ALgBlAHgAYQBtAHAA'
+    + 'bABlAC4AcgBvAHQAAAAqAGgAdAB0AHAAOgAvAC8AcwBjAGgAZQBtAGEAcwAuAGEAbgBkAHIAbwBpAGQALgBjAG8AbQAvAGEAcABrAC8AcgBlAHMA'
+    + 'LwBhAG4AZAByAG8AaQBkAAAACABtAGEAbgBpAGYAZQBzAHQAAAAHAHAAYQBjAGsAYQBnAGUAAAAYAHAAbABhAHQAZgBvAHIAbQBCAHUAaQBsAGQA'
+    + 'VgBlAHIAcwBpAG8AbgBDAG8AZABlAAAAGABwAGwAYQB0AGYAbwByAG0AQgB1AGkAbABkAFYAZQByAHMAaQBvAG4ATgBhAG0AZQAAAAgAdQBzAGUA'
+    + 'cwAtAHMAZABrAAAAgAEIABQAAAAMAgEBcgUBAXMFAQEAARAAGAAAAAEAAAD/////BAAAAAYAAAACARAAiAAAAAEAAAD//////////wcAAAAUABQA'
+    + 'BQAAAAAAAAAGAAAAAQAAAP////8IAAAQIgAAAAYAAAACAAAAAwAAAAgAAAMDAAAA/////wgAAAAFAAAACAAAAwUAAAD/////CQAAAP////8IAAAQ'
+    + 'IgAAAP////8KAAAA/////wgAABAOAAAAAgEQADgAAAABAAAA//////////8LAAAAFAAUAAEAAAAAAAAABgAAAAAAAAD/////CAAAEBwAAAADARAA'
+    + 'GAAAAAEAAAD//////////wsAAAADARAAGAAAAAEAAAD//////////wcAAAABARAAGAAAAAEAAAD/////BAAAAAYAAAA=';
+const jdkOk = javaOk && ['keytool', 'jar'].every((tool) => {
+  try { execFileSync(tool, ['--help'], { stdio: 'ignore' }); return true; } catch { return false; }
+});
+(realJar && jdkOk ? test.each : test.skip.each)([
+  ['v3.1 rotation', MANIFEST_NO_MIN_SDK, ['--rotation-min-sdk-version', '33']],
+  ['v3 rotation at minSdk 28', MANIFEST_MIN_SDK_28, []],
+])('SignerDigests.java reports the original and the rotated key (%s)', (_name, manifest, rotation) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signer-rotated-'));
+  const at = (name) => path.join(dir, name);
+  const run = (cmd, args) => execFileSync(cmd, args, { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    fs.writeFileSync(at('AndroidManifest.xml'), Buffer.from(manifest, 'base64'));
+    run('jar', ['cfM', 'unsigned.apk', 'AndroidManifest.xml']);
+    const digest = {};
+    for (const name of ['old', 'new']) {
+      run('keytool', ['-genkeypair', '-keystore', `${name}.p12`, '-storetype', 'PKCS12', '-storepass', 'pass123',
+        '-alias', 'k', '-keyalg', 'RSA', '-keysize', '2048', '-dname', `CN=${name}`, '-validity', '3650']);
+      const der = execFileSync('keytool', ['-exportcert', '-keystore', `${name}.p12`, '-storepass', 'pass123', '-alias', 'k'], { cwd: dir });
+      digest[name] = require('node:crypto').createHash('sha256').update(der).digest('hex');
+    }
+    const ks = (name) => ['--ks', `${name}.p12`, '--ks-pass', 'pass:pass123'];
+    run('java', ['-jar', realJar, 'rotate', '--out', 'lineage', '--old-signer', ...ks('old'), '--new-signer', ...ks('new')]);
+    run('java', ['-jar', realJar, 'sign', ...rotation, ...ks('old'), '--next-signer', ...ks('new'),
+      '--lineage', 'lineage', '--out', 'rotated.apk', 'unsigned.apk']);
+    const [apk] = parseSignerOutput(run('java', ['-cp', realJar, HELPER, at('rotated.apk')]), 1);
+    expect(apk.error).toBeFalsy();
+    expect(apk.sha256).toEqual(expect.arrayContaining([digest.old, digest.new]));
+    expect(apk.sha256).toHaveLength(2);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 120000);

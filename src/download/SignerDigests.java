@@ -1,11 +1,14 @@
 import com.android.apksig.ApkVerifier;
+import com.android.apksig.SigningCertificateLineage;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Prints the SHA-256 of each verified signer certificate of one or more
@@ -44,16 +47,40 @@ public class SignerDigests {
             System.out.println("error " + base64("DOES NOT VERIFY: " + result.getAllErrors()));
             return;
         }
+        // Every verified signer of every scheme, as apksigner lists them. One
+        // scheme alone isn't enough: an APK with a rotated key (v3.1, e.g.
+        // Instagram, Gboard) is signed by the new key for later Android
+        // versions and by the original key in v2/v3, and
+        // getSignerCertificates() returns only one of them. Ignored v1
+        // signers and the source stamp are left out.
         List<X509Certificate> certs = new ArrayList<>(result.getSignerCertificates());
-        // A v3.1 signer (a rotated key used from a later Android version) is a
-        // signer too; apksigner lists it as "Signer (minSdkVersion=...)".
+        for (ApkVerifier.Result.V1SchemeSignerInfo signer : result.getV1SchemeSigners()) {
+            certs.add(signer.getCertificate());
+        }
+        for (ApkVerifier.Result.V2SchemeSignerInfo signer : result.getV2SchemeSigners()) {
+            certs.add(signer.getCertificate());
+        }
+        for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
+            certs.add(signer.getCertificate());
+        }
         for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
             certs.add(signer.getCertificate());
         }
-        for (X509Certificate cert : certs) {
-            System.out.println("sha256 " + hex(MessageDigest.getInstance("SHA-256").digest(cert.getEncoded())));
+        // From minSdk 28 apksig checks only v3, so after a rotation the
+        // original key may appear only in the lineage. apksig verifies each
+        // link (an older key signs the next), so its keys are the developer's.
+        SigningCertificateLineage lineage = result.getSigningCertificateLineage();
+        if (lineage != null) {
+            certs.addAll(lineage.getCertificatesInLineage());
         }
-        if (!certs.isEmpty()) {
+        Set<String> digests = new LinkedHashSet<>();
+        for (X509Certificate cert : certs) {
+            if (cert != null) digests.add(hex(MessageDigest.getInstance("SHA-256").digest(cert.getEncoded())));
+        }
+        for (String digest : digests) {
+            System.out.println("sha256 " + digest);
+        }
+        if (!certs.isEmpty() && certs.get(0) != null) {
             System.out.println("subject " + base64(certs.get(0).getSubjectX500Principal().getName()));
         }
     }
